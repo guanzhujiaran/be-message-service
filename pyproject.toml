@@ -1,0 +1,37 @@
+[project]
+name = "message-service"
+version = "0.1.0"
+description = "统一消息系统微服务：基于 RabbitMQ + FastStream，当前包含「推送」模块，后续将加入评论 / 对话 / 私信等"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "faststream[cli,rabbit]>=0.6.0",
+    "fastapi>=0.110.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "loguru>=0.7.2",
+    "uvicorn>=0.51.0",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
+
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
+
+[[tool.uv.index]]
+name = "tencent"
+url = "https://mirrors.cloud.tencent.com/pypi/simple/"
+
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6.0",
+]
