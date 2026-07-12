@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     message_config: PushChannelConfig = PushChannelConfig(hitokoto=False)
 
     model_config = SettingsConfigDict(
-        env_file=(".env",),
+        env_file=("app/.env",),
         case_sensitive=False,
         extra="ignore",
     )
