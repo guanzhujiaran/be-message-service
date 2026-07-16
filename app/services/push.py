@@ -38,8 +38,7 @@ def get_client() -> httpx.AsyncClient:
     """获取（懒创建）共享的 httpx 异步客户端。"""
     global _client
     if _client is None or _client.is_closed:
-        proxy = settings.proxy_server or None
-        _client = httpx.AsyncClient(proxy=proxy, timeout=15.0)
+        _client = httpx.AsyncClient(timeout=15.0)
     return _client
 
 
@@ -195,7 +194,7 @@ class PushMessageService:
         if resp_data["code"] == 200:
             logger.info("bark 推送成功！")
         else:
-            raise RuntimeError(f"bark 推送失败：{resp_data}")
+            raise RuntimeError(f"bark 推送失败：url={url} body={json.dumps(data, ensure_ascii=False)} resp={resp_data}")
 
     async def dingding_bot(self, title: str, content: str) -> None:
         if not self.conf.dd_bot_secret or not self.conf.dd_bot_token:
@@ -228,7 +227,7 @@ class PushMessageService:
         if resp_data.get("StatusCode") == 0 or resp_data.get("code") == 0:
             logger.info("飞书 推送成功！")
         else:
-            raise RuntimeError(f"飞书 推送失败：{resp_data}")
+            raise RuntimeError(f"飞书 推送失败：url={url} body={json.dumps(data, ensure_ascii=False)} resp={resp_data}")
 
     async def go_cqhttp(self, title: str, content: str) -> None:
         if not self.conf.gobot_url or not self.conf.gobot_qq:
@@ -254,7 +253,7 @@ class PushMessageService:
         if resp_data.get("id"):
             logger.info("gotify 推送成功！")
         else:
-            raise RuntimeError(f"gotify 推送失败：{resp_data}")
+            raise RuntimeError(f"gotify 推送失败：url={url} body={data} resp={resp_data}")
 
     async def iGot(self, title: str, content: str) -> None:
         if not self.conf.igot_push_key:
@@ -283,7 +282,7 @@ class PushMessageService:
         if resp_data.get("errno") == 0 or resp_data.get("code") == 0:
             logger.info("serverJ 推送成功！")
         else:
-            raise RuntimeError(f'serverJ 推送失败：{resp_data}')
+            raise RuntimeError(f'serverJ 推送失败：url={url} body={data} resp={resp_data}')
 
     async def pushdeer(self, title: str, content: str) -> None:
         if not self.conf.deer_key:
@@ -296,7 +295,7 @@ class PushMessageService:
         if len(resp_data.get("content", {}).get("result", [])) > 0:
             logger.info("PushDeer 推送成功！")
         else:
-            raise RuntimeError(f"PushDeer 推送失败：{resp_data}")
+            raise RuntimeError(f"PushDeer 推送失败：url={url} body={data} resp={resp_data}")
 
     async def chat(self, title: str, content: str) -> None:
         if not self.conf.chat_url or not self.conf.chat_token:
@@ -308,7 +307,7 @@ class PushMessageService:
         if resp.status_code == 200:
             logger.info("Chat 推送成功！")
         else:
-            raise RuntimeError(f"Chat 推送失败：{resp}")
+            raise RuntimeError(f"Chat 推送失败：url={url} body={data} resp={resp}")
 
     async def pushplus_bot(self, title: str, content: str) -> None:
         if not self.conf.push_plus_token:
@@ -319,7 +318,7 @@ class PushMessageService:
             mapped = _PUSHME_TO_PUSHPLUS_TEMPLATE.get(self.push_type)
             if mapped:
                 template = mapped
-        url = self.conf.push_plus_url or settings.pushplus_url or "https://www.pushplus.plus/send"
+        url = self.conf.push_plus_url or settings.pushplus_url or "http://www.pushplus.plus/send"
         data = {
             "token": self.conf.push_plus_token,
             "title": title,
@@ -340,7 +339,7 @@ class PushMessageService:
             logger.info("PUSHPLUS 推送请求成功，可根据流水号查询推送结果:" + str(resp_data.get("data", "")))
             return
         if code in (900, 903, 905, 999):
-            raise RuntimeError(f"PUSHPLUS 推送失败：{resp_data['msg']}")
+            raise RuntimeError(f"PUSHPLUS 推送失败：url={url} body={body.decode('utf-8')} resp={resp_data['msg']}")
         # 回落到 hxtrip 节点
         url_old = "http://pushplus.hxtrip.com/send"
         headers["Accept"] = "application/json"
@@ -349,7 +348,7 @@ class PushMessageService:
         if resp_data["code"] == 200:
             logger.info("PUSHPLUS(hxtrip) 推送成功！")
         else:
-            raise RuntimeError(f"PUSHPLUS(hxtrip) 推送失败：{resp_data}")
+            raise RuntimeError(f"PUSHPLUS(hxtrip) 推送失败：url={url_old} body={body.decode('utf-8')} resp={resp_data}")
 
     async def weplus_bot(self, title: str, content: str) -> None:
         if not self.conf.we_plus_bot_token:
@@ -374,7 +373,7 @@ class PushMessageService:
         if resp_data["code"] == 200:
             logger.info("微加机器人 推送成功！")
         else:
-            raise RuntimeError(f"微加机器人 推送失败：{resp_data}")
+            raise RuntimeError(f"微加机器人 推送失败：url={url} body={body.decode('utf-8')} resp={resp_data}")
 
     async def qmsg_bot(self, title: str, content: str) -> None:
         if not self.conf.qmsg_key or not self.conf.qmsg_type:
@@ -387,7 +386,7 @@ class PushMessageService:
         if resp_data["code"] == 0:
             logger.info("qmsg 推送成功！")
         else:
-            raise RuntimeError(f'qmsg 推送失败：{resp_data["reason"]}')
+            raise RuntimeError(f'qmsg 推送失败：url={url} body={payload} resp={resp_data["reason"]}')
 
     async def wecom_app(self, title: str, content: str) -> None:
         if not self.conf.qywx_am:
@@ -424,7 +423,7 @@ class PushMessageService:
         if resp_data["errcode"] == 0:
             logger.info("企业微信机器人推送成功！")
         else:
-            raise RuntimeError(f"企业微信机器人推送失败：{resp_data}")
+            raise RuntimeError(f"企业微信机器人推送失败：url={url} body={json.dumps(data, ensure_ascii=False)} resp={resp_data}")
 
     async def telegram_bot(self, title: str, content: str) -> None:
         if not self.conf.tg_bot_token or not self.conf.tg_user_id:
@@ -471,7 +470,7 @@ class PushMessageService:
         if resp_data["code"] == 0:
             logger.info("智能微秘书 推送成功！")
         else:
-            raise RuntimeError(f'智能微秘书 推送失败：{resp_data["error"]}')
+            raise RuntimeError(f'智能微秘书 推送失败：url={url} body={body.decode("utf-8")} resp={resp_data["error"]}')
 
     def smtp(self, title: str, content: str) -> None:
         if (not self.conf.smtp_server or not self.conf.smtp_ssl or not self.conf.smtp_email
@@ -483,14 +482,22 @@ class PushMessageService:
         message["To"] = formataddr((Header(self.conf.smtp_name, "utf-8").encode(), self.conf.smtp_email))
         message["Subject"] = Header(title, "utf-8")
         try:
-            conn = (smtplib.SMTP_SSL(self.conf.smtp_server)
-                    if self.conf.smtp_ssl == "true" else smtplib.SMTP(self.conf.smtp_server))
+            # 兼容 smtp_server 是否带端口（如 "smtp.163.com:465"）
+            host, _, port_str = self.conf.smtp_server.rpartition(":")
+            if port_str.isdigit():
+                port = int(port_str)
+                host = host or self.conf.smtp_server
+            else:
+                host = self.conf.smtp_server
+                port = 465 if self.conf.smtp_ssl == "true" else 25
+            conn = (smtplib.SMTP_SSL(host, port)
+                    if self.conf.smtp_ssl == "true" else smtplib.SMTP(host, port))
             conn.login(self.conf.smtp_email, self.conf.smtp_password)
             conn.sendmail(self.conf.smtp_email, self.conf.smtp_email, message.as_bytes())
             conn.close()
             logger.info("SMTP 邮件 推送成功！")
         except Exception as e:
-            raise RuntimeError(f"SMTP 邮件 推送失败：{e}")
+            raise RuntimeError(f"SMTP 邮件 推送失败：host={host} port={port} {e}")
 
     async def pushme(self, title: str, content: str) -> None:
         if not self.conf.pushme_key:
@@ -508,7 +515,7 @@ class PushMessageService:
         if resp.status_code == 200 and resp.text == "success":
             logger.info("PushMe 推送成功！")
         else:
-            raise RuntimeError(f"PushMe 推送失败：{resp.status_code} {resp.text}")
+            raise RuntimeError(f"PushMe 推送失败：url={url} body={data} resp={resp.status_code} {resp.text}")
 
     async def chronocat(self, title: str, content: str) -> None:
         if not self.conf.chronocat_url or not self.conf.chronocat_qq or not self.conf.chronocat_token:
@@ -529,7 +536,7 @@ class PushMessageService:
                 if resp.status_code == 200:
                     logger.info(f"QQ{'个人' if chat_type == 1 else '群'}消息:{ids}推送成功！")
                 else:
-                    raise RuntimeError(f"QQ{'个人' if chat_type == 1 else '群'}消息:{ids}推送失败：{resp.text}")
+                    raise RuntimeError(f"QQ{'个人' if chat_type == 1 else '群'}消息:{ids}推送失败：url={url} body={json.dumps(data, ensure_ascii=False)} resp={resp.text}")
 
     async def ntfy(self, title: str, content: str) -> None:
         if not self.conf.ntfy_topic:
@@ -556,7 +563,7 @@ class PushMessageService:
         if resp.status_code == 200:
             logger.info("Ntfy 推送成功！")
         else:
-            raise RuntimeError(f"Ntfy 推送失败：{resp.text}")
+            raise RuntimeError(f"Ntfy 推送失败：url={url} headers={headers} body={data} resp={resp.text}")
 
     async def wxpusher_bot(self, title: str, content: str) -> None:
         if not self.conf.wxpusher_app_token:
@@ -581,7 +588,7 @@ class PushMessageService:
         if resp_data.get("code") == 1000:
             logger.info("wxpusher 推送成功！")
         else:
-            raise RuntimeError(f"wxpusher 推送失败：{resp_data.get('msg')}")
+            raise RuntimeError(f"wxpusher 推送失败：url={url} body={json.dumps(data, ensure_ascii=False)} resp={resp_data.get('msg')}")
 
     async def webhook(self, title: str, content: str) -> None:
         if not self.conf.webhook_url:
@@ -615,7 +622,7 @@ class PushMessageService:
         if resp.status_code < 400:
             logger.info("自定义 Webhook 推送成功！")
         else:
-            raise RuntimeError(f"自定义 Webhook 推送失败：{resp.status_code} {resp.text}")
+            raise RuntimeError(f"自定义 Webhook 推送失败：url={url} body={body} resp={resp.status_code} {resp.text}")
 
     # ---------- 分发逻辑（降级链） ----------
 

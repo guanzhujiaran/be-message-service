@@ -25,12 +25,9 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 18739
 
-    # 出网代理（可选）
-    proxy_server: str = ""
-
     # 推送渠道默认端点（可被 MESSAGE_CONFIG 中的 pushme_url / push_plus_url 覆盖）
     pushme_url: str = "https://push.i-i.me"
-    pushplus_url: str = "https://www.pushplus.plus/send"
+    pushplus_url: str = "http://www.pushplus.plus/send"
 
     # 全局渠道配置：单个 JSON 环境变量，与 fastapiapp / rpa-browser 共用同一份
     # 类型为 pydantic PushChannelConfig，由 pydantic-settings 自动解析 JSON，无需 Json() 包装
@@ -44,3 +41,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+print(f"环境变量设置:{settings}")

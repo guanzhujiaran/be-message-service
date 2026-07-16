@@ -31,7 +31,15 @@ url = "https://mirrors.cloud.tencent.com/pypi/simple/"
 name = "tuna"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+
 [dependency-groups]
 dev = [
     "ruff>=0.6.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
 ]
