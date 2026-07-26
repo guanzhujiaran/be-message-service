@@ -712,7 +712,7 @@ class PushMessageService:
 async def one() -> str:
     """获取一条一言。"""
     try:
-        res = await get_client().get(url="https://v1.hitokoto.cn/")
+        res = await get_client().get(url="https://v1.hitokoto.cn/?c=a&c=b&c=c&c=f&c=g")
         res = res.json()
         return res.get("hitokoto", "") + "    ----" + res.get("from", "")
     except Exception as e:
