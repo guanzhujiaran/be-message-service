@@ -1,18 +1,12 @@
-"""FastStream 消费者：消费 message 队列中的推送请求并分发到各渠道。
+"""「推送」模块的业务辅助逻辑。
 
-「推送」是消息系统（message-service）的第一个模块；后续评论 / 对话 / 私信等
-模块将复用同一套 broker / 队列基础设施，按 routing_key 区分（如 message.push、
-message.comment 等）。
+被 HTTP 接口层（app.api.push）与消费层（app.consumers.push）共同复用：
+- merge_config：合并全局环境变量配置与消息内携带的 per-user 配置
+- format_user_label：根据用户信息生成推送标题前缀
 """
 
-import traceback
-
-from faststream.rabbit import RabbitMessage
-from loguru import logger
-
-from app.config import settings
-from app.models import MessageUser, PushChannelConfig, PushMessage
-from app.services.push import PushMessageService
+from app.core.config import settings
+from app.models import MessageUser, PushChannelConfig, PushMessagePayload
 
 
 def _is_set(value) -> bool:
@@ -29,7 +23,7 @@ def _is_set(value) -> bool:
     return True
 
 
-def _merge_config(message: PushMessage) -> PushChannelConfig:
+def merge_config(message: PushMessagePayload) -> PushChannelConfig:
     """合并全局环境变量配置与消息内携带的 per-user 配置。
 
     以全局 message_config（纯 pydantic 模型）为基准，消息内 config 优先级更高
@@ -55,24 +49,3 @@ def format_user_label(user: MessageUser | None) -> str:
     if name and str(name).strip():
         label += f"（{str(name).strip()}）"
     return label
-
-
-async def handle_message(message: PushMessage, msg: RabbitMessage) -> None:
-    """处理一条推送消息：构造配置 -> 调用 PushMessageService.send。"""
-    try:
-        config = _merge_config(message)
-        service = PushMessageService(config, push_type=message.push_type)
-        # 将上游透传的用户信息写入推送标题，便于区分推送来源
-        title = message.title
-        label = format_user_label(message.user)
-        if label:
-            title = f"[{label}] {title}"
-        await service.send(title, message.content)
-        await msg.ack()
-    except Exception as e:  # noqa: BLE001
-        logger.error(
-            f"推送消息处理失败: {e}\n"
-            f"title={message.title}\n{traceback.format_exc()}"
-        )
-        # 不重新入队，避免失败消息导致的死循环
-        await msg.nack(requeue=False)

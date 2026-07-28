@@ -1,4 +1,8 @@
-from typing import Optional
+"""「推送」模块的数据模型。
+
+包含：渠道配置（PushChannelConfig）、HTTP 请求/响应体（PushMessage、
+TestPushRequest、TestPushResponse）、消息队列专用载体（PushMessagePayload）。
+"""
 
 from pydantic import BaseModel, ConfigDict
 
@@ -130,56 +134,37 @@ class PushChannelConfig(BaseModel):
     wxpusher_uids: str = ""
 
 
-class MessageUser(BaseModel):
-    """推送发起方的用户信息。
-
-    由上游 FastapiApp / RPA-Browser 经 nodejs-pptr 代理通过 x-bili-* 请求头透传，
-    message-service 解析后写入推送内容（标题前缀），便于区分「是谁触发的推送」。
-    字段与 RPA-Browser / nodejs-pptr ProxyEndPort 中 setUserHeaders 注入的
-    x-bili-* 头一一对应。
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    # 用户唯一 ID（B 站 mid）
-    mid: Optional[str] = None
-    # 登录用户名
-    user_name: Optional[str] = None
-    # 用户昵称（uname）
-    uname: Optional[str] = None
-    # 用户等级
-    level: Optional[str] = None
-    # 角色
-    role: Optional[str] = None
-    # 个性签名
-    sign: Optional[str] = None
-    # 性别
-    sex: Optional[str] = None
-    # 邮箱
-    email: Optional[str] = None
-    # 大会员状态
-    vip_status: Optional[str] = None
-    # 大会员类型
-    vip_type: Optional[str] = None
-
-
 class PushMessage(BaseModel):
-    """通过消息队列投递的推送请求（消息系统的「推送」模块）。
+    """「推送」模块的 HTTP 请求体（POST /api/v1/message/push）。
 
-    等价于各微服务原先「直接调用 PushMe / PushPlus 接口」的逻辑，
-    现在统一改为投递到 message-service，由消费者异步分发。
+    由 FastapiApp / RPA-Browser / 前端（经 nodejs-pptr 转发）调用本接口时传入，
+    等价于各微服务原先「直接调用 PushMe / PushPlus 接口」的逻辑。api 层收到后会
+    转换为 PushMessagePayload 投递到 RabbitMQ，由消费者异步分发。
     """
 
     title: str
     content: str
     # pushme/pushplus 的模板类型，例如 text/markdown/html/json 等
-    push_type: Optional[str] = "text"
+    push_type: str | None = "text"
     # 渠道配置；为空时回落到 message-service 的全局环境变量配置
-    config: Optional[PushChannelConfig] = None
-    # 推送发起方用户信息（上游经 x-bili-* 头透传），发送时写入推送内容
-    user: Optional[MessageUser] = None
-    # 是否需要强制登录：为 True 且上游 pptr 未注入有效 x-bili-mid 时，拒绝推送并返回需登录提示
-    requires_login: bool = False
+    config: PushChannelConfig | None = None
+
+
+class PushMessagePayload(BaseModel):
+    """消息队列（RabbitMQ）中「推送」消息的专用载体。
+
+    仅用于 broker 投递与 @broker.subscriber 消费，与对外的 HTTP 请求体
+    PushMessage 解耦：请求体描述「调用方想推送什么」，本模型描述「队列里实际
+    流转的推送消息」，两者可各自独立演进（如本模型后续可扩展 trace_id、
+    published_at 等消息投递元数据，而不影响 HTTP 契约）。
+    """
+
+    title: str
+    content: str
+    # pushme/pushplus 的模板类型，例如 text/markdown/html/json 等
+    push_type: str | None = "text"
+    # 渠道配置；为空时回落到 message-service 的全局环境变量配置
+    config: PushChannelConfig | None = None
 
 
 class TestPushRequest(BaseModel):
@@ -188,11 +173,9 @@ class TestPushRequest(BaseModel):
     title: str = "测试推送"
     content: str = "这是一条来自 message-service 的测试推送"
     # pushme/pushplus 的模板类型，例如 text/markdown/html/json 等
-    push_type: Optional[str] = "text"
+    push_type: str | None = "text"
     # 渠道配置；为空时使用 message-service 的全局环境变量配置
-    config: Optional[dict] = None
-    # 是否需要强制登录：为 True 且上游 pptr 未注入有效 x-bili-mid 时，拒绝推送并返回需登录提示
-    requires_login: bool = False
+    config: dict | None = None
 
 
 class TestPushResponse(BaseModel):
@@ -202,3 +185,16 @@ class TestPushResponse(BaseModel):
     message: str
     # 本次成功推送所经过的渠道（简化：由 message-service 统一分发）
     sent_channels: list[str] = []
+
+
+class FeedbackRequest(BaseModel):
+    """前端反馈请求体（POST /api/v1/message/push/feedback）。
+
+    source 标注反馈来源页面 / 模块（如「首页」「抽奖数据页」），
+    用于后端拼接推送标题前缀，告诉站长这条反馈来自哪里；
+    content 为反馈正文，contact 为可选联系方式。
+    """
+
+    content: str
+    contact: str | None = None
+    source: str | None = None

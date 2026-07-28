@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from app.config import settings
+from app.core.config import settings
 from app.services.push import PushMessageService
 
 

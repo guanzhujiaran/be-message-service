@@ -23,15 +23,13 @@ import re
 from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import formataddr
-from typing import Optional
-
 import httpx
 from loguru import logger
 
-from app.config import settings
+from app.core.config import settings
 from app.models import PushChannelConfig
 
-_client: Optional[httpx.AsyncClient] = None
+_client: httpx.AsyncClient | None = None
 
 
 def get_client() -> httpx.AsyncClient:
@@ -161,7 +159,7 @@ class WeCom:
 class PushMessageService:
     """统一推送消息服务类，整合所有推送渠道到一个类中。"""
 
-    def __init__(self, conf: PushChannelConfig, push_type: Optional[str] = None):
+    def __init__(self, conf: PushChannelConfig, push_type: str | None = None):
         self.conf = conf
         self.push_type = push_type
 
@@ -688,7 +686,7 @@ class PushMessageService:
         )
         logger.info(f"开始降级推送，渠道顺序：{ordered}")
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for name in ordered:
             method = getattr(self, name)
             try:
@@ -720,7 +718,7 @@ async def one() -> str:
         return ""
 
 
-async def send(title: str, content: str, conf: PushChannelConfig, push_type: Optional[str] = None):
+async def send(title: str, content: str, conf: PushChannelConfig, push_type: str | None = None):
     """发送推送消息的全局函数接口。"""
     service = PushMessageService(conf, push_type=push_type)
     await service.send(title, content)

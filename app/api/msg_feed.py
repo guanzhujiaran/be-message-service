@@ -6,7 +6,6 @@
 
 from fastapi import APIRouter
 
-from app.api.push import router as push_router
 
-router = APIRouter(prefix="/api/v1/message", tags=["message"])
-router.include_router(push_router)
+router = APIRouter(prefix="/api/v1/message/msg_feed", tags=["message"])
+# TODO:后续添加其它方法

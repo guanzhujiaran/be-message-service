@@ -17,11 +17,12 @@ from faststream import AckPolicy
 from faststream.rabbit import RabbitBroker, RabbitMessage
 from loguru import logger
 
-from app.api.message import router as message_router
-from app.broker import broker, message_exchange, message_queue
-from app.config import settings
-from app.consumer import handle_message
-from app.models import PushMessage
+from app.api.msg_feed import router as msg_feed_router
+from app.api.push import router as push_router
+from app.consumers.push import handle_message
+from app.core.broker import broker, message_exchange, message_queue
+from app.core.config import settings
+from app.models import PushMessagePayload
 
 
 import logging
@@ -89,7 +90,7 @@ async def test_service_connectivity():
 
 
 @broker.subscriber(queue=message_queue, exchange=message_exchange, ack_policy=AckPolicy.MANUAL)
-async def consume_message(message: PushMessage, msg: RabbitMessage) -> None:
+async def consume_message(message: PushMessagePayload, msg: RabbitMessage) -> None:
     await handle_message(message, msg)
 
 
@@ -126,8 +127,10 @@ async def health() -> Response:
 
 
 # 标准 REST 接口（/api/v1/message/...）
-app.include_router(message_router)
+app.include_router(msg_feed_router)
 
+# 推送接口（/api/v1/push/...）
+app.include_router(push_router)
 
 if __name__ == "__main__":
     import uvicorn
