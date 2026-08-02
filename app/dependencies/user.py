@@ -10,7 +10,7 @@ from urllib.parse import unquote
 
 from fastapi import Depends, Request
 
-from app.models import MessageUser
+from bili_common.models.depends import AuthInfo
 
 # 与 RPA-Browser / nodejs-pptr ProxyEndPort.setUserHeaders 注入的 x-bili-* 头一一对应
 _HEADER_MAP = {
@@ -27,11 +27,11 @@ _HEADER_MAP = {
 }
 
 
-def get_current_user(request: Request) -> MessageUser | None:
+def get_current_user(request: Request) -> AuthInfo | None:
     """从 x-bili-* 请求头还原推送发起方用户信息（FastAPI 依赖）。
 
     上游代理（nodejs-pptr ProxyEndPort）会用 URL-encode 写入这些头，
-    这里统一解码后构造 MessageUser；无相关头时返回 None（匿名推送）。
+    这里统一解码后构造 AuthInfo（统一认证模型）；无相关头时返回 None（匿名推送）。
     """
     data: dict = {}
     for header, field in _HEADER_MAP.items():
@@ -40,8 +40,8 @@ def get_current_user(request: Request) -> MessageUser | None:
             data[field] = unquote(val)
     if not data:
         return None
-    return MessageUser(**data)
+    return AuthInfo(**data)
 
 
 # 路由函数签名中直接使用的依赖注解类型
-CurrentUser = Annotated[MessageUser | None, Depends(get_current_user)]
+CurrentUser = Annotated[AuthInfo | None, Depends(get_current_user)]

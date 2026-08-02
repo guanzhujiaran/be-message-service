@@ -6,12 +6,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "faststream[cli,rabbit]>=0.6.0",
-    "fastapi>=0.110.0",
+    "fastapi[standard]>=0.110.0",
     "httpx>=0.27.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
     "loguru>=0.7.2",
     "uvicorn>=0.51.0",
+    "bili-common",
 ]
 
 [tool.uv]
@@ -30,6 +31,12 @@ url = "https://mirrors.cloud.tencent.com/pypi/simple/"
 [[tool.uv.index]]
 name = "tuna"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+
+[tool.uv.sources]
+# 本地路径依赖，默认 editable（本地开发改 bili-common 源码即时生效）。
+# Docker 构建时通过 UV_NO_EDITABLE=1 环境变量强制按非 editable 安装，
+# bili-common 会被复制进 site-packages，ty 可解析且不依赖宿主机绝对路径。
+bili-common = { path = "../bili-common", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

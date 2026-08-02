@@ -44,7 +44,7 @@ def format_user_label(user: MessageUser | None) -> str:
     """
     if not user or not (user.mid and str(user.mid).strip()):
         return ""
-    label = f"用户 {user.mid.strip()}"
+    label = f"用户 {str(user.mid).strip()}"
     name = user.user_name or user.uname
     if name and str(name).strip():
         label += f"（{str(name).strip()}）"
