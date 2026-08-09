@@ -1,7 +1,7 @@
 [project]
 name = "message-service"
 version = "0.1.0"
-description = "统一消息系统微服务：基于 RabbitMQ + FastStream，当前包含「推送」模块，后续将加入评论 / 对话 / 私信等"
+description = "统一消息系统微服务：基于 RabbitMQ + FastStream + MySQL，包含推送 / 系统通知 / 事件提醒 / 私信 / 消息设置模块"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,26 @@ dependencies = [
     "loguru>=0.7.2",
     "uvicorn>=0.51.0",
     "bili-common",
+    # ===== 数据持久化（MySQL + SQLModel + Alembic）=====
+    "sqlmodel>=0.0.27",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "aiomysql>=0.2.0",
+    "pymysql>=1.1.2",
+    # 只读直连 pptr（puppeteer_Bili）的 Postgres：评论 / 私信作者展示信息、@ 搜索等
+    # 用户信息读取统一走本服务，不再在本库冗余 msg_user_profile 快照。
+    "asyncpg>=0.29.0",
+    # PyMySQL/aiomysql 处理 caching_sha2_password / sha256_password 认证需要 cryptography
+    "cryptography>=42.0.0",
+    "alembic>=1.13.0",
+    "greenlet>=3.0.0",
+    # ===== 定时任务（非活跃用户批量推送 / 定时通知发布）=====
+    "apscheduler>=3.10.4",
+    "sqlacodegen>=4.0.4",
+    "psycopg2>=2.9.12",
+    # ===== JWT + Casdoor（用户网关下沉 be-message）=====
+    "pyjwt>=2.8.0",
+    "httpx>=0.27.0",
+    "casdoor>=1.41.0",
 ]
 
 [tool.uv]
@@ -50,3 +70,11 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+
+[tool.ty.environment]
+# bili-common 在本地以 editable 方式安装（MetaPathFinder / .pth 中执行 import 语句），
+# ty 不做动态执行，无法静态解析该包；这里把其源码目录加入优先搜索路径。
+# 相对路径基于本 pyproject 所在目录（be-message-service）：../bili-common 即仓库内的 bili-common 目录，
+# 该目录内含 bili_common 包。Docker 构建时 bili-common 也被 COPY 到 /bili-common，
+# 相对 ../bili-common 同样成立，两套环境均可解析。
+extra-paths = ["../bili-common"]

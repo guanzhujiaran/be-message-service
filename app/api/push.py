@@ -33,7 +33,7 @@ from app.services.push_helper import format_user_label, merge_config
 router = APIRouter(prefix="/api/v1/message/push", tags=["push"])
 
 
-@router.post("/push", response_model=StandardResponse)
+@router.post("/push", response_model=StandardResponse, summary="投递推送到队列")
 async def push_message(req: PushMessage, user: CurrentUser) -> StandardResponse:
     """投递一条推送请求到 RabbitMQ，由 message-service 消费者异步分发。
 
@@ -66,7 +66,7 @@ async def push_message(req: PushMessage, user: CurrentUser) -> StandardResponse:
     return StandardResponse(data={"title": title})
 
 
-@router.post("/test", response_model=StandardResponse)
+@router.post("/test", response_model=StandardResponse, summary="立即发送测试推送")
 async def test_push(req: TestPushRequest, user: CurrentUser) -> StandardResponse:
     """立即发送一条测试推送（不经过队列），便于前端 / 用户验证渠道配置。"""
     # 复用 push_helper 的合并逻辑：消息内 config 优先，否则回落全局环境变量配置
@@ -110,7 +110,7 @@ async def test_push(req: TestPushRequest, user: CurrentUser) -> StandardResponse
         )
 
 
-@router.post("/feedback", response_model=StandardResponse)
+@router.post("/feedback", response_model=StandardResponse, summary="提交用户反馈")
 async def submit_feedback(req: FeedbackRequest, user: CurrentUser) -> StandardResponse:
     """前端提交反馈，仅推送到站长自己的推送设置（全局 message_config）。
 
