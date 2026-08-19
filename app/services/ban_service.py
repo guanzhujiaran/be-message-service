@@ -9,14 +9,13 @@
 
 from datetime import datetime
 
-from loguru import logger
-from sqlalchemy import cast, func, or_, String
+from sqlalchemy import String, cast, func, or_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db.ban import UserBan
 from app.models.enums import BanDurationTypeEnum, BanServiceEnum, BanStatusEnum
-from app.models.schemas.ban import BanItem, BanListResp, BanServiceStatus, BanStatusResp
+from app.models.schemas.ban import BanItem, BanServiceStatus, BanStatusResp
 
 
 class BanService:

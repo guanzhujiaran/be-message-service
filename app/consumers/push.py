@@ -6,6 +6,7 @@ message.comment 等）。
 """
 
 from faststream.rabbit import RabbitMessage
+from loguru import logger
 
 from app.models import PushMessagePayload
 from app.services.push import PushMessageService
@@ -18,9 +19,16 @@ async def handle_message(message: PushMessagePayload, _msg: RabbitMessage) -> No
     用户信息已在投递前由 api 层拼进 message.title（标题前缀），
     消费者不再感知 user 字段，直接透传标题即可。
 
-    处理失败直接抛错，由 subscriber 的 ack_policy=NACK_ON_ERROR 自动重回队列重试；
-    不再内部 try/except 静默吞错。
+    推送失败**不重投**：`PushMessageService.send` 内部已按渠道降级并打 CRITICAL
+    日志（【彻底推送失败】），此处捕获异常后正常返回，消息被 ack 丢弃。站外提醒
+    属尽力而为，失败不补；避免失败消息被 NACK 反复重投直至死信。
     """
     config = merge_config(message)
     service = PushMessageService(config, push_type=message.push_type)
-    await service.send(message.title, message.content)
+    try:
+        await service.send(message.title, message.content)
+    except Exception as e:  # noqa: BLE001
+        logger.error(
+            f"推送消费失败，消息丢弃不重投 title={message.title} "
+            f"push_type={message.push_type}: {e}"
+        )

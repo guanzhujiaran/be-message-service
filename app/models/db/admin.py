@@ -6,8 +6,7 @@
   root 专属权限（查看内容明文 / 设置过审没过审）不可写入本表（落库前 sanitize）。
 """
 
-from sqlalchemy import BIGINT, Column, JSON, UniqueConstraint
-
+from sqlalchemy import BIGINT, JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.models.db.base import TimestampMixin

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """be-message-service Alembic 异步环境配置。
 
 只管理**主库**（元数据库）的 Schema：系统通知、事件提醒、私信索引 / 会话、
@@ -13,23 +12,24 @@ import asyncio
 import sys
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
+
+from alembic import context
 
 # 确保项目根目录在 sys.path 中，以便导入 app 模块
 _current_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(_current_dir.parent))
 
-from app.core.config import settings  # noqa: E402
+from app.core.config import settings
 
 # 导入所有表模型，确保注册到 SQLModel.metadata（autogenerate 依赖）
-from app.models.db import *  # noqa: F401, F403, E402
+from app.models.db import *
 
 target_metadata = SQLModel.metadata
 
 # 临时指向空 MySQL 数据库生成全量 base migration，生成后改回 settings.mysql_message_url
-_USE_TEMP_DB_FOR_AUTOGEN = True
+_USE_TEMP_DB_FOR_AUTOGEN = False
 
 if _USE_TEMP_DB_FOR_AUTOGEN:
     _DB_URL: str = settings.mysql_message_url.replace(

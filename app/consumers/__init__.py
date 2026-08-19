@@ -19,9 +19,9 @@ from app.consumers.dm import handle_dm_content
 from app.consumers.push import handle_message
 
 __all__ = [
-    "handle_message",
-    "handle_dm_content",
-    "handle_comment_notify",
     "handle_comment_audit",
     "handle_comment_count",
+    "handle_comment_notify",
+    "handle_dm_content",
+    "handle_message",
 ]

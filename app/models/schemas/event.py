@@ -92,11 +92,67 @@ class EventAggregateResp(SQLModel):
     page_size: int = 20
 
 
+class EventUserBrief(SQLModel):
+    """聚合条目中的一位触发者（对齐 B 站 msgfeed 的 users[]）。
+
+    后端单条最多返回 4 个触发者（按触发时间倒序去重），多余的不返回；
+    前端按 B 站样式展示（左侧最多 2 个头像堆叠 + 等N人文案）。
+    """
+
+    mid: int
+    nickname: str | None = None
+    avatar: str | None = None
+    fans: int = 0
+
+
+class EventMsgfeedContent(SQLModel):
+    """聚合条目中的内容实体（对齐 B 站 msgfeed 的 item）。"""
+
+    item_id: int = 0
+    type: str = ""
+    business: str = ""
+    title: str | None = None
+    desc: str | None = None
+    image: str | None = None
+    uri: str | None = None
+    ctime: int = 0
+
+
+class EventMsgfeedItem(SQLModel):
+    """按内容聚合的一条记录（对齐 B 站 msgfeed total.items[]）。"""
+
+    id: int = 0
+    users: list[EventUserBrief] = Field(default_factory=list)
+    item: EventMsgfeedContent = Field(default_factory=EventMsgfeedContent)
+    counts: int = 0
+    like_time: datetime | None = None
+    notice_state: int = 0
+
+
+class EventMsgfeedCursor(SQLModel):
+    """分页游标（对齐 B 站 msgfeed total.cursor）。"""
+
+    is_end: bool = False
+    id: int | None = None
+    time: datetime | None = None
+
+
+class EventMsgfeedSection(SQLModel):
+    """latest / total 共用的区块结构。"""
+
+    cursor: EventMsgfeedCursor | None = None
+    items: list[EventMsgfeedItem] = Field(default_factory=list)
+
+
 class EventListResp(SQLModel):
-    items: list[EventItem] = Field(default_factory=list)
-    total: int = 0
-    page_num: int = 1
-    page_size: int = 20
+    """互动提醒列表（对齐 B 站 x/msgfeed/* 聚合结构）。
+
+    - `latest`：最新若干条（含 cursor.last_view_at 语义，此处 cursor 复用为时间游标）；
+    - `total`：完整分页列表，`cursor` 用于下一页翻页（id 游标 + time 时间游标）。
+    """
+
+    latest: EventMsgfeedSection = Field(default_factory=EventMsgfeedSection)
+    total: EventMsgfeedSection = Field(default_factory=EventMsgfeedSection)
 
 
 class EventReadReq(SQLModel):
@@ -127,14 +183,14 @@ class EventUnreadResp(SQLModel):
 
 
 __all__ = [
-    "EventReportReq",
-    "EventReportResp",
-    "EventItem",
     "EventActorBrief",
     "EventAggregateItem",
     "EventAggregateResp",
+    "EventItem",
     "EventListResp",
     "EventReadReq",
     "EventReadResp",
+    "EventReportReq",
+    "EventReportResp",
     "EventUnreadResp",
 ]

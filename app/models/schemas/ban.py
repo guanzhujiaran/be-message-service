@@ -8,7 +8,7 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import BanDurationTypeEnum, BanServiceEnum, BanStatusEnum
+from app.models.enums import BanDurationTypeEnum, BanStatusEnum
 
 
 class BanCreateReq(SQLModel):
@@ -94,9 +94,9 @@ BanStatusResp.model_rebuild()
 
 __all__ = [
     "BanCreateReq",
-    "UnbanReq",
     "BanItem",
     "BanListResp",
-    "BanStatusResp",
     "BanServiceStatus",
+    "BanStatusResp",
+    "UnbanReq",
 ]

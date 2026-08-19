@@ -5,14 +5,18 @@
 本接口直连该库**只读**地按 mid 批量回查，不再依赖本地快照。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Annotated
+
+from bili_common.models import (
+    PptrUserSearchResult,
+    UserSearchParams,
+)
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import MsgAdminUser
 from app.models import StandardResponse
 from app.models.schemas import CommentUserBrief
 from app.services.pptr_user import PptrUserService
-from bili_common.models import PptrUserSearchItem, PptrUserSearchResult, UserSearchParams
 
 router = APIRouter(prefix="/api/v1/message/admin/user", tags=["message-admin-user"])
 

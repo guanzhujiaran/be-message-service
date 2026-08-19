@@ -8,14 +8,6 @@ be-gateway（Node.js）通过 amqplib 调本模块的 RPC 方法，完成用户�
 本模块只需被 main.py import 一次即可完成 RPC 注册（FastStream 全局 broker 单例）。
 """
 
-import traceback
-from functools import wraps
-
-from faststream.rabbit import RabbitQueue
-from loguru import logger
-
-from app.core.broker import broker, message_exchange
-from app.services.pptr_user import PptrUserService, _level_calc
 from bili_common.models import (
     PptrAddDailyLoginExpParams,
     PptrAddDailyLoginExpResult,
@@ -29,15 +21,15 @@ from bili_common.models import (
     PptrGetUserInfoParams,
     PptrGetUserLevelParams,
     PptrGetUserNavParams,
-    PptrSetUserLevelParams,
+    PptrSetResult,
     PptrSetUserDetailParams,
+    PptrSetUserLevelParams,
     PptrSetUserRoleParams,
     PptrUpdateUserInfoParams,
     PptrUpdateUserInfoResult,
     PptrUserCard,
     PptrUserLevelInfo,
     PptrUserProfile,
-    PptrSetResult,
     PptrUserSearchResult,
     RpcMethodName,
     StandardResponse,
@@ -46,52 +38,36 @@ from bili_common.models import (
     pptr_routing_key_for,
     success_response,
 )
+from faststream.rabbit import RabbitQueue
+
+from bili_common.rpc.safe import rpc_safe
+from loguru import logger
+
+from app.core.broker import broker, message_exchange
+from app.services.notify import NotifyService
+from app.services.pptr_user import PptrUserService, _level_calc
 
 
-def rpc_safe(func):
-    """RPC 边界：捕获 handler 异常并转为 error_response 回包。
+async def _push_new_user_notify(
+    *, user_name: str, uid: int, uname: str = ""
+) -> None:
+    """创建新用户后推送站内系统消息（写入 msg_notify，站内信）。
 
-    FastStream 0.7.1 在 RPC handler 抛异常时不会向 reply_to 发送任何响应，
-    导致 Node（amqplib）客户端永久等待直至超时（RpcTimeoutError）。为维持
-    请求/响应契约，服务端必须在边界捕获异常并返回结构化错误信封（而非吞错），
-    客户端据此立即得到错误结果而非超时。
-
-    注意：业务 / service 层仍保持「直接抛错、不静默」的约定；此处只是在
-    RPC 传输边界把异常翻译成回包，不构成错误屏蔽。
+    定位：**站内系统消息**，不经 PushMe / PushPlus 等第三方渠道。采用
+    `NotifyService.send_to_user` 的 CUSTOM 定向投放，独立事务写入；
+    弱依赖：失败仅记日志，不阻断调用方 RPC 返回。
     """
-
-    @wraps(func)
-    async def _wrapper(*args, **kwargs):
-        try:
-            return await func(*args, **kwargs)
-        except Exception as e:
-            # 打印完整 traceback 与详细错误信息，便于定位。
-            # 注意：Pydantic 的 ValidationError 默认 str 仅显示首个错误字段（如 "updatedAt"），
-            # 过于简略，这里额外展开 errors() 拿到完整的字段 / 类型 / 原因列表。
-            # 堆栈用 traceback.format_exc() 显式获取并字符串化，避免依赖 loguru 的
-            # exception=True（在 async / 事件循环上下文中可能拿不到活跃异常而丢堆栈）。
-            detail = str(e)
-            _errors = getattr(e, "errors", None)
-            if callable(_errors):
-                try:
-                    detail = f"{detail} | errors={_errors()}"
-                except Exception:
-                    pass
-            stack = traceback.format_exc()
-            logger.error(
-                "pptr RPC {} 失败: {}: {}\n{}\n------ traceback ------\n{}",
-                func.__name__,
-                type(e).__name__,
-                e,
-                detail,
-                stack,
-            )
-            # 业务异常若自带 code（如 ResourceConflictException 的 409），优先保留其业务码，
-            # 其余异常统一归为 500，避免前端拿到 500 却实为「昵称冲突」等可识别错误。
-            code = getattr(e, "code", None) or 500
-            return error_response(code=code, msg=f"{type(e).__name__}: {e}")
-
-    return _wrapper
+    try:
+        await NotifyService.send_to_user(
+            mid=uid,
+            title=f"[新用户注册] {user_name}",
+            content=(
+                f"新用户注册成功：user_name={user_name} uid={uid} "
+                f"uname={uname or '-'}"
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"创建用户后推送站内系统消息失败（弱依赖，已忽略）: {e}")
 
 
 def _profile_to_dto(info, detail, vip, level) -> PptrUserProfile:
@@ -201,6 +177,12 @@ async def rpc_create_user(params: PptrCreateUserParams) -> StandardResponse:
         vip_type=params.vip_type,
         vip_due_date=params.vip_due_date,
         vip_status=params.vip_status,
+        ip=params.ip,
+        ua=params.ua,
+    )
+    # 创建新用户后推送一条站内系统消息（写入 msg_notify，弱依赖、不阻断 RPC 返回）
+    await _push_new_user_notify(
+        user_name=params.user_name, uid=uid, uname=params.uname or ""
     )
     return success_response(data=PptrCreateUserResult(uid=uid, created=created))
 
@@ -409,17 +391,17 @@ async def rpc_get_user_nav(params: PptrGetUserNavParams) -> StandardResponse:
 
 
 __all__ = [
-    "rpc_get_user_info",
-    "rpc_get_user_card",
-    "rpc_create_user",
-    "rpc_update_user_info",
-    "rpc_get_user_level",
-    "rpc_set_user_level",
-    "rpc_set_user_detail",
-    "rpc_set_user_role",
-    "rpc_search_users",
-    "rpc_add_exp",
     "rpc_add_daily_login_exp",
+    "rpc_add_exp",
     "rpc_add_username_record",
+    "rpc_create_user",
+    "rpc_get_user_card",
+    "rpc_get_user_info",
+    "rpc_get_user_level",
     "rpc_get_user_nav",
+    "rpc_search_users",
+    "rpc_set_user_detail",
+    "rpc_set_user_level",
+    "rpc_set_user_role",
+    "rpc_update_user_info",
 ]

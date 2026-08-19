@@ -16,13 +16,13 @@
 
 from typing import Annotated
 
+from bili_common.models.depends import AuthInfo
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import SQLModel
 
 from app.core.database import SessionDep
-from app.dependencies import CurrentUser, require_permission, UserPermission
+from app.dependencies import CurrentUser, UserPermission, require_permission
 from app.models import StandardResponse
-from app.models.db.ban import UserBan
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
 from app.models.schemas import (
     BanCreateReq,
@@ -31,7 +31,6 @@ from app.models.schemas import (
     UnbanReq,
 )
 from app.services.ban_service import BanService
-from bili_common.models.depends import AuthInfo
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin-ban"])
 

@@ -17,16 +17,18 @@
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
-
 from bili_common.deps.auth import (
     get_auth_info_from_header,
+)
+from bili_common.deps.auth import (
     require_permission as _require_permission,
+)
+from bili_common.deps.auth import (
     require_root as _require_root,
 )
-from bili_common.deps.permissions import UserPermission, ROOT_ONLY_PERMISSIONS
 from bili_common.models.depends import AuthInfo
-from bili_common.exceptions import NotLoggedInException
+from fastapi import Depends, Header, HTTPException, status
+
 from app.services import jwt_service
 
 

@@ -28,19 +28,42 @@ from app.models.schemas import (
     CommentItem,
     CommentListResp,
     CommentOperationResp,
+    CommentReportReq,
+    CommentReportResp,
     CommentSubListResp,
     CommentTopReq,
     CommentTopResp,
     CommentUserBrief,
 )
-from app.services.comment import CommentService
 from app.services.ban_service import BanService
+from app.services.comment import CommentService
 from app.services.comment_action import CommentActionService
 from app.services.comment_read import CommentReadService
 from app.services.pptr_user import PptrUserService
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/comment", tags=["comment"])
+
+
+def resolve_ip_geo_pairs(
+    ip_v4: str | None, ip_v6: str | None
+) -> tuple[str | None, str | None]:
+    """按客户端 IP 解析属地 + ISP（GeoIP，失败静默降级）。
+
+    优先 IPv4（更接近真实接入点），无 v4 时回落 v6；两者都没有返回 None。
+    返回 `(ip_location, ip_isp)`，供评论/动态发布时保存展示。
+    """
+    try:
+        from app.services.geo_ip import lookup
+
+        ip = ip_v4 or ip_v6
+        r = lookup(ip)
+        # lookup 内部已用「未知」兜底（不抛异常），这里防御性保留 None 判断
+        if r is None:
+            return None, None
+        return r.poi, r.isp
+    except Exception:  # noqa: BLE001 - 解析失败静默降级
+        return None, None
 
 
 # ==================== 可选登录态（未登录则 viewer_mid=None）====================
@@ -88,6 +111,8 @@ async def add_comment(
         dict(request.headers),
         request.client.host if request.client else None,
     )
+    # 服务端按客户端 IP 解析属地 + ISP（GeoIP，失败静默降级为 None）
+    ip_location, ip_isp = resolve_ip_geo_pairs(ip_v4, ip_v6)
     try:
         data = await CommentService.add(
             session,
@@ -97,6 +122,8 @@ async def add_comment(
             ip_v4=ip_v4,
             ip_v6=ip_v6,
             user_agent=user_agent,
+            ip_location=ip_location,
+            ip_isp=ip_isp,
         )
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
@@ -164,6 +191,12 @@ async def list_main(
         except (TypeError, ValueError):
             return StandardResponse(code=400, msg="focus_rpid 不合法")
 
+    # 未登录（viewer_mid 缺失）：对标 B 站强制最多 10 条评论（不信任前端传入的 page_size），
+    # 并在响应里透传 viewer_is_anonymous 供前端渲染登录引导蒙层
+    is_anonymous = _viewer is None
+    if is_anonymous:
+        page_size = 10
+
     data = await CommentReadService.list_main(
         session,
         oid_int,
@@ -173,6 +206,7 @@ async def list_main(
         page_size=page_size,
         viewer_mid=_viewer,
         focus_rpid=focus_int,
+        viewer_is_anonymous=is_anonymous,
     )
     return StandardResponse(data=data)
 
@@ -283,6 +317,40 @@ async def comment_action(
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)
+
+
+@router.post("/report", response_model=StandardResponse[CommentReportResp], summary="举报评论")
+async def report_comment(
+    session: SessionDep,
+    user: RequiredUser,
+    req: CommentReportReq,
+) -> StandardResponse[CommentReportResp]:
+    """举报评论（幂等：一人对同一评论只记一次）。
+
+    累计有效举报数达 `settings.comment_report_threshold`（默认 3）时，
+    评论 state 由 `normal` → `auditing`，交管理员复核。
+    """
+    try:
+        rpid = int(req.rpid)
+    except (TypeError, ValueError):
+        return StandardResponse(code=400, msg="rpid 不合法")
+    try:
+        reported, switched = await CommentService.report(
+            session,
+            user.mid,
+            rpid,
+            req.reasonType,
+            req.reasonDesc,
+        )
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse(
+        data=CommentReportResp(
+            rpid=req.rpid,
+            reported=reported,
+            switched_to_auditing=switched,
+        )
+    )
 
 
 @router.get("/at/search", response_model=StandardResponse[list[CommentUserBrief]], summary="@用户搜索")

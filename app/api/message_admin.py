@@ -6,17 +6,15 @@
 """
 
 from datetime import datetime
-from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from bili_common.models import AdminStatusResponse
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from app.core.database import SessionDep
-from app.dependencies import CurrentUser, MsgAdminUser, RootUser
+from app.dependencies import CurrentUser, RootUser
 from app.models import StandardResponse
-from app.models.db.admin import MessageAdmin
 from app.services.message_admin import MessageAdminService
-from bili_common.models import AdminStatusResponse
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin"])
 
@@ -125,4 +123,4 @@ async def my_status(
     )
 
 
-__all__ = ["router", "AdminItem", "GrantAdminReq", "RevokeAdminReq"]
+__all__ = ["AdminItem", "GrantAdminReq", "RevokeAdminReq", "router"]

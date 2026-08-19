@@ -63,9 +63,36 @@ class NotifyPushPayload(SQLModel):
     mids: list[int] = Field(default_factory=list, description="本批目标用户")
 
 
+class UserDeactivatePayload(SQLModel):
+    """用户注销载体（异步执行完整删除流程）。
+
+    注销接口只校验并投递本消息，由消费者异步物理删除 pptr 四表 + 彻底清除
+    be-message 业务数据，避免接口同步阻塞删除大用户数据的耗时。
+    """
+
+    uid: int = Field(description="待注销用户 mid（>0）")
+
+
+class InteractionViewPayload(SQLModel):
+    """浏览统计载体（2.23.0）。
+
+    `/interaction/status` 接口对列表内每个资源组装本消息投递 `interaction.view` 队列，
+    由消费者异步按 `bizType+bizId+mid+refDate` 去重累计浏览数——
+    主链路（互动态查询）不再同步写浏览，MQ 抖动 / 消费失败不影响 status 响应。
+    浏览上报幂等：即使重试重复消费，ViewLog 唯一约束保证 Stat.viewCount 只首次 +1。
+    """
+
+    bizType: str = Field(description="资源类型（对外文字：dynamic/lottery/...）")
+    bizId: str = Field(description="资源 id（字符串雪花 id）")
+    mid: int = Field(description="浏览用户 mid")
+    refDate: str = Field(description="统计日期 YYYY-MM-DD")
+
+
 __all__ = [
     "DmContentPayload",
     "DmNotifyPayload",
     "EventPushPayload",
+    "InteractionViewPayload",
     "NotifyPushPayload",
+    "UserDeactivatePayload",
 ]

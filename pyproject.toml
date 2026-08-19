@@ -33,6 +33,9 @@ dependencies = [
     "pyjwt>=2.8.0",
     "httpx>=0.27.0",
     "casdoor>=1.41.0",
+    # ===== GeoIP（IP 属地解析，动态发布时自动填充位置）=====
+    "geoip2>=4.8.0",
+    "fastapi-i18n>=0.12.0",
 ]
 
 [tool.uv]

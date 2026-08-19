@@ -10,9 +10,8 @@ TestPushResponse / FeedbackRequest），与队列载体解耦。
 
 
 
-from sqlmodel import SQLModel, Field
-
 from bili_common.models.push import PushChannelConfig, PushMessagePayload
+from sqlmodel import Field, SQLModel
 
 
 class PushMessage(SQLModel):
@@ -66,10 +65,10 @@ class FeedbackRequest(SQLModel):
 
 # 重新导出公共载体，方便其他模块直接 `from app.models.push import PushMessagePayload`
 __all__ = [
+    "FeedbackRequest",
     "PushChannelConfig",
-    "PushMessagePayload",
     "PushMessage",
+    "PushMessagePayload",
     "TestPushRequest",
     "TestPushResponse",
-    "FeedbackRequest",
 ]

@@ -26,6 +26,7 @@
 
 from sqlalchemy import BIGINT, JSON, Text
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
+from bili_common.models.report import ReportBase
 
 from app.models.db.base import TimestampMixin, int_enum_type, str_enum_type
 from app.models.enums import (
@@ -33,6 +34,7 @@ from app.models.enums import (
     CommentStateEnum,
     CommentSubjectStateEnum,
     CommentTypeEnum,
+    MomentReportReasonEnum,
 )
 
 
@@ -190,6 +192,13 @@ class CommentContent(TimestampMixin, table=True):
     ip_v6: str | None = Field(
         default=None, max_length=45, description="原始IPv6，明文仅管理员可见"
     )
+    # ---- IP 属地（服务端 GeoIP 解析，随评论发布时保存，供前端展示）----
+    ip_location: str | None = Field(
+        default=None, max_length=64, description="IP 属地（国家/省/城市，如「浙江 杭州」）"
+    )
+    ip_isp: str | None = Field(
+        default=None, max_length=128, description="IP 运营商 ISP"
+    )
 
     plat: str | None = Field(default=None, max_length=32, description="来源平台")
     device: str | None = Field(default=None, max_length=64, description="来源设备")
@@ -248,11 +257,30 @@ class CommentAt(TimestampMixin, table=True):
     notified: bool = Field(default=False, description="是否已投递@通知")
 
 
+class CommentReport(ReportBase, table=True):
+    """评论举报表（继承 bili-common `ReportBase` 同构结构；bizType=comment，bizId=rpid）。
+
+    幂等：`ReportBaseService.record_report` 按 (reportMid, bizType, bizId) 去重；
+    业务唯一约束 `uq_comment_report_report_mid_biz_type_biz_id` 兜底。
+    """
+
+    __tablename__ = "msg_comment_report"
+    __table_args__ = (
+        UniqueConstraint(
+            "reportMid", "bizType", "bizId",
+            name="uq_comment_report_report_mid_biz_type_biz_id",
+        ),
+        Index("idx_comment_report_biz", "bizType", "bizId"),
+        {"extend_existing": True, "comment": "评论举报表：bizType=comment，bizId=rpid（继承 ReportBase）"},
+    )
+
+
 __all__ = [
-    "CommentSubject",
-    "CommentIndex",
-    "CommentContent",
     "CommentAction",
     "CommentAt",
+    "CommentContent",
+    "CommentIndex",
+    "CommentReport",
+    "CommentSubject",
     "SQLModel",
 ]

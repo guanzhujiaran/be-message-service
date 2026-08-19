@@ -13,7 +13,6 @@
 
 from app.models.enums import CommentStateEnum
 
-
 # ==================== 默认词库（演示用，后续由管理端 / 配置覆盖）====================
 # 高危：命中即拒审
 _HIGH_RISK_WORDS: list[str] = [
@@ -35,7 +34,7 @@ class _TrieNode:
     __slots__ = ("children", "is_end")
 
     def __init__(self) -> None:
-        self.children: dict[str, "_TrieNode"] = {}
+        self.children: dict[str, _TrieNode] = {}
         self.is_end: bool = False
 
 

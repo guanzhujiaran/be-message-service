@@ -17,7 +17,7 @@ from alembic import context
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.config import settings  # noqa: E402
+from app.core.config import settings
 
 # 导入 pptr 模型，确保表注册进 SQLModel.metadata
 from app.models import pptr_db

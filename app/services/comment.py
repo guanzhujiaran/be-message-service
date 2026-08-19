@@ -25,7 +25,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from loguru import logger
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -36,6 +36,7 @@ from app.models.db import (
     CommentAt,
     CommentContent,
     CommentIndex,
+    CommentReport,
     CommentSubject,
 )
 from app.models.enums import (
@@ -44,12 +45,15 @@ from app.models.enums import (
     CommentSubjectStateEnum,
     CommentTypeEnum,
     EventTypeEnum,
+    MomentReportReasonEnum,
     NotifyLevelEnum,
     SourceTypeEnum,
 )
-from app.models.schemas import CommentAddReq, CommentAddResp
+from bili_common.models.report import ReportBizTypeEnum
+from app.models.schemas import CommentAddReq, CommentAddResp, EventReportReq
 from app.services.comment_audit import audit_text
 from app.services.follow import FollowService
+from app.services.moment_stat import MomentStatService
 from app.services.notify import NotifyService
 from app.utils.audit_source import build_comment_source
 from app.utils.notify_markup import markup_inline_link
@@ -68,6 +72,23 @@ def summarize_text(text: str, limit: int = _EXCERPT_LIMIT) -> str:
 
 # 正文里 @提及的占位符写法：@{114514}
 _AT_PATTERN = re.compile(r"@\{(\d{1,19})\}")
+
+
+def normalize_at_mentions(message: str, at_name_to_mid: dict[str, int] | None) -> str:
+    """把正文里的 `@昵称` 文本归一化为 `@{mid}` 占位符（对齐 B 站提交模型）。
+
+    - `at_name_to_mid` 提供 昵称 → mid 映射；
+    - 命中的 `@昵称` 全部替换为 `@{mid}`，未命中的保持原样（前端已限制只能选已搜索到的用户）；
+    - 已存在的 `@{mid}` 占位符原样保留。
+    """
+    if not message or not at_name_to_mid:
+        return message
+    for uname, at_mid in at_name_to_mid.items():
+        if not uname or not at_mid:
+            continue
+        # 精确替换正文里的 @昵称 文本（昵称可能含特殊字符，用 re.escape）
+        message = message.replace(f"@{uname}", f"@{{{int(at_mid)}}}")
+    return message
 
 # 列表中「对所有人可见」的状态集合
 VISIBLE_STATES: tuple[CommentStateEnum, ...] = (CommentStateEnum.NORMAL,)
@@ -225,6 +246,8 @@ class CommentService:
         ip_v4: str | None = None,
         ip_v6: str | None = None,
         user_agent: str | None = None,
+        ip_location: str | None = None,
+        ip_isp: str | None = None,
     ) -> CommentAddResp:
         """发表一条评论（一级或楼中楼）。
 
@@ -245,6 +268,10 @@ class CommentService:
             raise ValueError(
                 f"评论内容最长 {settings.comment_message_max_length} 个字"
             )
+
+        # 正文里 @昵称 文本 → 归一化为 @{mid} 占位符存储（对齐 B 站提交模型：
+        # 前端传 message 含 @昵称 + at_name_to_mid 映射）
+        message = normalize_at_mentions(message, req.at_name_to_mid)
 
         pictures = _validate_pictures(req.pictures)
         at_mids = parse_at_mids(message, req.at_mids)
@@ -295,6 +322,11 @@ class CommentService:
             subject_values["all_count"] = col(CommentSubject.all_count) + 1
             if root == 0:
                 subject_values["root_count"] = col(CommentSubject.root_count) + 1
+            # 评论对象是 Moment（type=DYNAMIC）时，回写动态统计 commentCount +1
+            # （与评论区冗余计数口径一致：仅对外可见的 NORMAL 评论计入）
+            if req.type is CommentTypeEnum.DYNAMIC:
+                await MomentStatService.ensure_stat_row(session, oid)
+                await MomentStatService.incr_stat(session, oid, "commentCount", 1)
         await session.exec(  # type: ignore[call-overload]
             update(CommentSubject)
             .where(col(CommentSubject.id) == subject.id)
@@ -332,6 +364,8 @@ class CommentService:
             emote_meta=req.emote_meta,
             ip_v4=ip_v4,
             ip_v6=ip_v6,
+            ip_location=ip_location,
+            ip_isp=ip_isp,
             plat=plat,
             device=device,
             created_at=now,
@@ -395,12 +429,12 @@ class CommentService:
                 )
             if root != 0 and reply_to_mid and reply_to_mid != mid:
                 await CommentService._notify_reply(
-                    mid, oid, rpid, reply_to_mid, message, uname
+                    mid, oid, rpid, reply_to_mid, message, uname, req.type
                 )
             for at_mid in at_mids:
                 if at_mid != mid:
                     await CommentService._notify_at(
-                        mid, oid, rpid, at_mid, uname
+                        mid, oid, rpid, at_mid, uname, req.type
                     )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"评论通知投递失败（弱依赖，已忽略）: {e}")
@@ -568,6 +602,12 @@ class CommentService:
                     .where(col(CommentSubject.id) == subject.id)
                     .values(**subject_values)
                 )
+            # 删除的是 Moment 评论（DYNAMIC）且曾计入 → 回写动态统计 commentCount -1
+            if was_visible and row.type is CommentTypeEnum.DYNAMIC:
+                await MomentStatService.ensure_stat_row(session, row.oid)
+                await MomentStatService.decr_stat(
+                    session, row.oid, "commentCount", floor_zero=True
+                )
 
         if row.root != 0:
             await session.exec(  # type: ignore[call-overload]
@@ -642,6 +682,40 @@ class CommentService:
         await session.commit()
         return True
 
+    # ==================== 举报（P4-T9）====================
+
+    @staticmethod
+    async def report(
+        session: AsyncSession,
+        viewer_mid: int,
+        rpid: int,
+        reason_type: MomentReportReasonEnum,
+        reason_desc: str | None = None,
+    ) -> tuple[bool, bool]:
+        """举报评论（2.14.0 起改调统一举报服务，幂等：一人一评论一次）。
+
+        统一落库 `TReportRecord`（bizType=comment、bizId=rpid），达阈值自动转审核
+        （`settings.report_threshold`）。
+
+        Returns:
+            (reported, switched_to_auditing)：与统一 `ReportService.report` 一致
+            （created / triggered）。
+        """
+        from app.models.schemas import ReportCreateReq
+        from app.services.report import ReportService
+
+        return await ReportService.report(
+            session,
+            viewer_mid,
+            ReportCreateReq(
+                bizType=ReportBizTypeEnum.COMMENT.value,
+                bizId=rpid,
+                reasonType=int(reason_type),
+                reasonDesc=reason_desc,
+                pics=None,
+            ),
+        )
+
     # ==================== 通知（Phase 3.3，弱依赖）====================
 
     @staticmethod
@@ -652,14 +726,22 @@ class CommentService:
         to_mid: int,
         message: str,
         actor_uname: str | None = None,
+        type_: "CommentTypeEnum" = CommentTypeEnum.OTHER,
     ) -> None:
         """弱依赖：通知被回复者。
 
         独立会话投递：即便事件落库失败，也绝不污染「发评」主事务的会话。
+        type_=DYNAMIC 时（评论的对象是 Moment）事件来源标记为 DYNAMIC（P6-T7）。
         """
-        from app.services.event import EventService
         from loguru import logger
 
+        from app.services.event import EventService
+
+        source_type = (
+            SourceTypeEnum.DYNAMIC
+            if type_ == CommentTypeEnum.DYNAMIC
+            else SourceTypeEnum.COMMENT
+        )
         try:
             async with new_session() as ns:
                 await EventService.report(
@@ -667,7 +749,7 @@ class CommentService:
                     EventReportReq(
                         mid=to_mid,
                         event_type=EventTypeEnum.REPLY,
-                        source_type=SourceTypeEnum.COMMENT,
+                        source_type=source_type,
                         source_id=str(oid),
                         actor_mid=actor_mid,
                         actor_name=actor_uname,
@@ -685,14 +767,22 @@ class CommentService:
         rpid: int,
         to_mid: int,
         actor_uname: str | None = None,
+        type_: "CommentTypeEnum" = CommentTypeEnum.OTHER,
     ) -> None:
         """弱依赖：通知被 @ 者。
 
-        独立会话投递：失败不影响发评主流程。
+        独立会话投递：失败不影响发评主流程。type_=DYNAMIC 时（评论对象为 Moment）
+        事件来源标记为 DYNAMIC（P6-T7 一致性）。
         """
-        from app.services.event import EventService
         from loguru import logger
 
+        from app.services.event import EventService
+
+        source_type = (
+            SourceTypeEnum.DYNAMIC
+            if type_ == CommentTypeEnum.DYNAMIC
+            else SourceTypeEnum.COMMENT
+        )
         try:
             async with new_session() as ns:
                 await EventService.report(
@@ -700,7 +790,7 @@ class CommentService:
                     EventReportReq(
                         mid=to_mid,
                         event_type=EventTypeEnum.AT,
-                        source_type=SourceTypeEnum.COMMENT,
+                        source_type=source_type,
                         source_id=str(oid),
                         actor_mid=actor_mid,
                         actor_name=actor_uname,
@@ -712,8 +802,8 @@ class CommentService:
 
 
 __all__ = [
+    "VISIBLE_STATES",
     "CommentService",
     "generate_rpid",
     "parse_at_mids",
-    "VISIBLE_STATES",
 ]

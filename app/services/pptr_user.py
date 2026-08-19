@@ -12,57 +12,54 @@
 与 pptr 侧 sequelize 的默认行为对齐。
 """
 
-from fastapi import HTTPException
-from loguru import logger
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import col, select, func
+import datetime
+import uuid
+
 from bili_common.exceptions import ResourceConflictException
+from bili_common.models import (
+    VALID_ROLES,
+    PptrUserLevelInfo,
+    PptrUserNavData,
+    PptrUserRoleInfo,
+    PptrUserSearchItem,
+    PptrUserVipInfo,
+)
+from loguru import logger
+from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.core.database import new_pptr_session
+
 from app.core.config import settings
+from app.core.database import new_pptr_session
 from app.core.sharding import generate_uid
+from app.models.enums import ExpActionType
+from app.services.geo_ip import lookup as geo_lookup
+from app.utils.ip_mask import mask_ipv4, mask_ipv6
+from app.models.pptr_db import (
+    PptrUserActInfoLog,
+    PptrUserExpRecord,
+    PptrUserNameRecord,
+)
 from app.models.pptr_user import (
     PptrUserDetail,
     PptrUserInfo,
     PptrUserLevel,
     PptrUserVip,
 )
-from app.models.enums import ExpActionType
-from app.models.pptr_db import (
-    PptrUserExpRecord,
-    PptrUserNameRecord,
+from app.models.schemas import (
+    CommentUserBrief,
+    SpaceInfoResp,
+    SpaceOfficial,
+    SpaceVipWrap,
+    UserActLogItem,
+    UserActLogListResp,
+    UserExpRecordItem,
+    UserExpRecordListResp,
 )
-from bili_common.models import (
-    PptrUserLevelInfo,
-    PptrUserRoleInfo,
-    PptrUserSearchItem,
-    PptrUserVipInfo,
-    VALID_ROLES,
-    PptrUserNavData,
-)
-from app.models.schemas import CommentUserBrief
-import datetime
-import uuid
+
 # 以下成长等级相关的配置（经验阈值 / 最大等级 / 角色文案）已全部下沉到 app.core.config
 # 的 Settings，由环境变量驱动（对齐 pptr common_config.level_config 与 user_role_const）：
 #   PPTR_LEVEL_MAX_LEVEL / PPTR_LEVEL_EXP_REQUIREMENTS / PPTR_LEVEL_ROLE_DESCRIPTION
 # 业务代码统一从 `settings` 读取，不再在此处硬编码。
-
-
-def _mask_user_name(user_name: str | None) -> str | None:
-    """对注册默认名做「首尾保留、中间打码」的脱敏（用于昵称缺失时的兜底展示）。
-
-    与 pptr `UserService.generate_user_detail_info` 的脱敏语义保持一致：
-    取中间子串 `user_name[1:-1]`，把它在整个串中出现的位置全部替换为等长 `*`
-    （即 JS `replaceAll(middle, '*'.repeat(len))` 的等价实现）。
-    长度 < 2 时保持原样。
-    """
-    if not user_name:
-        return user_name
-    middle = user_name[1:-1]
-    if not middle:
-        return user_name
-    return user_name.replace(middle, "*" * len(middle))
 
 
 def _mask_email(email: str | None) -> str | None:
@@ -78,6 +75,19 @@ def _mask_email(email: str | None) -> str | None:
         return f"{local[:1]}***{domain}"
     star_count = max(3, len(local) - 5)
     return f"{local[:3]}{'*' * star_count}{domain}"
+
+
+def _mask_ip(ip: str) -> str:
+    """IP 脱敏：按协议打码，IPv4→`a.b.*.*`，IPv6→`a:b:*`；空/非法回退空串。"""
+    if not ip:
+        return ""
+    v4 = mask_ipv4(ip)
+    if v4 is not None:
+        return v4
+    v6 = mask_ipv6(ip)
+    if v6 is not None:
+        return v6
+    return ""
 
 
 def _level_calc(current_exp: int, uid: int = 0) -> PptrUserLevelInfo:
@@ -97,8 +107,9 @@ def _level_calc(current_exp: int, uid: int = 0) -> PptrUserLevelInfo:
             current_min = required
         else:
             break
+    # next_exp = 距下一级还需经验（下一级门槛 - 当前累积经验），在服务层计算
     if current_level < max_level:
-        next_exp = reqs.get(current_level + 1, 0)
+        next_exp = max(0, reqs.get(current_level + 1, 0) - exp)
     else:
         next_exp = 0  # 满级无下一级
     return PptrUserLevelInfo(
@@ -126,9 +137,8 @@ def _build_brief(
     - 额外补充数据库里已有但此前未返回的字段：`vip_due_date` / `exp`（当前经验） /
       `role`（角色）/ 脱敏后的 `email`。
     """
-    uname = (
-        detail.uname if (detail and detail.uname) else _mask_user_name(info.user_name)
-    )
+    # uname 优先取可改昵称，缺失时直接回落到注册名（不打码，注册名本就是公开信息）
+    uname = detail.uname if (detail and detail.uname) else info.user_name
     level_value = 0
     if level is not None and level.current_level is not None:
         level_value = int(level.current_level)
@@ -225,9 +235,9 @@ class PptrUserService:
         *,
         session: AsyncSession | None = None,
     ) -> list[CommentUserBrief]:
-        """按昵称 / 注册名前缀搜索用户（@ 面板用）。
+        """按昵称 / 注册名模糊搜索用户（@ 面板用）。
 
-        走前缀匹配 `keyword%`（而非 `%keyword%` 左模糊），对索引友好；
+        采用模糊匹配 `%keyword%`（任意位置命中），
         同时匹配可改昵称 `uname` 与注册名 `user_name`。
         """
         keyword = (keyword or "").strip()
@@ -235,7 +245,7 @@ class PptrUserService:
             return []
         # 转义 LIKE 通配符，避免用户输入 % / _ 造成异常匹配
         escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = f"{escaped}%"
+        pattern = f"%{escaped}%"
 
         stmt = (
             _base_select()
@@ -327,11 +337,8 @@ class PptrUserService:
             items: list[PptrUserSearchItem] = []
             for info, detail, vip, level in rows:
                 mid = int(info.uid)
-                uname = (
-                    detail.uname
-                    if (detail and detail.uname)
-                    else _mask_user_name(info.user_name)
-                )
+                # uname 不打码：优先可改昵称，缺失时直接回落到注册名（公开信息）
+                uname = detail.uname if (detail and detail.uname) else info.user_name
                 role = (info.role or "level0").lower()
                 role_desc = settings.level_role_description.get(role, "普通用户 (Lv0)")
                 level_info = _level_calc(level.current_exp if level else 0)
@@ -429,19 +436,95 @@ class PptrUserService:
             return await _run(s)
 
     @staticmethod
+    async def get_space_info(
+        uid: int,
+        *,
+        session: AsyncSession | None = None,
+    ) -> SpaceInfoResp | None:
+        """构建单个用户的完整空间资料（对标 B 站 `/x/space/wbi/acc/info` 的 data）。
+
+        数据源为 pptr 四表（`get_user_profile`），用户不存在返回 ``None``
+        （由路由层据此返回 `USER_NOT_FOUND` 错误码）。
+
+        ``is_followed`` / ``is_self`` 依赖关注关系（FollowService，走 MySQL 会话），
+        由路由层在取得本方法结果后补充，此处不设置。
+        """
+        profile = await PptrUserService.get_user_profile(uid=int(uid), session=session)
+        if profile is None:
+            return None
+        info, detail, vip, level = profile
+
+        vip_type = int(vip.vip_type) if vip and vip.vip_type is not None else 0
+        vip_status = int(vip.vip_status) if vip and vip.vip_status is not None else 0
+        vip_due_date = int(vip.vip_due_date) if vip and vip.vip_due_date is not None else 0
+
+        birthday = ""
+        if detail and detail.birthday:
+            try:
+                birthday = detail.birthday.strftime("%m-%d")
+            except (AttributeError, ValueError):
+                birthday = ""
+
+        return SpaceInfoResp(
+            mid=int(info.uid),
+            name=(detail.uname if detail and detail.uname else info.user_name) or "",
+            sex=(detail.sex if detail else "") or "保密",
+            face=detail.avatar if detail else None,
+            sign=(detail.sign if detail else "") or "",
+            level=(
+                int(level.current_level)
+                if level and level.current_level is not None
+                else 0
+            ),
+            birthday=birthday,
+            vip=SpaceVipWrap(
+                type=vip_type,
+                status=vip_status,
+                due_date=vip_due_date,
+            ),
+            official=SpaceOfficial(),
+            pendant=None,
+            nameplate=None,
+            top_photo=None,
+            is_followed=False,
+            is_self=False,
+        )
+
+    @staticmethod
     async def get_user_nav_data(
         uid: int,
         *,
+        ip: str = "",
+        ua: str = "",
         session: AsyncSession | None = None,
     ) -> PptrUserNavData | None:
         """一次调用拿齐导航栏全部数据（含每日登录加经验、等级计算、邮件脱敏）。
 
         pptr 通过 RPC `get_user_nav` 直接调用本方法，一次 RPC 即完成加经验 + 数据查询。
         加经验失败仅降级，不阻断 nav 数据返回。
-        """
 
-        # 每日首次登录加经验（幂等），失败降级不影响 nav 返回
-        await PptrUserService.add_daily_login_exp(uid=uid)
+        额外行为：每日首次调用（`add_daily_login_exp` 返回 `can_add_exp=True`，即当日首次活跃）
+        视作一次登录，向 `TUserActInfoLog` 写入一条 `login_succ` 记录，使登录记录能反映
+        「每日凌晨后首次访问」。`ip` / `ua` 由 HTTP 入口从 request 提取；RPC 入口缺省为空串。
+        """
+        exp_result = await PptrUserService.add_daily_login_exp(uid=uid)
+        if exp_result.get("can_add_exp"):
+            # 当日首次活跃：记录一条「每日登录」行为（best-effort，失败不影响 nav 返回）
+            # act_info 用 daily_login 与手动登录（login_succ）区分，前端可单独标注
+            try:
+                async with new_pptr_session() as s:
+                    s.add(
+                        PptrUserActInfoLog(
+                            mid=int(uid),
+                            ip=ip or "",
+                            ua=ua or "",
+                            headers={},
+                            act_info="daily_login",
+                        )
+                    )
+                    await s.commit()
+            except Exception:  # noqa: BLE001 - 记录失败仅降级
+                logger.warning(f"[nav] 用户 {uid} 记录每日首次登录行为失败（不影响 nav 返回）")
 
         async def _run(s: AsyncSession) -> PptrUserNavData | None:
             row = (
@@ -491,6 +574,8 @@ class PptrUserService:
         vip_type: int = 0,
         vip_due_date: int = 0,
         vip_status: int = 0,
+        ip: str | None = None,
+        ua: str | None = None,
         session: AsyncSession | None = None,
     ) -> tuple[int, bool]:
         """创建用户（一次性写入 TUserInfo + TUserDetail + TUserLevel + TUserVip）。
@@ -584,6 +669,19 @@ class PptrUserService:
             await s.flush()
             s.add(level)
             s.add(vip)
+            # 注册 IP 信息：与用户创建共享同一事务，写入 TUserActInfoLog 并回填 reg_ip_info_id
+            if ip:
+                act_log = PptrUserActInfoLog(
+                    mid=int(info.uid),
+                    ip=ip,
+                    ua=ua or "",
+                    headers={},
+                    act_info="reg",
+                )
+                s.add(act_log)
+                await s.flush()
+                info.reg_ip_info_id = act_log.pk
+                await s.flush()
             await s.commit()
             await s.refresh(info)
             return int(info.uid), True
@@ -606,7 +704,10 @@ class PptrUserService:
             # （链式引用 TUserDetail.mid）可能因 UoW 未识别依赖而先被 flush，触发 FK 违约
             await s.flush()
         else:
-            if detail.uname is not None:
+            # uname（昵称）仅在用户创建时写入；用户已存在时【不覆盖】——
+            # 登录/每日加经验等流程传入的 Casdoor 显示名不得改动用户手动设置的昵称。
+            # 仅当现有昵称为空时补全，避免用户一直无昵称。
+            if not (d.uname or "") and detail.uname is not None:
                 d.uname = detail.uname
             if detail.avatar is not None:
                 d.avatar = detail.avatar
@@ -1048,5 +1149,117 @@ class PptrUserService:
             )
             await s.commit()
         return True
+
+    # ------------------------------------------------------------------
+    # 用户中心「我的记录」：登录记录 / 经验记录（最近 7 天，只读查询）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def list_act_log(
+        uid: int,
+        offset: int = 0,
+        limit: int = 10,
+        days: int = 7,
+    ) -> UserActLogListResp:
+        """查询当前用户最近 `days` 天的登录 / 行为记录（TUserActInfoLog）。
+
+        按 `createdAt` 倒序，`offset + limit` 分页；`has_more` 指示是否还有下一页。
+
+        出参处理：
+        - `ip`：脱敏（IPv4→`a.b.*.*`，IPv6→`a:b:*`），不透出明文；
+        - `location`：用 `geo_ip.lookup()` 实时解析「地区 + 运营商」，失败回退「未知」；
+        - 不透出 headers 全量 JSON。
+        """
+        offset = max(0, int(offset))
+        limit = max(1, min(int(limit), 100))
+        days = max(1, int(days))
+        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+
+        stmt = (
+            select(PptrUserActInfoLog)
+            .where(
+                col(PptrUserActInfoLog.mid) == int(uid),
+                PptrUserActInfoLog.createdAt >= since,
+                col(PptrUserActInfoLog.deletedAt).is_(None),
+            )
+            .order_by(col(PptrUserActInfoLog.createdAt).desc())
+            .offset(offset)
+            .limit(limit + 1)  # 多取一条判断 has_more
+        )
+
+        async with new_pptr_session() as s:
+            rows = (await s.exec(stmt)).all()
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for row in rows:
+            raw_ip = row.ip or ""
+            geo = geo_lookup(raw_ip)
+            # 地理位置：地区(poi) + 运营商(isp)，均有则拼接，缺省回退「未知」
+            loc_parts = [p for p in (geo.poi, geo.isp) if p]
+            location = " ".join(loc_parts) if loc_parts else "未知"
+            items.append(
+                UserActLogItem(
+                    time=row.createdAt,
+                    ip=_mask_ip(raw_ip),
+                    location=location,
+                    ua=(row.ua or ""),
+                    act_info=(row.act_info or "login_succ"),
+                )
+            )
+        return UserActLogListResp(items=items, has_more=has_more)
+
+    @staticmethod
+    async def list_exp_record(
+        uid: int,
+        offset: int = 0,
+        limit: int = 10,
+        days: int = 7,
+    ) -> UserExpRecordListResp:
+        """查询当前用户最近 `days` 天的经验变动记录（TUserExpRecord）。
+
+        按 `createdAt` 倒序，`offset + limit` 分页；`has_more` 指示是否还有下一页。
+        `action_type` 为 int，同时返回其可读名称（对齐 ExpActionType，如 daily_login）。
+        """
+        offset = max(0, int(offset))
+        limit = max(1, min(int(limit), 100))
+        days = max(1, int(days))
+        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+
+        stmt = (
+            select(PptrUserExpRecord)
+            .where(
+                col(PptrUserExpRecord.mid) == int(uid),
+                PptrUserExpRecord.createdAt >= since,
+            )
+            .order_by(col(PptrUserExpRecord.createdAt).desc())
+            .offset(offset)
+            .limit(limit + 1)  # 多取一条判断 has_more
+        )
+
+        async with new_pptr_session() as s:
+            rows = (await s.exec(stmt)).all()
+
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for row in rows:
+            at = int(row.action_type or 0)
+            try:
+                action_name = ExpActionType(at).name.lower()
+            except (ValueError, KeyError):
+                action_name = ""
+            items.append(
+                UserExpRecordItem(
+                    time=row.createdAt,
+                    action_type=at,
+                    action_name=action_name,
+                    exp=int(row.exp or 0),
+                    ref_date=row.ref_date or "",
+                )
+            )
+        return UserExpRecordListResp(items=items, has_more=has_more)
+
 
 __all__ = ["PptrUserService"]

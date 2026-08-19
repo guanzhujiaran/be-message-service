@@ -1,7 +1,7 @@
 """系统通知模块的请求 / 响应模型。"""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -164,7 +164,7 @@ class SystemNotifyItem(SQLModel):
     def from_notify(cls, item: "NotifyItem") -> "SystemNotifyItem":
         publish_at = item.publish_at
         if publish_at.tzinfo is None:
-            publish_at = publish_at.replace(tzinfo=timezone.utc)
+            publish_at = publish_at.replace(tzinfo=UTC)
         cursor = int(publish_at.timestamp() * 1_000_000_000)
         content = json.dumps({"web": item.content}, ensure_ascii=False)
         return cls(
@@ -196,17 +196,17 @@ class BiliSystemNotifyResp(SQLModel):
 
 
 __all__ = [
-    "NotifyCreateReq",
-    "NotifyUpdateReq",
-    "NotifyItem",
+    "BiliSystemNotifyResp",
     "NotifyAdminItem",
-    "NotifyPullResp",
-    "NotifyListResp",
     "NotifyAdminListResp",
+    "NotifyCreateReq",
+    "NotifyItem",
+    "NotifyListResp",
+    "NotifyPullResp",
     "NotifyReadReq",
     "NotifyReadResp",
-    "SystemNotifySource",
+    "NotifyUpdateReq",
     "SystemNotifyItem",
     "SystemNotifyListResp",
-    "BiliSystemNotifyResp",
+    "SystemNotifySource",
 ]

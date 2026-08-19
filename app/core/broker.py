@@ -49,6 +49,10 @@ RK_COMMENT_NOTIFY = "message.comment.notify"
 RK_COMMENT_AUDIT = "message.comment.audit"
 # 评论：楼层发号与计数削峰（串行化，防写倾斜）
 RK_COMMENT_COUNT = "message.comment.count"
+# 用户注销：异步执行完整删除流程
+RK_USER_DEACTIVATE = "message.user.deactivate"
+# 浏览统计：互动状态接口投递、消费者去重累计（低优先级高频率，异步解耦）
+RK_INTERACTION_VIEW = "interaction.view"
 
 # ==================== 队列 ====================
 # 外部渠道推送（站外提醒，独立于站内信）
@@ -84,18 +88,36 @@ comment_count_queue = RabbitQueue(
     durable=True,
 )
 
+# 用户注销：独立队列，异步执行完整删除流程
+user_deactivate_queue = RabbitQueue(
+    "message_user_deactivate_queue",
+    routing_key=RK_USER_DEACTIVATE,
+    durable=True,
+)
+
+# 浏览统计：独立队列，异步去重累计（与站内信 / 推送物理隔离）
+interaction_view_queue = RabbitQueue(
+    "interaction_view_queue",
+    routing_key=RK_INTERACTION_VIEW,
+    durable=True,
+)
+
 
 __all__ = [
-    "broker",
-    "message_exchange",
-    "message_queue",
-    "dm_content_queue",
-    "comment_notify_queue",
-    "comment_audit_queue",
-    "comment_count_queue",
-    "RK_PUSH",
-    "RK_DM_CONTENT",
-    "RK_COMMENT_NOTIFY",
     "RK_COMMENT_AUDIT",
     "RK_COMMENT_COUNT",
+    "RK_COMMENT_NOTIFY",
+    "RK_DM_CONTENT",
+    "RK_INTERACTION_VIEW",
+    "RK_PUSH",
+    "RK_USER_DEACTIVATE",
+    "broker",
+    "comment_audit_queue",
+    "comment_count_queue",
+    "comment_notify_queue",
+    "dm_content_queue",
+    "interaction_view_queue",
+    "message_exchange",
+    "message_queue",
+    "user_deactivate_queue",
 ]

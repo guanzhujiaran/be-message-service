@@ -14,10 +14,10 @@ import asyncio
 import sys
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config as AlembicConfig
 from loguru import logger
 
+from alembic import command
 from app.core.config import settings
 
 # 项目根目录（be-message-service/），alembic.ini 位于此处
@@ -71,4 +71,4 @@ async def run_alembic_pptr_upgrade() -> bool:
         return False
 
 
-__all__ = ["run_alembic_upgrade", "run_alembic_pptr_upgrade", "PROJECT_ROOT"]
+__all__ = ["PROJECT_ROOT", "run_alembic_pptr_upgrade", "run_alembic_upgrade"]

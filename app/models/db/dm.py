@@ -169,4 +169,4 @@ class DmContentDeadLetter(TimestampMixin, table=True):
     resolved: bool = Field(default=False, index=True, description="是否已补写成功")
 
 
-__all__ = ["DmSession", "DmMessageIndex", "DmContentDeadLetter", "SQLModel"]
+__all__ = ["DmContentDeadLetter", "DmMessageIndex", "DmSession", "SQLModel"]

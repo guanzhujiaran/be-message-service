@@ -29,7 +29,7 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import ensure_current_month_shards
 from app.models.db import CommentAction, CommentIndex, CommentSubject
-from app.models.enums import CommentActionEnum, CommentStateEnum
+from app.models.enums import CommentActionEnum
 from app.services.comment import VISIBLE_STATES
 from app.services.comment_action import compute_hot_score
 from app.services.dm import DmService
@@ -271,12 +271,12 @@ def shutdown_scheduler() -> None:
 
 
 __all__ = [
-    "scheduler",
-    "start_scheduler",
-    "shutdown_scheduler",
-    "dispatch_notify_job",
-    "retry_dead_letter_job",
-    "prewarm_shard_job",
     "comment_hot_score_job",
     "comment_reconcile_job",
+    "dispatch_notify_job",
+    "prewarm_shard_job",
+    "retry_dead_letter_job",
+    "scheduler",
+    "shutdown_scheduler",
+    "start_scheduler",
 ]

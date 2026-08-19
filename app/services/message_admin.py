@@ -5,11 +5,11 @@
 - root 专属权限（查看内容明文 / 设置过审没过审）不可授予他人（落库前 sanitize）。
 """
 
+from bili_common.deps.permissions import sanitize_permissions
 from sqlmodel import func, select
 
 from app.core.database import SessionDep
 from app.models.db.admin import MessageAdmin
-from bili_common.deps.permissions import sanitize_permissions
 
 
 class MessageAdminService:

@@ -57,11 +57,12 @@ class NotifyLevelEnum(StrEnum):
 
 
 class EventTypeEnum(StrEnum):
-    """用户行为事件类型（点赞 / 回复 / @提及）。"""
+    """用户行为事件类型（点赞 / 回复 / @提及 / 审核驳回）。"""
 
     LIKE = "like"
     REPLY = "reply"
     AT = "at"
+    AUDIT_REJECT = "audit_reject"
 
 
 class SourceTypeEnum(StrEnum):
@@ -256,6 +257,116 @@ class ExpActionType(IntEnum):
     # 后续扩展其他行为：POST_COMMENT = 2, SHARE_VIDEO = 3, 等
 
 
+# ==================== 用户动态（动态卡片模块）====================
+
+
+class MomentTypeEnum(IntEnum):
+    """Moment 类型（原"动态"，对齐 B站 MomentType，概念重命名为 Moment）。
+
+    MVP 仅支持 WORD / FORWARD，其余类型后续迭代补充。
+    数据库存 int，对外接口转 string 名称。
+    """
+
+    FORWARD = 1
+    WORD = 6
+
+
+class MomentAuditStatusEnum(StrEnum):
+    """Moment 审核生命周期状态。
+
+    - `auditing`：审核中（先发后审，作者本人空间可见，普通用户不可见）；
+    - `normal`  ：审核通过，进入 Feed 流全量可见；
+    - `rejected`：审核驳回，作者可编辑后重新提交或删除；
+    - `hidden`  ：管理员下架。
+    """
+
+    AUDITING = "auditing"
+    NORMAL = "normal"
+    REJECTED = "rejected"
+    HIDDEN = "hidden"
+
+
+class MomentTopicAuditStatusEnum(StrEnum):
+    """话题审核生命周期状态（TMomentTopic.auditStatus，对齐动态审核）。
+
+    - `auditing`：待审核（用户创建，不公开展示）；
+    - `normal`  ：审核通过，进入话题广场 / Feed / 热搜；
+    - `rejected`：审核驳回，仅创建者「我的话题」可见（含驳回原因）。
+    """
+
+    AUDITING = "auditing"
+    NORMAL = "normal"
+    REJECTED = "rejected"
+
+
+class MomentVisibleScopeEnum(IntEnum):
+    """Moment 可见范围。"""
+
+    # 公开
+    PUBLIC = 0
+    # 仅关注的人
+    FOLLOWER = 1
+    # 仅自己
+    SELF = 2
+    # 充电专享
+    CHARGE = 3
+
+
+class MomentFoldTypeEnum(IntEnum):
+    """Moment 折叠类型。"""
+
+    NONE = 0
+    USER_FOLD = 1
+    OVER_FREQ_FOLD = 2
+
+
+class MomentReportReasonEnum(IntEnum):
+    """Moment 举报原因类型。"""
+
+    # 不实信息
+    FAKE_INFO = 1
+    # 违法违规
+    ILLEGAL = 2
+    # 人身攻击
+    PERSONAL_ATTACK = 3
+    # 色情低俗
+    PORN = 4
+    # 诈骗
+    FRAUD = 5
+    # 其他
+    OTHER = 6
+
+
+class MomentReportAuditStatusEnum(StrEnum):
+    """Moment 举报处理状态。"""
+
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    REJECTED = "rejected"
+
+
+class MomentAuditLogActionEnum(StrEnum):
+    """Moment 审核流转动作类型（写 TMomentAuditLog.actionType）。"""
+
+    CREATE = "create"
+    EDIT = "edit"
+    APPROVE = "approve"
+    REJECT = "reject"
+    RESUBMIT = "resubmit"
+    DELETE = "delete"
+
+
+class MomentAuditLogOperatorRoleEnum(StrEnum):
+    """Moment 审核流转操作人角色。"""
+
+    AUTHOR = "author"
+    ADMIN = "admin"
+
+
+# 互动资源类型枚举统一收口到 bili-common（2.18.0 去重），此处 re-export 保持兼容
+from bili_common.models.interaction import InteractionBizTypeEnum  # noqa: E402
+
+
 # ==================== 用户关注关系 ====================
 
 
@@ -274,7 +385,21 @@ class FollowStatusEnum(StrEnum):
     BLOCKED = "blocked"
 
 
+class AvatarAuditStatusEnum(StrEnum):
+    """头像更换审核状态（TUserAvatarAudit.auditStatus）。
+
+    - `pending`：待审核，未对外展示；
+    - `approved`：审核通过，newAvatar 已写入 TUserDetail.avatar 公开显示；
+    - `rejected`：审核驳回，保持原头像。
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 __all__ = [
+    "AvatarAuditStatusEnum",
     "BanDurationTypeEnum",
     "BanServiceEnum",
     "BanStatusEnum",
@@ -292,7 +417,16 @@ __all__ = [
     "EventTypeEnum",
     "ExpActionType",
     "FollowStatusEnum",
+    "InteractionBizTypeEnum",
     "MessageModuleEnum",
+    "MomentAuditLogActionEnum",
+    "MomentAuditLogOperatorRoleEnum",
+    "MomentAuditStatusEnum",
+    "MomentFoldTypeEnum",
+    "MomentReportAuditStatusEnum",
+    "MomentReportReasonEnum",
+    "MomentTypeEnum",
+    "MomentVisibleScopeEnum",
     "NotifyLevelEnum",
     "NotifyStatusEnum",
     "NotifyTargetTypeEnum",

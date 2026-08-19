@@ -7,11 +7,13 @@
 MQ 投递统一打桩（monkeypatch publisher / DmContentService.write），只验证任务编排与去重逻辑。
 """
 
+import importlib
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core import database as db_mod
 from app.core.config import settings
@@ -28,7 +30,6 @@ from app.models.schemas import NotifyCreateReq
 from app.services.dm import DmContentService
 from app.services.notify import NotifyService
 from app.services.setting import SettingService
-import importlib
 
 # app.tasks.__init__ 把 `scheduler` 重导出成了 AsyncIOScheduler 实例，
 # 直接 `from app.tasks.scheduler import ...` 会命中实例而非模块，故显式按模块路径加载。

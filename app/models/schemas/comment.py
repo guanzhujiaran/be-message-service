@@ -15,9 +15,9 @@ from app.models.enums import (
     CommentStateEnum,
     CommentSubjectStateEnum,
     CommentTypeEnum,
+    MomentReportReasonEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
-
 
 # ==================== 公共片段 ====================
 
@@ -75,10 +75,23 @@ class CommentItem(SQLModel):
         default=None, description="被回复者，楼中楼展示「回复 @xxx」"
     )
 
-    message: str = Field(default="", description="正文，@ 以 @{mid} 占位符形式返回")
+    message: str = Field(
+        default="", description="正文，@ 已渲染为 @昵称 文本（对齐 B 站 content.message）"
+    )
     pictures: list[str] = Field(default_factory=list, description="图片URL数组")
     at_users: list[CommentUserBrief] = Field(
-        default_factory=list, description="被@用户，供前端把占位符渲染成链接"
+        default_factory=list, description="被@用户信息数组（对齐 B 站 content.members）"
+    )
+    # @ 昵称 → mid 映射（对齐 B 站 content.at_name_to_mid / at_name_to_mid_str）
+    at_name_to_mid: dict[str, int] = Field(
+        default_factory=dict, description="被@用户：昵称 → mid 映射"
+    )
+    at_name_to_mid_str: dict[str, str] = Field(
+        default_factory=dict, description="被@用户：昵称 → mid 字符串映射"
+    )
+    # 话题元信息（对齐 B 站 content.topics_meta）：话题名 → { uri }
+    topics_meta: dict[str, dict] = Field(
+        default_factory=dict, description="正文里的 #话题# → 话题跳转 uri"
     )
     emote_meta: dict | None = Field(default=None, description="表情包元信息")
 
@@ -97,6 +110,9 @@ class CommentItem(SQLModel):
     # IP 已打码；前端优先展示 v6，无 v6 再回落 v4，两者皆空则不展示
     ip_v4_masked: str | None = None
     ip_v6_masked: str | None = None
+    # IP 属地（服务端 GeoIP 解析，如「浙江 杭州」）+ 运营商 ISP
+    ip_location: str | None = None
+    ip_isp: str | None = None
 
     plat: str | None = Field(default=None, max_length=32, description="来源平台")
     device: str | None = Field(default=None, max_length=64, description="来源设备")
@@ -123,12 +139,17 @@ class CommentAddReq(SQLModel):
     root: str = Field(default="0", description="根评论rpid；发一级评论传 '0'")
     parent: str = Field(default="0", description="父评论rpid；发一级评论传 '0'")
     message: str = Field(
-        min_length=1, description="正文；@ 用 @{mid} 占位符表达"
+        min_length=1,
+        description="正文；@ 以 @昵称 文本表达（对齐 B 站），服务端会按 at_name_to_mid 转为 @{mid} 占位符存储",
     )
     pictures: list[str] = Field(
         default_factory=list, description="图片URL数组，最多9张。仅存URL，服务端不转存"
     )
     at_mids: list[int] = Field(default_factory=list, description="被@用户的mid列表")
+    # @ 昵称 → mid 映射（对齐 B 站 content.at_name_to_mid），服务端据此把正文里的 @昵称 归一为 @{mid}
+    at_name_to_mid: dict[str, int] = Field(
+        default_factory=dict, description="被@用户：昵称 → mid 映射"
+    )
     emote_meta: dict | None = Field(default=None, description="表情包元信息")
     up_mid: int | None = Field(
         default=None,
@@ -180,6 +201,11 @@ class CommentListResp(SQLModel):
         description="focus_rpid 所属的根评论 rpid。当 focus 目标是楼中楼时，"
         "根评论会被提到列表顶部，前端据此展开楼中楼并滚动到 focus_rpid。",
     )
+    viewer_is_anonymous: bool = Field(
+        default=False,
+        description="当前请求是否为匿名访问（viewer_mid 缺失）。"
+        "匿名时服务端已强制限制 page_size=10，前端应渲染登录引导蒙层。",
+    )
 
 
 class CommentSubListResp(SQLModel):
@@ -220,6 +246,22 @@ class CommentActionResp(SQLModel):
 
 
 # ==================== 置顶 / 管理 ====================
+
+
+class CommentReportReq(SQLModel):
+    """举报评论。"""
+
+    rpid: str = Field(description="被举报评论id（字符串）")
+    reasonType: MomentReportReasonEnum = Field(description="举报原因类型（复用 MomentReportReasonEnum）")
+    reasonDesc: str | None = Field(default=None, max_length=500, description="补充描述（选填）")
+
+
+class CommentReportResp(SQLModel):
+    """举报评论响应。"""
+
+    rpid: str = Field(description="被举报评论id（字符串）")
+    reported: bool = Field(default=False, description="本次是否新增举报（True=首次，False=当日/重复已报）")
+    switched_to_auditing: bool = Field(default=False, description="本次举报后是否已触发转审核（state→auditing）")
 
 
 class CommentTopReq(SQLModel):
@@ -338,21 +380,23 @@ class CommentStatsResp(SQLModel):
 
 
 __all__ = [
-    "CommentUserBrief",
-    "CommentItem",
-    "CommentAddReq",
-    "CommentAddResp",
-    "CommentDelReq",
-    "CommentOperationResp",
-    "CommentListResp",
-    "CommentSubListResp",
-    "CommentCountResp",
     "CommentActionReq",
     "CommentActionResp",
-    "CommentAuditReq",
+    "CommentAddReq",
+    "CommentAddResp",
     "CommentAuditItem",
     "CommentAuditListResp",
+    "CommentAuditReq",
     "CommentAuditResp",
+    "CommentCountResp",
+    "CommentDelReq",
+    "CommentItem",
+    "CommentListResp",
+    "CommentOperationResp",
+    "CommentReportReq",
+    "CommentReportResp",
     "CommentSourceResp",
     "CommentStatsResp",
+    "CommentSubListResp",
+    "CommentUserBrief",
 ]

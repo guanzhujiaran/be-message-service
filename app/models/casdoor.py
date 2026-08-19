@@ -4,7 +4,7 @@
 """
 
 from pydantic import ConfigDict
-from sqlmodel import SQLModel, Field
+from sqlmodel import Field, SQLModel
 
 
 class CasdoorOAuthToken(SQLModel, table=False):

@@ -77,6 +77,26 @@ class Settings(BaseSettings):
     # uid worker 编号（0~15），通过环境变量 UID_WORKER_ID 设置，多实例部署时互不相同
     uid_worker_id: int = 1
 
+    # ==================== moment_id（动态 ID，独立的短雪花 ID）====================
+    # 与 uid 使用**不同的** epoch / worker 配置，避免两者在同一分钟内序列号碰撞
+    # （uid 与 moment_id 数值空间隔离，可安全共用 BIGINT 主键列且无重复风险）。
+    # moment_id epoch（秒级时间戳）：默认 2026-08-09 00:00:00 UTC+8，可通过环境变量 MOMENT_ID_EPOCH_SEC 覆盖
+    moment_id_epoch_sec: int = 1756771200
+    # moment_id worker 编号（0~15），通过环境变量 MOMENT_ID_WORKER_ID 设置，多实例部署时互不相同
+    moment_id_worker_id: int = 2
+    # topic_id epoch（秒级时间戳）：默认 2026-08-16 00:00:00 UTC+8，可通过环境变量 TOPIC_ID_EPOCH_SEC 覆盖
+    topic_id_epoch_sec: int = 1756915200
+    # topic_id worker 编号（0~15），通过环境变量 TOPIC_ID_WORKER_ID 设置，多实例部署时互不相同
+    topic_id_worker_id: int = 3
+
+    # ==================== GeoIP（IP 属地解析）====================
+    # GeoLite2 mmdb 数据库目录（含 GeoLite2-City.mmdb 等）。
+    # - 本地开发：默认 ./mmdb（相对 be-message-service 工作目录），用
+    #   scripts/download_geoip_mmdb.py 下载；
+    # - Docker：挂载 docker_vol/geoip/mmdb 到容器内 /app/mmdb（见 docker-compose.yml），
+    #   与本地数据相互独立，各管各的。
+    geoip_mmdb_dir: str = "./mmdb"
+
     # ==================== 活跃度 ====================
     # 用户在该秒数内有过行为即视为「活跃用户」（用于前端轮询节奏判定，与消息送达无关）
     active_user_window_seconds: int = 300
@@ -114,6 +134,12 @@ class Settings(BaseSettings):
     # - False        ：命中高危词直接驳回(REJECTED)、命中疑似词进审核(AUDITING)，
     #   其余评论直接对外展示(NORMAL)。
     comment_pre_audit: bool = True
+    # 评论举报阈值：单条评论累计有效举报数（按 rpid+report_mid 去重后）达到该值，
+    # 评论 state 由 normal → auditing（进入审核，仅作者可见），交管理员复核。
+    comment_report_threshold: int = 3
+    # 统一举报（2.14.0）达阈值转审核：动态 / 用户空间举报累计有效举报数（按
+    # (reportMid, bizType, bizId) 去重后）达到该值时，把被举报对象转 auditing 待复核。
+    report_threshold: int = 3
     # 私信发布模式：是否「先审后发」（默认关闭，与评论默认值相反）。
     # - False（默认）：私信发布即直接对接收方可见(NORMAL)。
     # - True         ：新私信先进入审核态(AUDITING)，对接收方不可见，
@@ -166,6 +192,16 @@ class Settings(BaseSettings):
     casdoor_service: str = ""
     casdoor_certificate: str = ""
     casdoor_enabled: bool = False
+    # Casdoor 管理员账号（password grant 换取 admin token 查询用户信息）。
+    # Casdoor 若开启「不公开账户信息」，service 模式（clientId/clientSecret）
+    # 查不到用户，必须用管理员登录后的 token（Bearer 用户模式）查询。
+    # 注意：admin 走的是 Casdoor 内置 application「app-built-in」，其 clientId /
+    # clientSecret 与普通登录应用不同，需单独配置；application 名固定为 app-built-in。
+    casdoor_admin_name: str = ""
+    casdoor_admin_password: str = ""
+    casdoor_admin_client_id: str = ""
+    casdoor_admin_client_secret: str = ""
+    casdoor_admin_application: str = "app-built-in"
 
     # ==================== 推送渠道 ====================
     pushme_url: str = "https://push.i-i.me"

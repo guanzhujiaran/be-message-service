@@ -65,4 +65,4 @@ class UserActivity(TimestampMixin, table=True):
     pending_push_count: int = Field(default=0, index=True, description="待推送事件计数")
 
 
-__all__ = ["UserMessageSetting", "UserActivity", "SQLModel"]
+__all__ = ["SQLModel", "UserActivity", "UserMessageSetting"]

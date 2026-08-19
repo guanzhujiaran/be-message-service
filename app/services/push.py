@@ -14,15 +14,16 @@ import asyncio
 import base64
 import hashlib
 import inspect
+import json
+import re
+import smtplib
 import time
 import traceback
 import urllib.parse
-import smtplib
-import json
-import re
 from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import formataddr
+
 import httpx
 from loguru import logger
 
@@ -378,7 +379,7 @@ class PushMessageService:
             return
         logger.info("qmsg 服务启动")
         url = f"https://qmsg.zendee.cn/{self.conf.qmsg_type}/{self.conf.qmsg_key}"
-        payload = {"msg": f'{title}\n\n{content.replace("----", "-")}'.encode("utf-8")}
+        payload = {"msg": f'{title}\n\n{content.replace("----", "-")}'.encode()}
         resp = await get_client().post(url=url, params=payload)
         resp_data = resp.json()
         if resp_data["code"] == 0:

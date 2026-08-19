@@ -18,10 +18,13 @@
 评论区上万条时 `COUNT(*)` 会扫掉整段索引，是最典型的慢查询来源。
 """
 
+import re
+
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import CommentAction, CommentContent, CommentIndex, CommentSubject
+from app.core.config import settings
+from app.models.db import CommentAction, CommentContent, CommentIndex
 from app.models.enums import (
     CommentActionEnum,
     CommentAttrBit,
@@ -30,8 +33,6 @@ from app.models.enums import (
     CommentSubjectStateEnum,
     CommentTypeEnum,
 )
-from app.core.config import settings
-
 from app.models.schemas import (
     CommentCountResp,
     CommentItem,
@@ -42,6 +43,9 @@ from app.models.schemas import (
 from app.services.comment import VISIBLE_STATES, CommentService
 from app.services.pptr_user import PptrUserService
 from app.utils.ip_mask import mask_ip_pair
+
+# 正文里 #话题# 的匹配（对齐 B 站：话题名由两个 # 包裹，中间不含 #）
+_TOPIC_PATTERN = re.compile(r"#([^#\n]+)#")
 
 
 class CommentReadService:
@@ -60,6 +64,7 @@ class CommentReadService:
         page_size: int = 20,
         viewer_mid: int | None = None,
         focus_rpid: int | None = None,
+        viewer_is_anonymous: bool = False,
     ) -> CommentListResp:
         """一级评论列表。
 
@@ -77,6 +82,7 @@ class CommentReadService:
                 items=[],
                 top=None,
                 total=0,
+                viewer_is_anonymous=viewer_is_anonymous,
                 all_count=0,
                 page_num=page_num,
                 page_size=page_size,
@@ -123,6 +129,23 @@ class CommentReadService:
 
         offset = (page_num - 1) * page_size
         rows = (await session.exec(stmt.offset(offset).limit(page_size))).all()
+
+        # 当前登录用户本人处于「审核中」的一级评论：仅作者自己可见，
+        # 但**不参与计数**（total / all_count 仍读 NORMAL 冗余计数，见下）。
+        # 命中疑似敏感词或开启「先审后发」时，作者发评后即进入此集合。
+        auditing_rows: list[CommentIndex] = []
+        if viewer_mid:
+            auditing_rows = (
+                await session.exec(
+                    select(CommentIndex).where(
+                        col(CommentIndex.oid) == oid,
+                        col(CommentIndex.type) == type_,
+                        col(CommentIndex.root) == 0,
+                        col(CommentIndex.state) == CommentStateEnum.AUDITING,
+                        col(CommentIndex.mid) == viewer_mid,
+                    ).order_by(col(CommentIndex.rpid).desc())
+                )
+            ).all()
 
         top_row = None
         if top_rpid and page_num == 1:
@@ -182,6 +205,23 @@ class CommentReadService:
             items = [it for it in items if it.rpid != str(focus_root)]
             items.insert(0 if top_item is None else 1, focus_row_loaded)  # type: ignore[arg-type]
 
+        # 作者本人的审核中评论：单独装配后插到置顶 / focus 之后、普通列表之前。
+        # 它们不进主分页（主分页只取 NORMAL），这里直接拼接到列表头部即可。
+        if auditing_rows:
+            auditing_items = await CommentReadService.assemble_items(
+                session, auditing_rows, viewer_mid=viewer_mid
+            )
+            await CommentReadService._attach_sub_previews(
+                session, auditing_items, viewer_mid=viewer_mid
+            )
+            insert_at = 0
+            if top_item is not None:
+                insert_at += 1
+            if focus_row_loaded is not None:
+                insert_at += 1
+            for pos, it in enumerate(auditing_items):
+                items.insert(insert_at + pos, it)
+
         return CommentListResp(
             items=items,
             top=top_item,
@@ -192,6 +232,7 @@ class CommentReadService:
             subject_state=subject.state,
             focus_rpid=str(focus_rpid) if focus_root else None,
             focus_root=str(focus_root) if focus_root else None,
+            viewer_is_anonymous=viewer_is_anonymous,
         )
 
     # ==================== 详情 ====================
@@ -262,6 +303,21 @@ class CommentReadService:
         for r in sub_rows:
             by_root.setdefault(r.root, []).append(r)
 
+        # 当前登录用户本人处于「审核中」的子评论：仅作者自己可见，并入预览分组，
+        # 与正常预览一起参与截断（不额外占用其它根评论的额度）。
+        if viewer_mid:
+            auditing_subs = (
+                await session.exec(
+                    select(CommentIndex).where(
+                        col(CommentIndex.root).in_(root_ids),
+                        col(CommentIndex.state) == CommentStateEnum.AUDITING,
+                        col(CommentIndex.mid) == viewer_mid,
+                    )
+                )
+            ).all()
+            for r in auditing_subs:
+                by_root.setdefault(r.root, []).append(r)
+
         preview_count = settings.comment_sub_preview_count
         for it in items:
             subs = by_root.get(int(it.rpid), [])[:preview_count]
@@ -312,8 +368,25 @@ class CommentReadService:
         )
         offset = (page_num - 1) * page_size
         rows = (await session.exec(stmt.offset(offset).limit(page_size))).all()
+
+        # 当前登录用户本人处于「审核中」的子评论：仅作者自己可见，拼到展开列表里。
+        # total 仍读冗余 rcount（只计 NORMAL），审核中评论不计入总数。
+        auditing_subs: list[CommentIndex] = []
+        if viewer_mid:
+            auditing_subs = (
+                await session.exec(
+                    select(CommentIndex)
+                    .where(
+                        col(CommentIndex.root) == root,
+                        col(CommentIndex.state) == CommentStateEnum.AUDITING,
+                        col(CommentIndex.mid) == viewer_mid,
+                    )
+                    .order_by(col(CommentIndex.rpid))
+                )
+            ).all()
+
         items = await CommentReadService.assemble_items(
-            session, rows, viewer_mid=viewer_mid
+            session, [*rows, *auditing_subs], viewer_mid=viewer_mid
         )
         return CommentSubListResp(
             items=items,
@@ -399,6 +472,29 @@ class CommentReadService:
             for at_mid in (content.at_mids if content else [])
             if at_mid in profiles
         ]
+        # 正文里 @ 占位符 @{mid} → @昵称（对齐 B 站 content.message），
+        # 并构建 at_name_to_mid / at_name_to_mid_str 映射
+        raw_message = content.message if content else ""
+        message = raw_message
+        at_name_to_mid: dict[str, int] = {}
+        if content and content.at_mids:
+            mid_to_brief = {at_mid: profiles[at_mid] for at_mid in content.at_mids if at_mid in profiles}
+            for at_mid, brief in mid_to_brief.items():
+                uname = (brief.uname or "").strip()
+                if not uname:
+                    continue
+                at_name_to_mid[uname] = int(at_mid)
+                message = message.replace(f"@{{{at_mid}}}", f"@{uname}")
+        at_name_to_mid_str = {k: str(v) for k, v in at_name_to_mid.items()}
+        # 提取正文里的 #话题# → topics_meta（对齐 B 站 content.topics_meta）
+        topics_meta: dict[str, dict] = {}
+        for topic_name in _TOPIC_PATTERN.findall(message or ""):
+            topic_name = topic_name.strip()
+            if not topic_name or topic_name in topics_meta:
+                continue
+            topics_meta[topic_name] = {
+                "uri": f"bilibili://search?from=app_comment_topic_search&direct_return=true&keyword={topic_name}"
+            }
         ip_v4_masked, ip_v6_masked = mask_ip_pair(
             content.ip_v4 if content else None,
             content.ip_v6 if content else None,
@@ -414,9 +510,12 @@ class CommentReadService:
             dialog=str(row.dialog),
             floor=row.floor,
             reply_to=profiles.get(row.reply_to_mid) if row.reply_to_mid else None,
-            message=content.message if content else "",
+            message=message,
             pictures=list(content.pictures) if content else [],
             at_users=at_users,
+            at_name_to_mid=at_name_to_mid,
+            at_name_to_mid_str=at_name_to_mid_str,
+            topics_meta=topics_meta,
             emote_meta=content.emote_meta if content else None,
             like_count=row.like_count,
             hate_count=row.hate_count,
@@ -428,6 +527,9 @@ class CommentReadService:
             is_up_liked=bool(row.attr & CommentAttrBit.UP_LIKED.value),
             ip_v4_masked=ip_v4_masked,
             ip_v6_masked=ip_v6_masked,
+            # IP 属地：数据库无值（旧数据/未解析）时兜底为「未知」，不返回 None
+            ip_location=(content.ip_location if content and content.ip_location else "未知"),
+            ip_isp=content.ip_isp if content else None,
             plat=content.plat if content else None,
             device=content.device if content else None,
             ctime=row.created_at,

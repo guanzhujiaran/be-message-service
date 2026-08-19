@@ -34,24 +34,22 @@ from app.models.push import (
 from app.models.user import MessageUser
 
 __all__ = [
-    "StandardResponse",
+    "DmMsgStatusEnum",
+    "DmMsgTypeEnum",
+    "DmRelationEnum",
+    "DmSessionTypeEnum",
+    "EventTypeEnum",
+    "FeedbackRequest",
+    "MessageModuleEnum",
     "MessageUser",
-    # 推送
+    "NotifyLevelEnum",
+    "NotifyStatusEnum",
+    "NotifyTargetTypeEnum",
     "PushChannelConfig",
     "PushMessage",
     "PushMessagePayload",
+    "SourceTypeEnum",
+    "StandardResponse",
     "TestPushRequest",
     "TestPushResponse",
-    "FeedbackRequest",
-    # 枚举
-    "MessageModuleEnum",
-    "NotifyTargetTypeEnum",
-    "NotifyStatusEnum",
-    "NotifyLevelEnum",
-    "EventTypeEnum",
-    "SourceTypeEnum",
-    "DmMsgTypeEnum",
-    "DmMsgStatusEnum",
-    "DmSessionTypeEnum",
-    "DmRelationEnum",
 ]

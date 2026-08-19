@@ -264,7 +264,7 @@ class DmService:
         传 NORMAL 得到主列表，传 STRANGER 得到陌生人列表，不传则全部。
         """
         page_size = page_size or settings.dm_default_page_size
-        conditions = [DmSession.owner_mid == owner_mid, DmSession.is_deleted == False]  # noqa: E712
+        conditions = [DmSession.owner_mid == owner_mid, DmSession.is_deleted == False]
         if relation is not None:
             conditions.append(DmSession.relation == relation)
 
@@ -288,7 +288,7 @@ class DmService:
         # 未读汇总：主列表红点与陌生人红点分开展示
         unread_stmt = (
             select(DmSession.relation, func.sum(DmSession.unread_count))
-            .where(DmSession.owner_mid == owner_mid, DmSession.is_deleted == False)  # noqa: E712
+            .where(DmSession.owner_mid == owner_mid, DmSession.is_deleted == False)
             .group_by(DmSession.relation)
         )
         unread_map = {
@@ -505,7 +505,7 @@ class DmService:
     async def count_unread(session: AsyncSession, owner_mid: int) -> int:
         stmt = select(func.sum(DmSession.unread_count)).where(
             DmSession.owner_mid == owner_mid,
-            DmSession.is_deleted == False,  # noqa: E712
+            DmSession.is_deleted == False,
         )
         return int((await session.exec(stmt)).one() or 0)
 
@@ -617,7 +617,7 @@ class DmService:
         """重试正文写入失败的死信，保证内容最终一致。"""
         stmt = (
             select(DmContentDeadLetter)
-            .where(DmContentDeadLetter.resolved == False)  # noqa: E712
+            .where(DmContentDeadLetter.resolved == False)
             .order_by(col(DmContentDeadLetter.id).asc())  # type: ignore[union-attr]
             .limit(limit)
         )

@@ -1,6 +1,13 @@
 """接口层数据模型（请求体 / 响应体 / MQ 载体）集中导出。"""
 
 from app.models.schemas.audit import AuditSourceInfo
+from app.models.schemas.avatar_audit import (
+    AvatarAuditApproveReq,
+    AvatarAuditItem,
+    AvatarAuditListResp,
+    AvatarAuditMineResp,
+    AvatarAuditRejectReq,
+)
 from app.models.schemas.ban import (
     BanCreateReq,
     BanItem,
@@ -24,6 +31,8 @@ from app.models.schemas.comment import (
     CommentItem,
     CommentListResp,
     CommentOperationResp,
+    CommentReportReq,
+    CommentReportResp,
     CommentSourceResp,
     CommentStatsResp,
     CommentSubListResp,
@@ -51,17 +60,39 @@ from app.models.schemas.dm import (
     DmSessionListResp,
     DmStatsResp,
 )
+from app.models.schemas.favorite import (
+    FavoriteAddReq,
+    FavoriteAddResp,
+    FavoriteDynFoldersResp,
+    FavoriteFolderCreateReq,
+    FavoriteFolderDeleteReq,
+    FavoriteFolderResp,
+    FavoriteFolderUpdateReq,
+    FavoriteItemListResp,
+    FavoriteListItem,
+    FavoriteListReq,
+    FavoriteListResp,
+    FavoriteRemoveReq,
+    FavoriteSettingReq,
+    FavoriteSettingResp,
+)
+from app.models.schemas.interaction import InteractionStatusItem, InteractionStatusResp
 from app.models.schemas.event import (
     EventActorBrief,
     EventAggregateItem,
     EventAggregateResp,
     EventItem,
     EventListResp,
+    EventMsgfeedContent,
+    EventMsgfeedCursor,
+    EventMsgfeedItem,
+    EventMsgfeedSection,
     EventReadReq,
     EventReadResp,
     EventReportReq,
     EventReportResp,
     EventUnreadResp,
+    EventUserBrief,
 )
 from app.models.schemas.follow import (
     BlockReq,
@@ -76,7 +107,9 @@ from app.models.schemas.mq import (
     DmContentPayload,
     DmNotifyPayload,
     EventPushPayload,
+    InteractionViewPayload,
     NotifyPushPayload,
+    UserDeactivatePayload,
 )
 from app.models.schemas.notify import (
     BiliSystemNotifyResp,
@@ -97,10 +130,35 @@ from app.models.schemas.setting import (
     MessageSettingUpdateReq,
     UserActivityResp,
 )
+from app.models.schemas.space import (
+    SpaceInfoResp,
+    SpaceOfficial,
+    SpaceVip,
+    SpaceVipLabel,
+    SpaceVipWrap,
+)
+from app.models.schemas.report import (
+    ReportCreateReq,
+    ReportItem,
+    ReportListResp,
+    ReportReviewReq,
+)
+from app.models.schemas.user_records import (
+    UserActLogItem,
+    UserActLogListResp,
+    UserExpRecordItem,
+    UserExpRecordListResp,
+)
 
 __all__ = [
     # 审核通用
     "AuditSourceInfo",
+    "AvatarAuditApproveReq",
+    "AvatarAuditItem",
+    "AvatarAuditListResp",
+    # 头像更换审核
+    "AvatarAuditMineResp",
+    "AvatarAuditRejectReq",
     # 用户封禁（审核联动）
     "BanCreateReq",
     "BanItem",
@@ -123,6 +181,8 @@ __all__ = [
     "CommentItem",
     "CommentListResp",
     "CommentOperationResp",
+    "CommentReportReq",
+    "CommentReportResp",
     "CommentSourceResp",
     "CommentStatsResp",
     "CommentSubListResp",
@@ -139,6 +199,8 @@ __all__ = [
     # MQ 载体
     "DmContentPayload",
     "DmDeleteReq",
+    "InteractionViewPayload",
+    "UserDeactivatePayload",
     "DmMessageItem",
     "DmMessageListResp",
     "DmNotifyPayload",
@@ -152,11 +214,33 @@ __all__ = [
     "DmSessionItem",
     "DmSessionListResp",
     "DmStatsResp",
+    # 收藏
+    "FavoriteAddReq",
+    "FavoriteAddResp",
+    "FavoriteDynFoldersResp",
+    "FavoriteFolderCreateReq",
+    "FavoriteFolderDeleteReq",
+    "FavoriteFolderResp",
+    "FavoriteFolderUpdateReq",
+    "FavoriteItemListResp",
+    "FavoriteListItem",
+    "FavoriteListReq",
+    "FavoriteListResp",
+    "FavoriteRemoveReq",
+    "FavoriteSettingReq",
+    "FavoriteSettingResp",
+    # 多业务资源交互（2.17.0）
+    "InteractionStatusItem",
+    "InteractionStatusResp",
     "EventActorBrief",
     "EventAggregateItem",
     "EventAggregateResp",
     "EventItem",
     "EventListResp",
+    "EventMsgfeedContent",
+    "EventMsgfeedCursor",
+    "EventMsgfeedItem",
+    "EventMsgfeedSection",
     "EventPushPayload",
     "EventReadReq",
     "EventReadResp",
@@ -164,6 +248,7 @@ __all__ = [
     "EventReportReq",
     "EventReportResp",
     "EventUnreadResp",
+    "EventUserBrief",
     "FollowCountResp",
     "FollowListItem",
     "FollowListResp",
@@ -187,6 +272,21 @@ __all__ = [
     "NotifyUpdateReq",
     "SystemNotifyItem",
     "SystemNotifyListResp",
+    # 用户空间信息
+    "SpaceInfoResp",
+    "SpaceOfficial",
+    "SpaceVip",
+    "SpaceVipLabel",
+    "SpaceVipWrap",
+    # 统一举报（2.14.0）
+    "ReportCreateReq",
+    "ReportItem",
+    "ReportListResp",
+    "ReportReviewReq",
     "UnbanReq",
+    "UserActLogItem",
+    "UserActLogListResp",
     "UserActivityResp",
+    "UserExpRecordItem",
+    "UserExpRecordListResp",
 ]

@@ -16,17 +16,11 @@
 `{code, data, msg, ttl}` 格式。
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request
 from typing import Annotated
-from loguru import logger
 
-from app.dependencies import CurrentUser
-from app.core.config import settings
-from app.core.database import new_pptr_session
-from app.services.casdoor_service import CasdoorError
-from app.services.pptr_user import PptrUserService
-from app.services import jwt_service, casdoor_service
 from bili_common.models import (
+    VALID_ROLES,
+    VALID_SEX_VALUES,
     PptrUserInfoUpdateParams,
     PptrUserInfoUpdateResult,
     PptrUserNavData,
@@ -36,9 +30,25 @@ from bili_common.models import (
     ResponseCode,
     StandardResponse,
     UserSearchParams,
-    VALID_ROLES,
-    VALID_SEX_VALUES,
 )
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from loguru import logger
+
+from app.core.config import settings
+from app.core.database import SessionDep, new_pptr_session
+from app.dependencies import AdminUser, CurrentUser
+from app.models.schemas import (
+    SpaceInfoResp,
+    UserActLogListResp,
+    UserExpRecordListResp,
+)
+from app.services import casdoor_service, jwt_service, publisher
+from app.services.avatar_audit import AvatarAuditService
+from app.services.avatar_check import verify_avatar_url
+from app.services.casdoor_service import CasdoorError
+from app.services.follow import FollowService
+from app.services.pptr_user import PptrUserService
+from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/user", tags=["pptr-user-gateway"])
 
@@ -148,7 +158,16 @@ async def get_user_nav(
     """
     uid = int(user.mid)
 
-    data = await PptrUserService.get_user_nav_data(uid=uid)
+    # 提取客户端 IP / UA：供「每日首次访问」记录登录行为时落库
+    client_ip_v4, client_ip_v6 = extract_client_ip(
+        request.headers, peer=request.client.host if request.client else None
+    )
+    client_ip = client_ip_v4 or client_ip_v6 or ""
+    client_ua = request.headers.get("user-agent") or ""
+
+    data = await PptrUserService.get_user_nav_data(
+        uid=uid, ip=client_ip, ua=client_ua
+    )
     if data is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
@@ -209,19 +228,35 @@ async def get_user_info(user: CurrentUser) -> StandardResponse[dict]:
     summary="更新当前登录用户的个人资料",
 )
 async def update_user_info(
+    session: SessionDep,
     user: CurrentUser,
     params: PptrUserInfoUpdateParams,
 ) -> StandardResponse[PptrUserInfoUpdateResult]:
-    """更新昵称 / 签名 / 性别 / 生日。
+    """更新昵称 / 签名 / 性别 / 生日 / 头像。
 
     只能修改本人资料：`uid` 固定取自鉴权身份（`x-bili-mid`），不接受入参覆盖。
     TUserNameRecord 表已移除，不再记录昵称历史。
+
+    头像（`avatar`）为图片 URL（http/https），后端下载校验：1s 内下载完成且 ≤1MB；
+    校验通过后**不即时生效**，而是提交头像更换审核（`TUserAvatarAudit` 待审核），
+    `avatar_status=pending`，公开头像保持不变，审核通过后才对外展示。
+    空串表示不修改头像。
     """
     uid = int(user.mid)
+
+    if params.uname and not (2 <= len(params.uname) <= 24):
+        raise HTTPException(status_code=422, detail="昵称需为 2-24 个字！")
 
     if params.sex and params.sex not in VALID_SEX_VALUES:
         raise HTTPException(status_code=422, detail="性别不正确！")
 
+    avatar_status: str | None = "none"
+    if params.avatar:
+        ok, reason = await verify_avatar_url(params.avatar)
+        if not ok:
+            raise HTTPException(status_code=422, detail=reason)
+
+    # 非头像字段即时更新
     updated = await PptrUserService.set_user_detail(
         uid=uid,
         uname=params.uname or "",
@@ -232,9 +267,23 @@ async def update_user_info(
     if not updated:
         raise HTTPException(status_code=500, detail="更新用户信息失败")
 
+    # 头像：提交更换审核（不写公开头像）
+    if params.avatar:
+        old_avatar = await AvatarAuditService._current_avatar(uid)
+        await AvatarAuditService.submit(
+            session,
+            uid=uid,
+            new_avatar=params.avatar,
+            old_avatar=old_avatar,
+        )
+        avatar_status = "pending"
+
     return StandardResponse(
         data=PptrUserInfoUpdateResult(
-            uid=str(uid), updated=True, uname_recorded=False
+            uid=str(uid),
+            updated=True,
+            uname_recorded=False,
+            avatar_status=avatar_status,
         ),
         msg="更新成功",
     )
@@ -306,9 +355,10 @@ async def search_users(
     user: CurrentUser,
     params: Annotated[UserSearchParams, Depends(parse_user_search_params)],
 ) -> StandardResponse[PptrUserSearchResult]:
-    """搜索用户，供「授予管理端权限」等场景先行查找目标用户。
+    """搜索用户，供「授予管理端权限」等管理场景先行查找目标用户。
 
-    仅 root 可调用。分页采用 `offset + limit`，`has_more` 指示是否还有下一页。
+    仅 root 可调用；评论区 @ 提及请使用 `/api/v1/comment/at/search`
+    （按昵称搜索，登录即可）。分页采用 `offset + limit`，`has_more` 指示是否还有下一页。
     """
     if not user.is_root:
         raise HTTPException(status_code=403, detail="只有 root 用户才能进行用户查找")
@@ -320,6 +370,173 @@ async def search_users(
         params.keyword, offset=params.offset, limit=params.limit
     )
     return StandardResponse(data=PptrUserSearchResult(items=items, has_more=has_more))
+
+
+def parse_record_query_params(
+    offset: int = Query(0, ge=0, description="分页偏移量（游标），从 0 开始"),
+    limit: int = Query(10, ge=1, le=100, description="单页条数，默认 10，最大 100"),
+    days: int = Query(7, ge=1, le=7, description="时间窗口天数，最多 7（仅展示最近一周）"),
+) -> dict:
+    """把「我的记录」两个接口共用的 query 参数解析为 dict。"""
+    return {"offset": offset, "limit": limit, "days": days}
+
+
+@router.get(
+    "/act-log",
+    response_model=StandardResponse[UserActLogListResp],
+    summary="获取当前登录用户最近 7 天的登录 / 行为记录",
+)
+async def get_user_act_log(
+    user: CurrentUser,
+    query: Annotated[dict, Depends(parse_record_query_params)],
+) -> StandardResponse[UserActLogListResp]:
+    """返回当前登录用户最近一周的登录记录（TUserActInfoLog，仅本人）。
+
+    按 `createdAt` 倒序，`offset + limit` 分页，`has_more` 指示是否还有下一页。
+    仅返回时间 / IP / UA / 行为类型，不透出 headers 全量 JSON。
+    """
+    uid = int(user.mid)
+    data = await PptrUserService.list_act_log(
+        uid=uid,
+        offset=query["offset"],
+        limit=query["limit"],
+        days=query["days"],
+    )
+    return StandardResponse(data=data)
+
+
+@router.get(
+    "/exp-record",
+    response_model=StandardResponse[UserExpRecordListResp],
+    summary="获取当前登录用户最近 7 天的经验变动记录",
+)
+async def get_user_exp_record(
+    user: CurrentUser,
+    query: Annotated[dict, Depends(parse_record_query_params)],
+) -> StandardResponse[UserExpRecordListResp]:
+    """返回当前登录用户最近一周的经验记录（TUserExpRecord，仅本人）。
+
+    按 `createdAt` 倒序，`offset + limit` 分页，`has_more` 指示是否还有下一页。
+    `action_type` 为 int，同时返回其可读名称（对齐 ExpActionType，如 daily_login）。
+    """
+    uid = int(user.mid)
+    data = await PptrUserService.list_exp_record(
+        uid=uid,
+        offset=query["offset"],
+        limit=query["limit"],
+        days=query["days"],
+    )
+    return StandardResponse(data=data)
+
+
+# ==================== 用户空间信息（对标 B 站 acc/info）====================
+
+
+def _resolve_space_viewer(x_bili_mid: str | None) -> int | None:
+    """解析可选登录态 viewer（未登录返回 None，空间信息公开可读）。"""
+    if not x_bili_mid:
+        return None
+    try:
+        mid = int(x_bili_mid)
+    except (TypeError, ValueError):
+        return None
+    return mid if mid > 0 else None
+
+
+@router.get(
+    "/space/info",
+    response_model=StandardResponse[SpaceInfoResp],
+    response_model_exclude_none=True,
+    summary="用户空间完整资料（对标 B 站 /x/space/wbi/acc/info）",
+)
+async def get_space_info(
+    session: SessionDep,
+    mid: int = Query(..., description="目标用户 mid（对标 B 站 acc/info 的 mid 参数）"),
+    x_bili_mid: str | None = Header(default=None),
+) -> StandardResponse[SpaceInfoResp]:
+    """返回单个用户的完整空间资料（对标 B 站 `/x/space/wbi/acc/info?mid=`）。
+
+    - 公开可读（未登录也可访问）；登录时附带 `is_followed` 关注态与黑名单判断；
+    - **用户不存在**返回专用错误码 `USER_NOT_FOUND`（而非空数据兜底）；
+    - **黑名单互访拒绝**：当前登录用户与目标存在任一向黑名单关系（已拉黑 / 被拉黑）
+      时返回 `403`，拒绝返回空间数据（本人访问自己空间除外）。
+    """
+    if mid <= 0:
+        return StandardResponse(code=400, msg="mid 不合法")
+    viewer = _resolve_space_viewer(x_bili_mid)
+
+    # 黑名单互访拒绝（本人除外）：已拉黑目标或被目标拉黑均不可访问其空间
+    if viewer is not None and viewer != mid:
+        blocked = await FollowService.is_blocked_relation(session, viewer, mid)
+        if blocked:
+            return StandardResponse(code=403, msg="对方已将你加入黑名单，无法访问其空间")
+
+    data = await PptrUserService.get_space_info(uid=int(mid))
+    if data is None:
+        return StandardResponse(
+            code=int(ResponseCode.USER_NOT_FOUND), msg="用户不存在", data=None
+        )
+
+    # 补充关注态与本人标记（依赖 MySQL 关注关系，路由层补上）
+    data.is_followed = viewer is not None and await FollowService.is_following(
+        session, viewer, mid
+    )
+    data.is_self = viewer == mid
+    return StandardResponse(data=data)
+
+
+# ==================== 注销账号（P12，2.15.0 / 2.15.1）====================
+
+
+async def _submit_deactivate(uid: int) -> bool:
+    """校验 uid 合法后投递注销 MQ（异步执行删除）。
+
+    Returns:
+        bool: 投递是否成功。
+    """
+    if not uid or uid <= 0:
+        raise ValueError("mid 不合法")
+    return await publisher.publish_user_deactivate(uid)
+
+
+@router.post(
+    "/deactivate",
+    response_model=StandardResponse,
+    summary="注销当前账号（投递注销，异步删除账号及业务数据）",
+)
+async def deactivate_self(user: CurrentUser) -> StandardResponse:
+    """注销当前登录账号：投递注销消息，由消费者异步物理删除 pptr 四表 +
+    彻底清除 be-message 业务数据（不可恢复）。
+
+    **Casdoor 不管**（不同步禁用）。注销为异步执行，接口提交成功后返回；
+    前端应清除本地登录态并跳登录页。
+    """
+    try:
+        ok = await _submit_deactivate(int(user.mid))
+    except ValueError:
+        return StandardResponse(code=400, msg="mid 不合法")
+    if not ok:
+        return StandardResponse(code=500, msg="注销提交失败，请稍后重试")
+    return StandardResponse(data=None, msg="注销已提交，正在处理")
+
+
+@router.post(
+    "/admin/deactivate",
+    response_model=StandardResponse,
+    summary="管理端注销指定用户（投递注销）",
+)
+async def deactivate_user(
+    admin: AdminUser,
+    target_mid: int = Query(..., description="目标用户 mid"),
+) -> StandardResponse:
+    """管理端注销指定用户（root / 管理员）：投递注销消息，异步删除其账号及业务数据。"""
+    try:
+        ok = await _submit_deactivate(target_mid)
+    except ValueError:
+        return StandardResponse(code=400, msg="mid 不合法")
+    if not ok:
+        return StandardResponse(code=500, msg="注销提交失败，请稍后重试")
+    return StandardResponse(data=None, msg="注销已提交，正在处理")
 
 
 # ==================== JWT 续期 & Casdoor 等新增端点 ====================
@@ -419,12 +636,15 @@ async def get_casdoor_user_info(
 ) -> StandardResponse:
     """获取当前登录用户在 Casdoor 侧的完整信息。
 
-    仅允许查询本人。自动从 pptr Postgres TUserInfo.pwd 取回 Casdoor access_token，
-    以「用户调用」模式查询；若库中无 token 则回退为「service 调用」模式。
+    仅允许查询本人。优先使用 pptr Postgres TUserInfo.pwd 存的 Casdoor access_token
+    （用户模式 Bearer 调用，能取到 score / balance 等私有字段）；
+    token 缺失或调用失败时回退 service 模式（clientId/clientSecret）。
     """
     uid = int(user.mid)
 
-    casdoor_user = await casdoor_service.get_casdoor_user_as_user(uid=uid)
+    casdoor_user = await casdoor_service.get_casdoor_user_as_user(
+        uid=uid, user_name=user.user_name
+    )
     if casdoor_user is None:
         raise HTTPException(status_code=404, detail="未找到 Casdoor 用户信息")
 
@@ -451,7 +671,7 @@ async def logout(
 
 # ==================== Casdoor 登录回调（由 pptr 代理）====================
 
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 
 @router.get(

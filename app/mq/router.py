@@ -50,4 +50,4 @@ async def _stop_scheduler_hook(_app) -> None:
     shutdown_scheduler()
 
 
-__all__ = ["router", "broker"]
+__all__ = ["broker", "router"]

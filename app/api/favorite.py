@@ -1,0 +1,368 @@
+"""动态收藏夹路由（收藏夹系统，P4-T10）。
+
+路由前缀 `/api/v1/favorite`，全部需登录（`RequiredUser`）。
+`folder_id` / `dyn_id` 均为雪花 ID，传输用字符串，路由层 `int()` 转换。
+"""
+
+from fastapi import APIRouter, Query
+from sqlmodel import col, select
+
+from app.core.database import SessionDep
+from app.dependencies import RequiredUser
+from app.models import StandardResponse
+from app.models.db import TMomentStat
+from app.models.enums import InteractionBizTypeEnum
+from app.models.schemas.favorite import (
+    FavoriteAddReq,
+    FavoriteAddResp,
+    FavoriteDynFoldersResp,
+    FavoriteFolderCreateReq,
+    FavoriteFolderDeleteReq,
+    FavoriteFolderResp,
+    FavoriteFolderUpdateReq,
+    FavoriteItemListResp,
+    FavoriteListItem,
+    FavoriteListReq,
+    FavoriteListResp,
+    FavoriteRemoveReq,
+    FavoriteSettingReq,
+    FavoriteSettingResp,
+)
+from app.services.favorite import FavoriteService
+from app.services.interaction import BeMessageInteractionStatService as InteractionStatService
+
+router = APIRouter(prefix="/api/v1/favorite", tags=["favorite"])
+
+
+async def _parse_int(value: str | None, field: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_biz(biz_type: InteractionBizTypeEnum, biz_id: str | None, dyn_id: str | None) -> tuple[InteractionBizTypeEnum, int] | None:
+    """解析收藏请求的目标资源 (biz_type_enum, biz_id_int)。
+
+    - bizType=dynamic：bizId 与 dynId 任取其一；
+    - bizType≠dynamic：必须提供 bizId。
+    解析失败返回 None。
+    """
+    if biz_type == InteractionBizTypeEnum.DYNAMIC:
+        rid = biz_id if biz_id is not None else dyn_id
+        if rid is None:
+            return None
+        return InteractionBizTypeEnum.DYNAMIC, int(rid)
+    if biz_id is None:
+        return None
+    return biz_type, int(biz_id)
+
+
+async def _get_favorite_count(session, biz_type: InteractionBizTypeEnum, biz_id: int) -> int:
+    """读取某资源收藏数（动态走 TMomentStat，非动态走 TInteractionStat）。"""
+    if InteractionStatService.is_dynamic(biz_type):
+        stat = (
+            await session.exec(
+                select(TMomentStat.favoriteCount).where(col(TMomentStat.dynId) == biz_id)
+            )
+        ).one_or_none()
+        return int(stat or 0)
+    counts = await InteractionStatService.batch_get_counts(session, biz_type, [biz_id])
+    return counts.get(biz_id, {}).get("favoriteCount", 0)
+
+
+# ==================== 收藏夹 CRUD ====================
+
+
+@router.post("/folder/create", response_model=StandardResponse[FavoriteFolderResp], summary="创建收藏夹")
+async def create_folder(
+    session: SessionDep,
+    user: RequiredUser,
+    req: FavoriteFolderCreateReq,
+) -> StandardResponse[FavoriteFolderResp]:
+    folder_id = await FavoriteService.create_folder(
+        session, user.mid, req.name, req.description, req.coverUrl
+    )
+    return StandardResponse(
+        data=FavoriteFolderResp(
+            folderId=str(folder_id),
+            name=req.name.strip() or "未命名收藏夹",
+            description=req.description,
+            coverUrl=req.coverUrl,
+            isDefault=False,
+            favoriteCount=0,
+        )
+    )
+
+
+@router.post("/folder/update", response_model=StandardResponse, summary="更新收藏夹")
+async def update_folder(
+    session: SessionDep,
+    user: RequiredUser,
+    req: FavoriteFolderUpdateReq,
+) -> StandardResponse:
+    folder_id = await _parse_int(req.folderId, "folderId")
+    if folder_id is None:
+        return StandardResponse(code=400, msg="folderId 不合法")
+    try:
+        await FavoriteService.update_folder(
+            session,
+            user.mid,
+            folder_id,
+            req.name,
+            req.description,
+            req.coverUrl,
+        )
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse(data=None)
+
+
+@router.post("/folder/delete", response_model=StandardResponse, summary="删除收藏夹")
+async def delete_folder(
+    session: SessionDep,
+    user: RequiredUser,
+    req: FavoriteFolderDeleteReq,
+) -> StandardResponse:
+    folder_id = await _parse_int(req.folderId, "folderId")
+    if folder_id is None:
+        return StandardResponse(code=400, msg="folderId 不合法")
+    try:
+        await FavoriteService.delete_folder(session, user.mid, folder_id)
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse(data=None)
+
+
+@router.get("/folder/list", response_model=StandardResponse[list[FavoriteFolderResp]], summary="我的收藏夹列表")
+async def list_folders(
+    session: SessionDep,
+    user: RequiredUser,
+) -> StandardResponse[list[FavoriteFolderResp]]:
+    # 每用户自动 get_or_create 默认收藏夹，保证新用户无需先建夹即可收藏（计划书决策 15）
+    await FavoriteService.ensure_default_folder(session, user.mid)
+    folders = await FavoriteService.list_folders(session, user.mid)
+    return StandardResponse(data=[FavoriteFolderResp(**f) for f in folders])
+
+
+# ==================== 收藏 / 取消 ====================
+
+
+@router.post("/add", response_model=StandardResponse[FavoriteAddResp], summary="收藏资源到收藏夹")
+async def add_favorite(
+    session: SessionDep,
+    user: RequiredUser,
+    req: FavoriteAddReq,
+) -> StandardResponse[FavoriteAddResp]:
+    try:
+        biz_type = InteractionBizTypeEnum.from_text(req.bizType)
+    except (ValueError, KeyError):
+        return StandardResponse(code=400, msg=f"不支持的资源类型: {req.bizType}")
+    resolved = _resolve_biz(biz_type, req.bizId, req.dynId)
+    if resolved is None:
+        return StandardResponse(code=400, msg="bizId/dynId 不合法")
+    biz_type, biz_id = resolved
+    try:
+        # 未指定收藏夹（folderId=None）：服务层自动使用（创建）该用户默认收藏夹
+        favorited = await FavoriteService.favorite(
+            session, user.mid, biz_type, biz_id, req.folderId
+        )
+        folder_id = await FavoriteService.ensure_default_folder(session, user.mid) if req.folderId is None else int(req.folderId)
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    count = await _get_favorite_count(session, biz_type, biz_id)
+    return StandardResponse(
+        data=FavoriteAddResp(
+            bizType=biz_type.to_text(),
+            bizId=str(biz_id),
+            dynId=req.dynId,
+            folderId=str(folder_id),
+            favorited=favorited,
+            favoriteCount=count,
+        )
+    )
+
+
+@router.post("/remove", response_model=StandardResponse[FavoriteAddResp], summary="从收藏夹取消收藏")
+async def remove_favorite(
+    session: SessionDep,
+    user: RequiredUser,
+    req: FavoriteRemoveReq,
+) -> StandardResponse[FavoriteAddResp]:
+    try:
+        biz_type = InteractionBizTypeEnum.from_text(req.bizType)
+    except (ValueError, KeyError):
+        return StandardResponse(code=400, msg=f"不支持的资源类型: {req.bizType}")
+    resolved = _resolve_biz(biz_type, req.bizId, req.dynId)
+    folder_id = await _parse_int(req.folderId, "folderId")
+    if resolved is None or folder_id is None:
+        return StandardResponse(code=400, msg="bizId/dynId/folderId 不合法")
+    biz_type, biz_id = resolved
+    removed = await FavoriteService.unfavorite(
+        session, user.mid, biz_type, biz_id, folder_id
+    )
+    count = await _get_favorite_count(session, biz_type, biz_id)
+    return StandardResponse(
+        data=FavoriteAddResp(
+            bizType=biz_type.to_text(),
+            bizId=str(biz_id),
+            dynId=req.dynId,
+            folderId=req.folderId,
+            favorited=not removed,
+            favoriteCount=count,
+        )
+    )
+
+
+@router.get("/list", response_model=StandardResponse[FavoriteListResp], summary="某收藏夹下的资源列表")
+async def list_favorites(
+    session: SessionDep,
+    user: RequiredUser,
+    folderId: str = Query(description="收藏夹id（字符串）"),
+    bizType: str | None = Query(default=None, description="资源类型过滤（缺省返回全部；文字：dynamic/lottery/...）"),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=20, ge=1, le=50),
+) -> StandardResponse[FavoriteListResp]:
+    folder_id = await _parse_int(folderId, "folderId")
+    if folder_id is None:
+        return StandardResponse(code=400, msg="folderId 不合法")
+    try:
+        bt = InteractionBizTypeEnum.from_text(bizType) if bizType is not None else None
+    except (ValueError, KeyError):
+        return StandardResponse(code=400, msg=f"不支持的资源类型: {bizType}")
+    total, items = await FavoriteService.list_favorite_items(
+        session, user.mid, folder_id, page, pageSize, biz_type=bt
+    )
+    # 兼容字段：仅当过滤为 dynamic 或不过滤时，把 dynamic 项的 bizId 填到 dynIds
+    dyn_ids = [it["bizId"] for it in items if it["bizType"] == "dynamic"]
+    return StandardResponse(
+        data=FavoriteListResp(
+            folderId=folderId,
+            total=total,
+            dynIds=dyn_ids,
+            items=[FavoriteListItem(**it) for it in items],
+        )
+    )
+
+
+@router.get("/items", response_model=StandardResponse[FavoriteItemListResp], summary="某收藏夹下资源明细（bizType+bizId）")
+async def list_favorite_items(
+    session: SessionDep,
+    user: RequiredUser,
+    folderId: str = Query(description="收藏夹id（字符串）"),
+    bizType: str | None = Query(default=None, description="资源类型过滤（缺省返回全部；文字：dynamic/lottery/...）"),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=20, ge=1, le=50),
+) -> StandardResponse[FavoriteItemListResp]:
+    folder_id = await _parse_int(folderId, "folderId")
+    if folder_id is None:
+        return StandardResponse(code=400, msg="folderId 不合法")
+    try:
+        bt = InteractionBizTypeEnum.from_text(bizType) if bizType is not None else None
+    except (ValueError, KeyError):
+        return StandardResponse(code=400, msg=f"不支持的资源类型: {bizType}")
+    total, items = await FavoriteService.list_favorite_items(
+        session, user.mid, folder_id, page, pageSize, biz_type=bt
+    )
+    return StandardResponse(
+        data=FavoriteItemListResp(
+            folderId=folderId,
+            total=total,
+            items=[FavoriteListItem(**it) for it in items],
+        )
+    )
+
+
+@router.get("/dyn/folders", response_model=StandardResponse[FavoriteDynFoldersResp], summary="某资源被当前用户收藏在哪些收藏夹")
+async def dyn_folders(
+    session: SessionDep,
+    user: RequiredUser,
+    bizId: str | None = Query(default=None, description="资源id（字符串）"),
+    bizType: str = Query(default="dynamic", description="资源类型（文字：dynamic/lottery/...）"),
+    dynId: str | None = Query(default=None, description="[兼容]动态id（字符串）"),
+) -> StandardResponse[FavoriteDynFoldersResp]:
+    try:
+        biz_type = InteractionBizTypeEnum.from_text(bizType)
+    except (ValueError, KeyError):
+        return StandardResponse(code=400, msg=f"不支持的资源类型: {bizType}")
+    resolved = _resolve_biz(biz_type, bizId, dynId)
+    if resolved is None:
+        return StandardResponse(code=400, msg="bizId/dynId 不合法")
+    biz_type, biz_id = resolved
+    folder_ids = await FavoriteService.folders_containing_resource(
+        session, user.mid, biz_type, biz_id
+    )
+    return StandardResponse(
+        data=FavoriteDynFoldersResp(
+            bizType=biz_type.to_text(),
+            bizId=str(biz_id),
+            dynId=dynId,
+            folderIds=folder_ids,
+        )
+    )
+
+
+# ==================== 主页收藏可见性设置 ====================
+
+
+@router.get("/setting", response_model=StandardResponse[FavoriteSettingResp], summary="主页是否显示收藏")
+async def get_setting(
+    session: SessionDep,
+    user: RequiredUser,
+) -> StandardResponse[FavoriteSettingResp]:
+    show = await FavoriteService.get_setting(session, user.mid)
+    return StandardResponse(data=FavoriteSettingResp(showFavorites=show))
+
+
+@router.post("/setting", response_model=StandardResponse[FavoriteSettingResp], summary="设置主页是否显示收藏")
+async def set_setting(
+    session: SessionDep,
+    user: RequiredUser,
+    req: FavoriteSettingReq,
+) -> StandardResponse[FavoriteSettingResp]:
+    show = await FavoriteService.set_setting(session, user.mid, req.showFavorites)
+    return StandardResponse(data=FavoriteSettingResp(showFavorites=show))
+
+
+# ==================== 他人主页公开读（无需登录）====================
+
+
+@router.get("/user/folders", response_model=StandardResponse[list[FavoriteFolderResp] | None], summary="某用户主页公开的收藏夹列表")
+async def public_folders(
+    session: SessionDep,
+    mid: int = Query(description="目标用户mid"),
+) -> StandardResponse[list[FavoriteFolderResp] | None]:
+    folders = await FavoriteService.list_public_folders(session, mid)
+    if folders is None:
+        return StandardResponse(code=403, msg="该用户未公开收藏")
+    return StandardResponse(data=[FavoriteFolderResp(**f) for f in folders])
+
+
+@router.get("/user/dynamics", response_model=StandardResponse[FavoriteListResp | None], summary="某用户某收藏夹下的公开资源")
+async def public_dynamics(
+    session: SessionDep,
+    mid: int = Query(description="目标用户mid"),
+    folderId: str = Query(description="收藏夹id（字符串）"),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=20, ge=1, le=50),
+) -> StandardResponse[FavoriteListResp | None]:
+    folder_id = await _parse_int(folderId, "folderId")
+    if folder_id is None:
+        return StandardResponse(code=400, msg="folderId 不合法")
+    result = await FavoriteService.list_public_items(
+        session, mid, folder_id, page, pageSize
+    )
+    if result is None:
+        return StandardResponse(code=403, msg="该收藏夹不公开或不存在")
+    total, items = result
+    dyn_ids = [it["bizId"] for it in items if it["bizType"] == "dynamic"]
+    return StandardResponse(
+        data=FavoriteListResp(
+            folderId=folderId,
+            total=total,
+            dynIds=dyn_ids,
+            items=[FavoriteListItem(**it) for it in items],
+        )
+    )

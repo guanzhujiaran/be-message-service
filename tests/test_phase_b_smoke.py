@@ -15,7 +15,9 @@
 """
 
 import pytest
+from bili_common.models.depends import AuthInfo
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core import database as db_mod
@@ -36,7 +38,6 @@ from app.models.db import (
 from app.models.enums import (
     DmMsgStatusEnum,
     DmMsgTypeEnum,
-    DmRelationEnum,
     EventTypeEnum,
     NotifyTargetTypeEnum,
     SourceTypeEnum,
@@ -49,15 +50,14 @@ from app.models.schemas import (
     MessageSettingUpdateReq,
     NotifyCreateReq,
 )
-from app.services import publisher
 from app.services import dm as dm_svc_mod
+from app.services import publisher
 from app.services.activity import ActivityService
 from app.services.dm import DmService
-from app.services.event import EventService, build_dedup_key
+from app.services.event import EventService
 from app.services.notify import NotifyService
 from app.services.setting import SettingService
-from bili_common.models.depends import AuthInfo
-from sqlmodel import select, text
+
 
 # 每个测试函数跑在独立的事件循环里；模块级 engine 会绑死在第一个循环上，
 # 导致后续测试报 "Event loop is closed"。这里用 autouse 异步 fixture 在每个测试
@@ -273,7 +273,7 @@ async def test_event_aggregation_and_dedup() -> None:
     await _cleanup()
     mid = M["event_user"]
     async with new_session() as s:
-        req = lambda actor: EventReportReq(  # noqa: E731
+        req = lambda actor: EventReportReq(
             mid=mid,
             event_type=EventTypeEnum.LIKE,
             source_type=SourceTypeEnum.VIDEO,

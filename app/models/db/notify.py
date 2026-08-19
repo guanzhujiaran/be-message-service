@@ -107,4 +107,4 @@ class NotifyState(TimestampMixin, table=True):
     is_deleted: bool = Field(default=False, description="用户是否已删除该通知")
 
 
-__all__ = ["NotifyMessage", "NotifyCursor", "NotifyState", "SQLModel"]
+__all__ = ["NotifyCursor", "NotifyMessage", "NotifyState", "SQLModel"]

@@ -11,15 +11,15 @@
 """
 
 from app.models.pptr_db import (
-    PptrUserInfo,
     PptrUserDetail,
+    PptrUserInfo,
     PptrUserLevel,
     PptrUserVip,
 )
 
 __all__ = [
-    "PptrUserInfo",
     "PptrUserDetail",
+    "PptrUserInfo",
     "PptrUserLevel",
     "PptrUserVip",
 ]

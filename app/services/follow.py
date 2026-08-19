@@ -303,6 +303,28 @@ class FollowService:
         )
 
     @staticmethod
+    async def list_following_mids(
+        session: AsyncSession, mid: int, limit: int = 2000
+    ) -> list[int]:
+        """我关注的所有人 mid（全量，不分页）。
+
+        供「关注流 Feed」等按 mid 集合过滤的场景使用，按关注时间倒序。
+        与 ``list_following``（分页 + mutual 标记）不同：此处只返回纯 mid 列表。
+        """
+        rows = (
+            await session.exec(
+                select(UserFollow.target_mid)
+                .where(
+                    col(UserFollow.mid) == mid,
+                    col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
+                )
+                .order_by(col(UserFollow.created_at).desc())
+                .limit(limit)
+            )
+        ).all()
+        return [int(r) for r in rows]
+
+    @staticmethod
     async def list_followers(
         session: AsyncSession,
         mid: int,
@@ -389,6 +411,18 @@ class FollowService:
             await FollowService._relation_status(session, blocker, mid)
             == FollowStatusEnum.BLOCKED
         )
+
+    @staticmethod
+    async def is_blocked_relation(
+        session: AsyncSession, mid: int, target_mid: int
+    ) -> bool:
+        """两个用户之间是否存在**任一向**黑名单关系（2.12.0 新增，供空间互访拦截）。
+
+        任一方拉黑另一方（`i_blocked` 或 `blocked_by`）即视为命中黑名单，
+        用于空间读接口对「已拉黑 / 被拉黑」的访问拒绝。复用 `get_relation` 一次查询。
+        """
+        rel = await FollowService.get_relation(session, mid, target_mid)
+        return rel.i_blocked or rel.blocked_by
 
     # ==================== 内部工具 ====================
 

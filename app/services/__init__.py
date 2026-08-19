@@ -22,13 +22,13 @@ from app.services.notify import NotifyService
 from app.services.setting import SettingService
 
 __all__ = [
-    "NotifyService",
-    "EventService",
-    "build_dedup_key",
-    "DmService",
-    "make_session_key",
-    "DmContentService",
-    "SettingService",
     "ActivityService",
+    "DmContentService",
+    "DmService",
+    "EventService",
+    "NotifyService",
+    "SettingService",
+    "build_dedup_key",
+    "make_session_key",
     "publisher",
 ]

@@ -62,4 +62,4 @@ class UserFollow(TimestampMixin, table=True):
     )
 
 
-__all__ = ["UserFollow", "SQLModel"]
+__all__ = ["SQLModel", "UserFollow"]

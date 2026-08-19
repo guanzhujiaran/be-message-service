@@ -243,6 +243,34 @@ MYSQL_MESSAGE_URL='mysql+aiomysql://root:<pwd>@127.0.0.1:10000/BiliMessageDB?cha
 | POST | `/push/feedback` | 用户反馈，固定回落站长全局配置 |
 | GET | `/health` | 204=存活且 broker 连通，503=broker 未连 |
 
+### 推送 RPC 调用（服务端系统接入）
+
+除 HTTP 外，be-message 同时以 **RabbitMQ RPC 服务端** 暴露「站外推送」能力，
+供其它系统（be-gateway / RPA-Browser / be-bilibili-crawler 等）同步调用，
+不依赖 HTTP 网关转发与请求头注入的 `x-bili-*` 用户信息。
+
+- 路由键前缀：`message.push.rpc`（topic exchange `message_exchange`）
+- 返回统一为 `StandardResponse{code, msg, data}`；异常在 RPC 边界翻译成
+  `error_response` 回包，客户端立即得到错误结果而非超时
+- 契约模型统一下沉 `bili_common.models.push_rpc`
+
+| RPC 方法 | routing_key | 说明 | 等价 HTTP |
+| --- | --- | --- | --- |
+| `push_message` | `message.push.rpc.push_message` | 投递到 `message.push` 队列，异步分发（不阻塞） | `POST /push/push` |
+| `send_push_now` | `message.push.rpc.send_push_now` | 立即同步发送，等待渠道结果 | `POST /push/test` |
+
+请求 / 响应示例：
+
+```text
+push_message 请求:  { title, content, push_type?, config?, user_label? }
+push_message 响应:  { code: 0, data: { title, queued: true } }
+send_push_now 请求: { title, content, push_type?, config?, user_label? }
+send_push_now 响应: { code: 0, data: { success, message, sent_channels[] } }
+```
+
+客户端接入方式与 `message.pptr.rpc.*` 一致：发布到 `message_exchange`，
+routing_key 为上述值，用 direct reply-to（`amq.rabbitmq.reply-to`）收取响应。
+
 ---
 
 ## 十、认证

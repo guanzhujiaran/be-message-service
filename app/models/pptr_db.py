@@ -16,10 +16,10 @@ from datetime import datetime
 
 from sqlalchemy import (
     BIGINT,
+    JSON,
     DateTime,
     ForeignKeyConstraint,
     Index,
-    JSON,
     PrimaryKeyConstraint,
     Text,
     UniqueConstraint,
@@ -279,12 +279,12 @@ class PptrUserPwdRecord(SQLModel, table=True):
 
 
 __all__ = [
-    "PptrUserInfo",
-    "PptrUserDetail",
-    "PptrUserLevel",
-    "PptrUserVip",
     "PptrUserActInfoLog",
+    "PptrUserDetail",
     "PptrUserExpRecord",
+    "PptrUserInfo",
+    "PptrUserLevel",
     "PptrUserNameRecord",
     "PptrUserPwdRecord",
+    "PptrUserVip",
 ]

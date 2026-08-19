@@ -77,7 +77,7 @@ class DmContentService:
             for table, keys in grouped.items():
                 placeholders = ", ".join(f":k{i}" for i in range(len(keys)))
                 params = {f"k{i}": key for i, key in enumerate(keys)}
-                sql = f"SELECT `msgkey`, `content` FROM {table} WHERE `msgkey` IN ({placeholders})"  # noqa: S608
+                sql = f"SELECT `msgkey`, `content` FROM {table} WHERE `msgkey` IN ({placeholders})"
                 try:
                     rows = (await conn.execute(text(sql), params)).all()
                 except ProgrammingError:
@@ -95,7 +95,7 @@ class DmContentService:
     async def clear_content(msgkey: int) -> bool:
         """清空某条消息的正文（撤回时调用，物理层面抹掉内容）。"""
         table = qualified_table_of(msgkey)
-        sql = f"UPDATE {table} SET `content` = NULL WHERE `msgkey` = :msgkey"  # noqa: S608
+        sql = f"UPDATE {table} SET `content` = NULL WHERE `msgkey` = :msgkey"
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(sql), {"msgkey": msgkey})

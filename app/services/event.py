@@ -29,15 +29,24 @@ from app.models.schemas import (
     EventActorBrief,
     EventAggregateItem,
     EventItem,
+    EventListResp,
+    EventMsgfeedContent,
+    EventMsgfeedCursor,
+    EventMsgfeedItem,
+    EventMsgfeedSection,
     EventReadReq,
     EventReadResp,
     EventReportReq,
     EventReportResp,
+    EventUserBrief,
 )
+from app.services.pptr_user import PptrUserService
 from app.services.setting import SettingService
 
-# 每张聚合卡片最多展示的触发者头像数
+# 每张聚合卡片（aggregate 接口）最多展示的触发者头像数
 _MAX_ACTORS_PER_GROUP = 3
+# msgfeed 单条 users[] 后端返回上限（前端 B 站样式最多展示 2 个，后端多给便于扩展）
+_MAX_USERS_PER_ITEM = 4
 # 为了在内存里凑齐每组的头像，单次最多回捞的明细条数（防止大分组撑爆内存）
 _ACTOR_SCAN_LIMIT = 500
 
@@ -146,11 +155,11 @@ class EventService:
         再回捞一次明细补齐「最新内容」与「头像列表」，
         避免在 GROUP BY 里做复杂的窗口函数，MySQL 8 以下也能跑。
         """
-        conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]  # noqa: E712
+        conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
         if event_type is not None:
             conditions.append(EventMessage.event_type == event_type)
         if only_unread:
-            conditions.append(EventMessage.is_read == False)  # noqa: E712
+            conditions.append(EventMessage.is_read == False)
 
         group_cols = (
             EventMessage.event_type,
@@ -166,7 +175,7 @@ class EventService:
             (await session.exec(select(func.count()).select_from(subq))).one() or 0
         )
 
-        unread_expr = func.sum(case((EventMessage.is_read == False, 1), else_=0))  # noqa: E712
+        unread_expr = func.sum(case((EventMessage.is_read == False, 1), else_=0))
         stmt = (
             select(
                 *group_cols,
@@ -253,7 +262,7 @@ class EventService:
         only_unread: bool = False,
     ) -> tuple[list[EventItem], int]:
         """查看某个聚合分组下的事件明细（点开卡片后的列表）。"""
-        conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]  # noqa: E712
+        conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
         if event_type is not None:
             conditions.append(EventMessage.event_type == event_type)
         if source_type is not None:
@@ -261,7 +270,7 @@ class EventService:
         if source_id is not None:
             conditions.append(EventMessage.source_id == source_id)
         if only_unread:
-            conditions.append(EventMessage.is_read == False)  # noqa: E712
+            conditions.append(EventMessage.is_read == False)
 
         total = int(
             (
@@ -299,6 +308,179 @@ class EventService:
         ]
         return items, total
 
+    # ==================== B 站式 msgfeed 聚合列表 ====================
+
+    @staticmethod
+    async def list_msgfeed(
+        session: AsyncSession,
+        mid: int,
+        event_type: EventTypeEnum | None = None,
+        cursor_id: int | None = None,
+        page_size: int = 20,
+        only_unread: bool = False,
+    ) -> EventListResp:
+        """按 source_type + source_id 聚合的 B 站式互动提醒列表。
+
+        对齐 `x/msgfeed/like` 结构：
+        - `latest`：最新一条聚合记录（无分页），用于顶部"最近提醒"；
+        - `total`：完整分页列表，`cursor.id` 为上一页末条分组最大事件 id，
+          用于下一页翻页；`cursor.is_end` 表示是否已到末尾。
+
+        聚合分组键为 `(event_type, source_type, source_id)`，
+        每组返回：完整触发者 `users[]`（去重，按触发时间倒序）、
+        内容实体 `item`（取组内最新一条）、总人数 `counts`。
+        """
+        conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
+        if event_type is not None:
+            conditions.append(EventMessage.event_type == event_type)
+        if only_unread:
+            conditions.append(EventMessage.is_read == False)
+        if cursor_id is not None:
+            conditions.append(EventMessage.id < cursor_id)
+
+        group_cols = (
+            EventMessage.event_type,
+            EventMessage.source_type,
+            EventMessage.source_id,
+        )
+
+        # 每组分组的统计：总数 / 最新事件 id
+        unread_expr = func.sum(case((EventMessage.is_read == False, 1), else_=0))
+        stmt = (
+            select(
+                *group_cols,
+                func.count().label("cnt"),
+                unread_expr.label("unread"),
+                func.max(EventMessage.id).label("latest_id"),
+            )
+            .where(*conditions)
+            .group_by(*group_cols)
+            .order_by(func.max(EventMessage.id).desc())
+            .limit(page_size)
+        )
+        groups = (await session.exec(stmt)).all()
+        if not groups:
+            return EventListResp(
+                latest=EventMsgfeedSection(items=[]),
+                total=EventMsgfeedSection(
+                    cursor=EventMsgfeedCursor(is_end=True, id=None, time=None),
+                    items=[],
+                ),
+            )
+
+        # 回捞本页所有分组的明细，内存里按组聚合
+        group_keys = [(g[0], g[1], g[2]) for g in groups]
+        detail_stmt = (
+            select(EventMessage)
+            .where(
+                *conditions,
+                tuple_(*group_cols).in_(group_keys),  # type: ignore[arg-type]
+            )
+            .order_by(EventMessage.id.desc())  # type: ignore[union-attr]
+            .limit(_ACTOR_SCAN_LIMIT)
+        )
+        details = list((await session.exec(detail_stmt)).all())
+
+        bucket: dict[tuple, list[EventMessage]] = {}
+        for row in details:
+            bucket.setdefault(
+                (row.event_type, row.source_type, row.source_id), []
+            ).append(row)
+
+        # 批量补齐触发者用户信息（昵称/头像/粉丝数），避免事件表里 actor_* 为空
+        actor_mids: set[int] = set()
+        for rows in bucket.values():
+            for r in rows:
+                actor_mids.add(r.actor_mid)
+        user_map = await PptrUserService.get_many(actor_mids)
+
+        def _user_brief(actor_mid: int, fallback_name, fallback_avatar) -> EventUserBrief:
+            info = user_map.get(int(actor_mid))
+            if info is None:
+                return EventUserBrief(
+                    mid=actor_mid,
+                    nickname=fallback_name,
+                    avatar=fallback_avatar,
+                    fans=0,
+                )
+            return EventUserBrief(
+                mid=actor_mid,
+                nickname=info.uname or fallback_name,
+                avatar=info.avatar or fallback_avatar,
+                fans=int(getattr(info, "follower_count", 0) or 0),
+            )
+
+        def _to_item(etype: str, rows: list[EventMessage], cnt: int) -> EventMsgfeedItem:
+            """把一组明细收敛成一条 msgfeed 聚合条目。"""
+            latest = rows[0]
+            users: list[EventUserBrief] = []
+            seen: set[int] = set()
+            for r in rows:
+                if r.actor_mid in seen:
+                    continue
+                seen.add(r.actor_mid)
+                users.append(
+                    _user_brief(r.actor_mid, r.actor_name, r.actor_avatar)
+                )
+                if len(users) >= _MAX_USERS_PER_ITEM:
+                    break
+            return EventMsgfeedItem(
+                id=latest.id or 0,
+                users=users,
+                item=EventMsgfeedContent(
+                    item_id=latest.id or 0,
+                    type=etype,
+                    business=latest.source_type.value if latest.source_type else "",
+                    title=latest.source_title,
+                    desc=latest.content,
+                    image=latest.source_cover,
+                    uri=latest.jump_url,
+                    ctime=int(latest.created_at.timestamp()) if latest.created_at else 0,
+                ),
+                counts=cnt,
+                like_time=latest.created_at,
+                notice_state=0,
+            )
+
+        total_items: list[EventMsgfeedItem] = []
+        for etype, stype, sid, cnt, _unread, latest_id in groups:
+            rows = bucket.get((etype, stype, sid), [])
+            total_items.append(
+                _to_item(etype.value if hasattr(etype, "value") else str(etype), rows, int(cnt or 0))
+            )
+
+        # 再取一条判断是否还有下一页
+        next_conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
+        if event_type is not None:
+            next_conditions.append(EventMessage.event_type == event_type)
+        if only_unread:
+            next_conditions.append(EventMessage.is_read == False)
+        if total_items:
+            last_id = total_items[-1].id
+            next_conditions.append(EventMessage.id < last_id)
+            has_more = bool(
+                (
+                    await session.exec(
+                        select(func.count())
+                        .select_from(EventMessage)
+                        .where(*next_conditions)
+                    )
+                ).one()
+            )
+        else:
+            has_more = False
+
+        cursor = EventMsgfeedCursor(
+            is_end=not has_more,
+            id=total_items[-1].id if total_items else None,
+            time=total_items[-1].like_time if total_items else None,
+        )
+
+        return EventListResp(
+            latest=EventMsgfeedSection(items=total_items[:1]),
+            total=EventMsgfeedSection(cursor=cursor, items=total_items),
+        )
+
     # ==================== 已读管理 ====================
 
     @staticmethod
@@ -307,7 +489,7 @@ class EventService:
     ) -> EventReadResp:
         """标记已读，支持 id / 类型 / 聚合分组三种粒度。"""
         table = EventMessage.__table__
-        conditions = [table.c.mid == mid, table.c.is_read == False]  # noqa: E712
+        conditions = [table.c.mid == mid, table.c.is_read == False]
 
         if req.event_ids:
             conditions.append(table.c.id.in_(req.event_ids))
@@ -356,8 +538,8 @@ class EventService:
     ) -> int:
         conditions = [
             EventMessage.mid == mid,
-            EventMessage.is_read == False,  # noqa: E712
-            EventMessage.is_deleted == False,  # noqa: E712
+            EventMessage.is_read == False,
+            EventMessage.is_deleted == False,
         ]
         if event_type is not None:
             conditions.append(EventMessage.event_type == event_type)
@@ -371,8 +553,8 @@ class EventService:
             select(EventMessage.event_type, func.count())
             .where(
                 EventMessage.mid == mid,
-                EventMessage.is_read == False,  # noqa: E712
-                EventMessage.is_deleted == False,  # noqa: E712
+                EventMessage.is_read == False,
+                EventMessage.is_deleted == False,
             )
             .group_by(EventMessage.event_type)
         )

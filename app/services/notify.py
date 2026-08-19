@@ -17,13 +17,12 @@ N 条冗余行，对小设备是灾难；而通知的读取频率远低于私信
 
 from datetime import datetime
 
+from bili_common.models.depends import AuthInfo
 from loguru import logger
 from sqlalchemy import Integer, and_, cast, func, or_
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-
-from bili_common.models.depends import AuthInfo
 
 from app.core.database import new_session
 from app.models.db import NotifyCursor, NotifyMessage, NotifyState, UserMessageSetting
@@ -278,8 +277,7 @@ class NotifyService:
 
         # 推进服务端游标（只增不减，避免并发拉取导致游标回退）
         new_cursor = max([effective_cursor, *[i.id for i in items]]) if items else effective_cursor
-        if new_cursor > cursor_row.last_notify_id:
-            cursor_row.last_notify_id = new_cursor
+        cursor_row.last_notify_id = max(cursor_row.last_notify_id, new_cursor)
         cursor_row.last_pull_at = datetime.now()
         session.add(cursor_row)
         await session.commit()
@@ -306,11 +304,11 @@ class NotifyService:
         base_conditions = [
             _visible_condition(),
             _target_condition(user),
-            or_(state.is_deleted.is_(None), state.is_deleted == False),  # noqa: E712
+            or_(state.is_deleted.is_(None), state.is_deleted == False),
         ]
         if only_unread:
             base_conditions.append(
-                or_(state.is_read.is_(None), state.is_read == False)  # noqa: E712
+                or_(state.is_read.is_(None), state.is_read == False)
             )
 
         count_stmt = (
@@ -361,7 +359,7 @@ class NotifyService:
             .where(
                 _visible_condition(),
                 _target_condition(user),
-                or_(state.id.is_(None), and_(state.is_read == False, state.is_deleted == False)),  # noqa: E712
+                or_(state.id.is_(None), and_(state.is_read == False, state.is_deleted == False)),
             )
         )
         return int((await session.exec(stmt)).one() or 0)
@@ -455,7 +453,7 @@ class NotifyService:
         """
         stmt = (
             select(NotifyMessage)
-            .where(_visible_condition(), NotifyMessage.dispatched == False)  # noqa: E712
+            .where(_visible_condition(), NotifyMessage.dispatched == False)
             .order_by(NotifyMessage.id.asc())  # type: ignore[union-attr]
             .limit(limit)
         )
@@ -492,7 +490,7 @@ class NotifyService:
             return mids[:limit]
 
         stmt = select(UserMessageSetting.mid).where(
-            UserMessageSetting.recv_notify == True  # noqa: E712
+            UserMessageSetting.recv_notify == True
         ).limit(limit)
         return [int(m) for m in (await session.exec(stmt)).all()]
 

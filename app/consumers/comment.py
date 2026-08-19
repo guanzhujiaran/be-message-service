@@ -60,7 +60,7 @@ async def handle_comment_count(payload: dict, msg: RabbitMessage) -> None:
 
 
 __all__ = [
-    "handle_comment_notify",
     "handle_comment_audit",
     "handle_comment_count",
+    "handle_comment_notify",
 ]

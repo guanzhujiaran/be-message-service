@@ -16,14 +16,18 @@ from loguru import logger
 
 from app.core.broker import (
     RK_DM_CONTENT,
+    RK_INTERACTION_VIEW,
     RK_PUSH,
+    RK_USER_DEACTIVATE,
     broker,
     dm_content_queue,
+    interaction_view_queue,
     message_exchange,
     message_queue,
+    user_deactivate_queue,
 )
 from app.models.push import PushMessagePayload
-from app.models.schemas import DmContentPayload
+from app.models.schemas import DmContentPayload, InteractionViewPayload, UserDeactivatePayload
 
 
 async def _publish(payload, routing_key: str, queue) -> bool:
@@ -54,7 +58,34 @@ async def publish_channel_push(title: str, content: str) -> bool:
     )
 
 
+async def publish_user_deactivate(uid: int) -> bool:
+    """投递用户注销消息，由消费者异步执行完整删除流程。
+
+    Args:
+        uid: 待注销用户 mid（>0，调用方已校验）。
+
+    Returns:
+        bool: 投递是否成功（失败时调用方按需降级处理）。
+    """
+    return await _publish(
+        UserDeactivatePayload(uid=uid),
+        RK_USER_DEACTIVATE,
+        user_deactivate_queue,
+    )
+
+
+async def publish_interaction_view(payload: InteractionViewPayload) -> bool:
+    """投递浏览统计消息，由消费者异步去重累计（2.23.0）。
+
+    投递失败返回 False（MQ 抖动不阻塞 status 主链路）；浏览上报幂等，
+    消费者经 ViewLog 唯一约束保证 Stat.viewCount 只首次 +1。
+    """
+    return await _publish(payload, RK_INTERACTION_VIEW, interaction_view_queue)
+
+
 __all__ = [
-    "publish_dm_content",
     "publish_channel_push",
+    "publish_dm_content",
+    "publish_interaction_view",
+    "publish_user_deactivate",
 ]

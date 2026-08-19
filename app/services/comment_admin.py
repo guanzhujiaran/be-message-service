@@ -23,13 +23,13 @@ from app.models.schemas import (
     CommentAuditItem,
     CommentSourceResp,
     CommentStatsResp,
-    CommentUserBrief,
 )
 from app.services.comment import (
     DEFAULT_REJECT_REASON,
     CommentService,
     summarize_text,
 )
+from app.services.moment_stat import MomentStatService
 from app.services.notify import NotifyService
 from app.services.pptr_user import PptrUserService
 from app.utils.audit_source import build_comment_source
@@ -72,6 +72,35 @@ class CommentAdminService:
         row.state = state
         session.add(row)
         await session.commit()
+
+        # 评论对象是 Moment（DYNAMIC）时，同步动态统计 commentCount：
+        # 进入计数（非 NORMAL → NORMAL）→ +1；离开计数（NORMAL → 非 NORMAL）→ -1
+        # 注意：此处位于状态变更 commit 之后，回写必须再 commit 一次才会落库
+        if prev_state != state and row.type is CommentTypeEnum.DYNAMIC:
+            # 先同步评论区冗余计数（Feed/详情展示的 stat.commentCount 读的就是 root_count），
+            # 再回写 TMomentStat.commentCount；即使动态记录缺失导致 TMomentStat 外键失败，
+            # 评论系统计数也已正确（评论计数以评论区为准）
+            if state is CommentStateEnum.NORMAL:
+                await CommentAdminService._sync_subject_count(
+                    session,
+                    row.oid,
+                    delta_all=1,
+                    delta_root=(1 if row.root == 0 else 0),
+                )
+                await MomentStatService.ensure_stat_row(session, row.oid)
+                await MomentStatService.incr_stat(session, row.oid, "commentCount", 1)
+            elif prev_state is CommentStateEnum.NORMAL:
+                await CommentAdminService._sync_subject_count(
+                    session,
+                    row.oid,
+                    delta_all=-1,
+                    delta_root=(-1 if row.root == 0 else 0),
+                )
+                await MomentStatService.ensure_stat_row(session, row.oid)
+                await MomentStatService.decr_stat(
+                    session, row.oid, "commentCount", floor_zero=True
+                )
+            await session.commit()
 
         # 状态实际变化时，按变更类型向作者推送系统通知（弱依赖：失败仅告警）
         if prev_state != state:
@@ -117,6 +146,36 @@ class CommentAdminService:
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"评论状态变更通知投递失败（弱依赖）: {e}")
         return True
+
+    @staticmethod
+    async def _sync_subject_count(
+        session: AsyncSession,
+        oid: int,
+        delta_all: int,
+        delta_root: int,
+    ) -> None:
+        """同步评论区的冗余计数（`msg_comment_subject.root_count` / `all_count`）。
+
+        审核状态翻转（通过 / 驳回 / 下架 / 恢复）时，`stat.commentCount` 的展示口径
+        读的是评论系统的 `root_count`，必须与 `TMomentStat.commentCount` 保持一致：
+        - `delta_all` 对 `all_count` 增减（±1）；
+        - `delta_root` 对一级评论（`root==0`）的 `root_count` 增减（±1 / 0）。
+        负数兜底到 0（floor），防止并发或历史数据导致计数为负。
+        """
+        subject = (
+            await session.exec(
+                select(CommentSubject).where(
+                    col(CommentSubject.oid) == oid,
+                    col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+                )
+            )
+        ).one_or_none()
+        if subject is None:
+            return
+        subject.all_count = max(subject.all_count + delta_all, 0)
+        if delta_root:
+            subject.root_count = max(subject.root_count + delta_root, 0)
+        session.add(subject)
 
     @staticmethod
     async def _load_excerpt(session: AsyncSession, rpid: int) -> str | None:

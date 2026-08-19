@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 
-
 _MOBILE_BRANDS = (
     "xiaomi",
     "redmi",
@@ -73,11 +72,7 @@ def parse_user_agent(ua: str | None) -> tuple[str | None, str | None]:
                 device = match.group(1).strip() or "android"
             else:
                 device = "android"
-    elif "windows" in lowered:
-        device = "pc"
-    elif "macintosh" in lowered or "mac os" in lowered:
-        device = "pc"
-    elif "linux" in lowered:
+    elif "windows" in lowered or "macintosh" in lowered or "mac os" in lowered or "linux" in lowered:
         device = "pc"
 
     return plat, device

@@ -27,18 +27,25 @@ from fastapi import FastAPI, Response
 from faststream.rabbit import RabbitBroker
 from loguru import logger
 
+from app.api.avatar_audit import router as avatar_audit_router
 from app.api.ban import router as ban_router
 from app.api.comment import router as comment_router
 from app.api.comment_admin import router as comment_admin_router
 from app.api.dm import router as dm_router
+from app.api.favorite import router as favorite_router
 from app.api.dm_admin import router as dm_admin_router
 from app.api.event import router as event_router
 from app.api.follow import router as follow_router
 from app.api.message_admin import router as message_admin_router
+from app.api.moment import router as moment_router
+from app.api.moment_audit import router as moment_audit_router
+from app.api.moment_topic_audit import router as moment_topic_audit_router
+from app.api.moment_feed import router as moment_feed_router
 from app.api.msg_feed import router as msg_feed_router
 from app.api.notify import router as notify_router
 from app.api.pptr_user_gateway import router as pptr_user_gateway_router
 from app.api.push import router as push_router
+from app.api.report import router as report_router
 from app.api.setting import router as setting_router
 from app.api.user import router as user_router
 from app.core.broker import broker
@@ -48,8 +55,10 @@ from app.core.database import test_connection as test_mysql_connection
 from app.core.migration import run_alembic_pptr_upgrade, run_alembic_upgrade
 from app.core.sharding import ensure_current_month_shards
 from app.mq import rpc_pptr_user  # noqa: F401
-from app.mq.consumers import comment, dm, push  # noqa: F401
+from app.mq import rpc_push  # noqa: F401
+from app.mq.consumers import comment, deactivate, dm, push  # noqa: F401
 from app.mq.router import router as mq_router
+from app.services.rpa_rpc import rpa_rpc_client
 
 
 async def test_service_connectivity():
@@ -156,7 +165,21 @@ async def lifespan(app: FastAPI):
 
     # broker 启动 / 定时任务启动由 mq_router 的 lifespan 在本 lifespan 之外、
     # 嵌套于其内部接管（FastAPI 的 _merge_lifespan_context 保证顺序）。
+
+    # 4. 连接 RPA 资源 RPC 客户端（2.18.0：互动接口经 RPC 获取 RPA 资源详情）
+    try:
+        await rpa_rpc_client.connect()
+    except Exception as e:  # noqa: BLE001
+        # RPA RPC 弱依赖：连接失败不阻断服务启动，接口侧降级返回无详情
+        logger.warning(f"连接 RPA RPC 客户端失败（弱依赖，已忽略）: {e}")
+
     yield
+
+    # 关闭 RPA RPC 客户端
+    try:
+        await rpa_rpc_client.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"关闭 RPA RPC 客户端失败（已忽略）: {e}")
 
 
 app = FastAPI(
@@ -196,6 +219,11 @@ async def health() -> Response:
 app.include_router(msg_feed_router)
 app.include_router(comment_router)
 app.include_router(comment_admin_router)
+app.include_router(moment_router)
+app.include_router(moment_feed_router)
+app.include_router(moment_audit_router)
+app.include_router(moment_topic_audit_router)
+app.include_router(favorite_router)
 app.include_router(notify_router)
 app.include_router(event_router)
 app.include_router(dm_router)
@@ -206,7 +234,9 @@ app.include_router(follow_router)
 app.include_router(setting_router)
 app.include_router(user_router)
 app.include_router(push_router)
+app.include_router(report_router)
 app.include_router(pptr_user_gateway_router)
+app.include_router(avatar_audit_router)
 
 if __name__ == "__main__":
     import uvicorn

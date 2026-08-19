@@ -25,7 +25,7 @@ URL 必须以 ``http://`` / ``https://`` 开头，否则视为非法，由 ``is_
 
 from __future__ import annotations
 
-__all__ = ["markup_inline_link", "INLINE_LINK_RE"]
+__all__ = ["INLINE_LINK_RE", "markup_inline_link"]
 
 
 # 形如 #{文本}{"url"} —— 注意 url 部分是双引号包裹的字面量，便于正则区分「链接结束」与文本里出现的右花括号

@@ -21,9 +21,7 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import (
-    CommentAction,
     CommentAt,
-    CommentContent,
     CommentIndex,
     CommentSubject,
 )

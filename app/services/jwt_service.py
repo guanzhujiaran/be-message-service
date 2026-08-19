@@ -10,8 +10,10 @@
 pptr 仍负责 JWT 验签（jwtAuth 中间件），本服务仅负责签发新 token。
 """
 
+from datetime import UTC, datetime, timedelta
+
 import jwt
-from datetime import datetime, timedelta, timezone
+
 from app.core.config import settings
 
 
@@ -38,9 +40,9 @@ def create_token(
         "uid": uid,
         "level": level,
         "role": role,
-        "iat": int(datetime.now(timezone.utc).timestamp()),
+        "iat": int(datetime.now(UTC).timestamp()),
         "exp": int(
-            (datetime.now(timezone.utc) + timedelta(seconds=settings.jwt_expires_seconds)).timestamp()
+            (datetime.now(UTC) + timedelta(seconds=settings.jwt_expires_seconds)).timestamp()
         ),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
@@ -82,6 +84,6 @@ def is_jwt_expired_today(payload: dict | None) -> bool:
     """
     if not payload or not payload.get("iat"):
         return False
-    now = datetime.now(timezone.utc)
-    iat_time = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+    now = datetime.now(UTC)
+    iat_time = datetime.fromtimestamp(payload["iat"], tz=UTC)
     return iat_time.date() < now.date()

@@ -121,7 +121,7 @@ def mask_ip_pair(ip_v4: str | None, ip_v6: str | None) -> tuple[str | None, str 
 
 __all__ = [
     "extract_client_ip",
+    "mask_ip_pair",
     "mask_ipv4",
     "mask_ipv6",
-    "mask_ip_pair",
 ]

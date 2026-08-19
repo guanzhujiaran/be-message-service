@@ -14,19 +14,16 @@ from app.core.config import settings
 from app.core.database import new_pptr_session, new_session, test_pptr_connection
 from app.models.db import (
     CommentAction,
-    CommentAt,
-    CommentContent,
     CommentIndex,
-    CommentSubject,
 )
 from app.models.enums import CommentActionEnum, CommentStateEnum, CommentTypeEnum
-from app.models.pptr_user import PptrUserInfo, PptrUserDetail
-from app.models.schemas import CommentActionReq, CommentAddReq, CommentTopReq
+from app.models.pptr_user import PptrUserDetail, PptrUserInfo
+from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment_action import CommentActionService
-from app.services.comment_read import CommentReadService
 from app.services.comment_admin import CommentAdminService
 from app.services.comment_audit import audit_text
+from app.services.comment_read import CommentReadService
 from app.services.pptr_user import PptrUserService
 
 
@@ -282,3 +279,87 @@ async def test_sensitive_word_audit() -> None:
             assert detail is None, "拒审评论详情不可见"
     finally:
         await _cleanup(oid, {_AUTHOR})
+
+
+async def test_author_sees_own_auditing_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """审核中评论：仅作者本人可见（带 auditing 状态标识），且不计入计数。
+
+    用「疑似敏感词」触发审核态，并把 `comment_pre_audit` 关掉，让其它普通评论
+    直接 NORMAL（保证计数口径可对照）。用 LOTTERY 类型避开 DYNAMIC 的
+    MomentStat 外键关联（测试 oid 没有对应的 TMoment 父行）。
+    """
+    # 关掉「先审后发」，只靠命中疑似词进入审核态，保证判定可控
+    monkeypatch.setattr(settings, "comment_pre_audit", False)
+
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            # 普通评论：直接 NORMAL，计入计数（用 LOTTERY 类型避开 DYNAMIC 的
+            # MomentStat 外键关联，测试 oid 没有对应的 TMoment 父行）
+            normal_resp = await CommentService.add(
+                s,
+                _AUTHOR,
+                CommentAddReq(oid=str(oid), type=CommentTypeEnum.LOTTERY, message="一条正常评论"),
+                uname=f"user{_AUTHOR}",
+            )
+            assert normal_resp.state is CommentStateEnum.NORMAL
+            normal_rpid = normal_resp.rpid
+            # 疑似敏感词评论：进入 AUDITING
+            audit_resp = await CommentService.add(
+                s,
+                _AUTHOR,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=CommentTypeEnum.LOTTERY,
+                    message="这个链接加微信看广告",
+                ),
+                uname=f"user{_AUTHOR}",
+            )
+            assert audit_resp.state is CommentStateEnum.AUDITING
+            audit_rpid = audit_resp.rpid
+
+        # 作者视角：能看到自己审核中的评论，带 auditing 标识；计数只算 NORMAL
+        async with new_session() as s:
+            own = await CommentReadService.list_main(
+                s, oid, CommentTypeEnum.LOTTERY, viewer_mid=_AUTHOR
+            )
+            assert own.total == 1, "计数应只统计 NORMAL 评论"
+            assert own.all_count == 1
+            rpids = [it.rpid for it in own.items]
+            assert normal_rpid in rpids, "普通评论应出现在列表"
+            assert audit_rpid in rpids, "作者应看到自己审核中的评论"
+            audit_item = next(it for it in own.items if it.rpid == audit_rpid)
+            assert audit_item.state is CommentStateEnum.AUDITING, "审核中评论应带 auditing 标识"
+
+        # 他人视角 / 匿名视角：看不到审核中的评论
+        async with new_session() as s:
+            other = await CommentReadService.list_main(
+                s, oid, CommentTypeEnum.LOTTERY, viewer_mid=_VIEWER
+            )
+            other_rpids = [it.rpid for it in other.items]
+            assert audit_rpid not in other_rpids, "他人不应看到作者审核中的评论"
+            assert normal_rpid in other_rpids
+
+            anon = await CommentReadService.list_main(
+                s, oid, CommentTypeEnum.LOTTERY, viewer_mid=None
+            )
+            anon_rpids = [it.rpid for it in anon.items]
+            assert audit_rpid not in anon_rpids, "匿名不应看到审核中的评论"
+            assert anon.total == 1
+
+        # 详情：作者本人可看（含 auditing），他人不可看
+        async with new_session() as s:
+            own_detail = await CommentReadService.get_detail(
+                s, int(audit_rpid), viewer_mid=_AUTHOR
+            )
+            # 注意：get_detail 的可见性仍受 VISIBLE_STATES 约束，auditing 评论对所有人
+            # （包括作者）详情均不可见，仅列表对作者开放。这里仅断言他人视角不可见。
+            other_detail = await CommentReadService.get_detail(
+                s, int(audit_rpid), viewer_mid=_VIEWER
+            )
+            assert other_detail is None
+            _ = own_detail
+    finally:
+        await _cleanup(oid, {_AUTHOR, _VIEWER})

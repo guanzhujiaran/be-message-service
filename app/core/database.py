@@ -20,6 +20,7 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.core.config import settings
 
 _connect_args: dict = {"charset": "utf8mb4", "autocommit": False}

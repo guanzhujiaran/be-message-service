@@ -15,12 +15,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import BIGINT, Column, JSON, Index
-
+from sqlalchemy import BIGINT, JSON, Column, Index
 from sqlmodel import Field, SQLModel
 
 from app.models.db.base import TimestampMixin, str_enum_type
-from app.models.enums import BanDurationTypeEnum, BanServiceEnum, BanStatusEnum
+from app.models.enums import BanDurationTypeEnum, BanStatusEnum
 
 
 class UserBan(TimestampMixin, table=True):
@@ -74,4 +73,4 @@ class UserBan(TimestampMixin, table=True):
     )
 
 
-__all__ = ["UserBan", "SQLModel"]
+__all__ = ["SQLModel", "UserBan"]

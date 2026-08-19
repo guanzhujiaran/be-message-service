@@ -16,7 +16,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import EventTypeEnum, SourceTypeEnum
+from app.models.enums import EventTypeEnum
 from app.models.schemas import (
     EventAggregateResp,
     EventListResp,
@@ -81,34 +81,31 @@ async def aggregate_event(
 
 
 @router.get(
-    "/list", response_model=StandardResponse[EventListResp], summary="互动提醒明细列表"
+    "/list", response_model=StandardResponse[EventListResp], summary="互动提醒列表（B 站式聚合）"
 )
 async def list_event(
     session: SessionDep,
     user: RequiredUser,
     event_type: EventTypeEnum | None = Query(default=None),
-    source_type: SourceTypeEnum | None = Query(default=None),
-    source_id: str | None = Query(default=None, max_length=64),
-    page_num: int = Query(default=1, ge=1),
+    cursor_id: int | None = Query(default=None, ge=1, description="上一页末条 id，用于翻页"),
     page_size: int = Query(default=20, ge=1, le=50),
     only_unread: bool = Query(default=False),
 ) -> StandardResponse[EventListResp]:
-    """查看某个聚合分组下的事件明细（传 source_type + source_id 即可）。"""
-    items, total = await EventService.list_detail(
+    """按内容聚合的互动提醒列表，对齐 B 站 x/msgfeed/* 结构。
+
+    - `data.latest`：最新一条聚合记录；
+    - `data.total.items`：本页聚合条目（每条含完整 users[] + item + counts）；
+    - `data.total.cursor`：翻页游标（is_end / id / time）。
+    """
+    resp = await EventService.list_msgfeed(
         session,
         user.mid,
         event_type=event_type,
-        source_type=source_type,
-        source_id=source_id,
-        page_num=page_num,
+        cursor_id=cursor_id,
         page_size=page_size,
         only_unread=only_unread,
     )
-    return StandardResponse(
-        data=EventListResp(
-            items=items, total=total, page_num=page_num, page_size=page_size
-        )
-    )
+    return StandardResponse(data=resp)
 
 
 @router.post(

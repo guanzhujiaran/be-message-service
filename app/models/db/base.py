@@ -70,7 +70,8 @@ class _IntEnumColumn(TypeDecorator):
     def process_result_value(self, value, dialect):
         if value is None:
             return None
-        return self.enum_cls(value)
+        # MySQL 驱动对 INTEGER 列可能返回 str（如 '1'），统一 int 化后再按值还原枚举成员
+        return self.enum_cls(int(value))
 
 
 def int_enum_type(enum_cls: type[IntEnum]) -> _IntEnumColumn:
@@ -78,4 +79,4 @@ def int_enum_type(enum_cls: type[IntEnum]) -> _IntEnumColumn:
     return _IntEnumColumn(enum_cls)
 
 
-__all__ = ["TimestampMixin", "str_enum_type", "int_enum_type"]
+__all__ = ["TimestampMixin", "int_enum_type", "str_enum_type"]

@@ -22,7 +22,7 @@ msgkey 位布局（共 63 位，保证正数）::
 import asyncio
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from loguru import logger
 from sqlalchemy import text
@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.core.config import settings
 from app.core.database import engine
+from bili_common.core.snowflake import MinuteSnowflakeIdGenerator
 
 # ==================== msgkey 位布局 ====================
 _SEQUENCE_BITS = 12
@@ -96,65 +97,12 @@ def generate_msgkey() -> int:
     return _generator.next_key()
 
 
-# ==================== uid 雪花 ID 生成器（短 ID，分钟步进）====================
+# ==================== uid / moment_id / topic_id 雪花 ID 生成器 ====================
+# 位布局：| 31 bits 时间戳(分钟, 相对 epoch) | 4 bits worker_id | 4 bits 序列号 | = 39 bits
+# 通用生成器在 bili-common/bili_common/core/snowflake.py，各实体独立配置使数值空间分离。
+# 每个实体的生成器均使用**不同**的 epoch / worker，避免相互碰撞。
 
-# 位布局：| 31 bits 时间戳(分钟单位, 相对 epoch) | 4 bits worker_id | 4 bits 序列号 |
-# 总共 39 位，每分钟最多 16 个 uid（单 worker），epoch 设近使初始值约 7~8 位十进制
-_UID_SEQUENCE_BITS = 4
-_UID_WORKER_BITS = 4
-
-_UID_MAX_SEQUENCE = (1 << _UID_SEQUENCE_BITS) - 1  # 15
-_UID_MAX_WORKER_ID = (1 << _UID_WORKER_BITS) - 1  # 15
-
-_UID_WORKER_SHIFT = _UID_SEQUENCE_BITS  # 4
-_UID_TIMESTAMP_SHIFT = _UID_SEQUENCE_BITS + _UID_WORKER_BITS  # 8
-
-
-class UidGenerator:
-    """短 uid 生成器（分钟步进雪花算法，线程安全）。
-
-    位布局：31 bits 时间戳 + 4 bits worker + 4 bits 序列号 = 39 bits。
-    每分钟最多生成 16 个 uid，超出时自旋等待下一分钟。
-    """
-
-    def __init__(self, worker_id: int, epoch_sec: int) -> None:
-        if not 0 <= worker_id <= _UID_MAX_WORKER_ID:
-            raise ValueError(f"uid worker_id 必须在 0~{_UID_MAX_WORKER_ID}，当前 {worker_id}")
-        self._worker_id = worker_id
-        # 入参 epoch_sec 是秒级时间戳，但生成器内部以「分钟」为步进单位，
-        # 这里统一换算成分钟级 epoch，避免 (ts_minutes - epoch_sec) 单位错配
-        # 导致生成负数 uid（参见 ForeignKeyViolationError on TUserDetail.mid）
-        self._epoch_minute = epoch_sec // 60
-        self._sequence = 0
-        self._last_ts = -1
-        self._lock = threading.Lock()
-
-    @staticmethod
-    def _now_minute() -> int:
-        return int(time.time() // 60)
-
-    def next(self) -> int:
-        with self._lock:
-            ts = self._now_minute()
-            if ts < self._last_ts:
-                ts = self._last_ts
-            if ts == self._last_ts:
-                self._sequence = (self._sequence + 1) & _UID_MAX_SEQUENCE
-                if self._sequence == 0:
-                    # 当前分钟序列号耗尽，自旋到下一分钟
-                    while ts <= self._last_ts:
-                        ts = self._now_minute()
-            else:
-                self._sequence = 0
-            self._last_ts = ts
-            return (
-                ((ts - self._epoch_minute) << _UID_TIMESTAMP_SHIFT)
-                | (self._worker_id << _UID_WORKER_SHIFT)
-                | self._sequence
-            )
-
-
-_uid_generator = UidGenerator(
+_uid_generator = MinuteSnowflakeIdGenerator(
     worker_id=settings.uid_worker_id,
     epoch_sec=settings.uid_epoch_sec,
 )
@@ -163,6 +111,28 @@ _uid_generator = UidGenerator(
 def generate_uid() -> int:
     """生成一个新的用户 uid（短雪花 ID，分钟步进）。"""
     return _uid_generator.next()
+
+
+_uid_generator_dyn = MinuteSnowflakeIdGenerator(
+    worker_id=settings.moment_id_worker_id,
+    epoch_sec=settings.moment_id_epoch_sec,
+)
+
+
+def generate_moment_id() -> int:
+    """生成一个新的动态 ID（短雪花 ID，分钟步进，独立配置空间）。"""
+    return _uid_generator_dyn.next()
+
+
+_uid_generator_topic = MinuteSnowflakeIdGenerator(
+    worker_id=settings.topic_id_worker_id,
+    epoch_sec=settings.topic_id_epoch_sec,
+)
+
+
+def generate_topic_id() -> int:
+    """生成一个新的话题 ID（短雪花 ID，分钟步进，独立配置空间）。"""
+    return _uid_generator_topic.next()
 
 
 def parse_timestamp_ms(msgkey: int) -> int:
@@ -180,7 +150,7 @@ def parse_datetime(msgkey: int) -> datetime:
 
 def db_name_of(msgkey: int) -> str:
     """按 msgkey 内嵌的时间戳解析出所属月度库名。"""
-    dt = datetime.fromtimestamp(parse_timestamp_ms(msgkey) / 1000, tz=timezone.utc)
+    dt = datetime.fromtimestamp(parse_timestamp_ms(msgkey) / 1000, tz=UTC)
     # 统一按 UTC+8 归月，避免月初 / 月末跨时区导致同一条消息路由到两个库
     dt = dt.astimezone(tz=None)
     return f"{settings.dm_content_db_prefix}_{dt.strftime('%Y%m')}"
@@ -294,14 +264,17 @@ async def ensure_current_month_shards() -> None:
 
 __all__ = [
     "MsgKeyGenerator",
-    "generate_msgkey",
-    "parse_timestamp_ms",
-    "parse_datetime",
     "db_name_of",
-    "table_name_of",
-    "shard_of",
-    "qualified_table_of",
-    "group_by_shard",
-    "ensure_shard",
     "ensure_current_month_shards",
+    "ensure_shard",
+    "generate_moment_id",
+    "generate_msgkey",
+    "generate_topic_id",
+    "generate_uid",
+    "group_by_shard",
+    "parse_datetime",
+    "parse_timestamp_ms",
+    "qualified_table_of",
+    "shard_of",
+    "table_name_of",
 ]

@@ -11,6 +11,7 @@
 """
 
 from datetime import datetime
+
 from sqlalchemy import update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -138,9 +139,10 @@ class CommentActionService:
 
         独立会话投递：点赞主事务已提交，事件落库失败也不回滚点赞结果。
         """
+        from loguru import logger
+
         from app.core.database import new_session
         from app.services.event import EventService
-        from loguru import logger
 
         try:
             async with new_session() as ns:
