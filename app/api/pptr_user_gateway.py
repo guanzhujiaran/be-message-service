@@ -37,6 +37,7 @@ from loguru import logger
 from app.core.config import settings
 from app.core.database import SessionDep, new_pptr_session
 from app.dependencies import AdminUser, CurrentUser
+from app.models.str_int import StrInt
 from app.models.schemas import (
     SpaceInfoResp,
     UserActLogListResp,
@@ -451,7 +452,7 @@ def _resolve_space_viewer(x_bili_mid: str | None) -> int | None:
 )
 async def get_space_info(
     session: SessionDep,
-    mid: int = Query(..., description="目标用户 mid（对标 B 站 acc/info 的 mid 参数）"),
+    mid: StrInt = Query(..., description="目标用户 mid（对标 B 站 acc/info 的 mid 参数，StrInt 兼容前端 str 传参）"),
     x_bili_mid: str | None = Header(default=None),
 ) -> StandardResponse[SpaceInfoResp]:
     """返回单个用户的完整空间资料（对标 B 站 `/x/space/wbi/acc/info?mid=`）。
@@ -527,7 +528,7 @@ async def deactivate_self(user: CurrentUser) -> StandardResponse:
 )
 async def deactivate_user(
     admin: AdminUser,
-    target_mid: int = Query(..., description="目标用户 mid"),
+    target_mid: StrInt = Query(..., description="目标用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
 ) -> StandardResponse:
     """管理端注销指定用户（root / 管理员）：投递注销消息，异步删除其账号及业务数据。"""
     try:

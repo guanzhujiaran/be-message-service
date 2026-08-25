@@ -23,8 +23,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import EventMessage, EventReadCursor
-from app.models.enums import EventTypeEnum, SourceTypeEnum
+from app.models.db import (
+    CommentAction,
+    CommentContent,
+    CommentIndex,
+    EventMessage,
+    EventReadCursor,
+    UserFollow,
+)
+from app.models.enums import EventTypeEnum, FollowStatusEnum, SourceTypeEnum
 from app.models.schemas import (
     EventActorBrief,
     EventAggregateItem,
@@ -107,6 +114,7 @@ class EventService:
             source_id=req.source_id,
             source_title=req.source_title,
             source_cover=req.source_cover,
+            biz_id=req.biz_id,
             actor_mid=req.actor_mid,
             actor_name=req.actor_name,
             actor_avatar=req.actor_avatar,
@@ -237,6 +245,7 @@ class EventService:
                     event_type=etype,
                     source_type=stype,
                     source_id=sid,
+                    biz_id=latest.biz_id if latest else None,
                     source_title=latest.source_title if latest else None,
                     source_cover=latest.source_cover if latest else None,
                     jump_url=latest.jump_url if latest else None,
@@ -294,6 +303,7 @@ class EventService:
                 event_type=r.event_type,
                 source_type=r.source_type,
                 source_id=r.source_id,
+                biz_id=r.biz_id,
                 source_title=r.source_title,
                 source_cover=r.source_cover,
                 actor_mid=r.actor_mid,
@@ -394,23 +404,84 @@ class EventService:
                 actor_mids.add(r.actor_mid)
         user_map = await PptrUserService.get_many(actor_mids)
 
+        # ---- Phase L2：评论关系 / 正文 / 点赞态 / 关注态，读取时实时回捞 ----
+        # 只处理 REPLY 类型：收集本页全部 biz_id（触发评论 rpid），
+        # 一次 `IN` 查询回捞评论索引/正文/互动，避免循环内发查询（SQL 次数与页大小无关）。
+        # 注意：DYNAMIC 来源的 REPLY 事件 biz_id 记录的是动态 id（非评论 rpid），
+        # 不能当作评论 rpid 回捞，故跳过该来源的 biz_id 收集。
+        reply_biz_ids: set[str] = set()
+        for etype, stype, sid, _cnt, _unread, _latest_id in groups:
+            if etype != EventTypeEnum.REPLY or stype == SourceTypeEnum.DYNAMIC:
+                continue
+            for r in bucket.get((etype, stype, sid), []):
+                if r.biz_id:
+                    reply_biz_ids.add(r.biz_id)
+
+        reply_biz_ints = [int(b) for b in reply_biz_ids if b.isdigit()]
+        comment_index: dict[int, CommentIndex] = {}
+        comment_content: dict[int, str] = {}
+        like_state_map: dict[int, int] = {}
+        if reply_biz_ints:
+            idx_rows = (
+                await session.exec(
+                    select(CommentIndex).where(CommentIndex.rpid.in_(reply_biz_ints))
+                )
+            ).all()
+            comment_index = {row.rpid: row for row in idx_rows}
+            # 正文：触发评论 + 根评论 + 被回复评论（一次查完）
+            all_rpids = set(reply_biz_ints)
+            for row in idx_rows:
+                if row.root:
+                    all_rpids.add(row.root)
+                if row.parent:
+                    all_rpids.add(row.parent)
+            content_rows = (
+                await session.exec(
+                    select(CommentContent).where(CommentContent.rpid.in_(all_rpids))
+                )
+            ).all()
+            comment_content = {row.rpid: row.message for row in content_rows}
+            # 点赞态：接收者 mid 对触发评论（0无 / 1赞 / 2踩）
+            action_rows = (
+                await session.exec(
+                    select(CommentAction).where(
+                        CommentAction.rpid.in_(reply_biz_ints),
+                        CommentAction.mid == mid,
+                    )
+                )
+            ).all()
+            like_state_map = {row.rpid: int(row.action) for row in action_rows}
+
+        # 关注态：接收者是否关注了触发者（一次查完本页全部触发者）
+        follow_targets: set[int] = set()
+        if actor_mids:
+            follow_rows = (
+                await session.exec(
+                    select(UserFollow).where(
+                        UserFollow.mid == mid,
+                        UserFollow.target_mid.in_(actor_mids),  # type: ignore[arg-type]
+                        UserFollow.status == FollowStatusEnum.FOLLOWING,
+                    )
+                )
+            ).all()
+            follow_targets = {row.target_mid for row in follow_rows}
+
         def _user_brief(actor_mid: int, fallback_name, fallback_avatar) -> EventUserBrief:
             info = user_map.get(int(actor_mid))
-            if info is None:
-                return EventUserBrief(
-                    mid=actor_mid,
-                    nickname=fallback_name,
-                    avatar=fallback_avatar,
-                    fans=0,
-                )
             return EventUserBrief(
                 mid=actor_mid,
-                nickname=info.uname or fallback_name,
-                avatar=info.avatar or fallback_avatar,
-                fans=int(getattr(info, "follower_count", 0) or 0),
+                nickname=(info.uname if info else None) or fallback_name,
+                avatar=(info.avatar if info else None) or fallback_avatar,
+                fans=int(getattr(info, "follower_count", 0) or 0) if info else 0,
+                follow=actor_mid in follow_targets,
             )
 
-        def _to_item(etype: str, rows: list[EventMessage], cnt: int) -> EventMsgfeedItem:
+        def _to_item(
+            etype: str,
+            stype: SourceTypeEnum | None,
+            rows: list[EventMessage],
+            cnt: int,
+        ) -> EventMsgfeedItem:
             """把一组明细收敛成一条 msgfeed 聚合条目。"""
             latest = rows[0]
             users: list[EventUserBrief] = []
@@ -424,6 +495,39 @@ class EventService:
                 )
                 if len(users) >= _MAX_USERS_PER_ITEM:
                     break
+
+            # ---- Phase L2：评论关系 / 正文 / 点赞态（读取时实时回捞，不冗余存储）----
+            biz_id = latest.biz_id or ""
+            idx = (
+                comment_index.get(int(biz_id))
+                if etype == EventTypeEnum.REPLY.value and biz_id.isdigit()
+                else None
+            )
+
+            subject_id = biz_id if biz_id.isdigit() else ""
+            root_id = ""
+            source_id = ""
+            target_id = ""
+            root_reply_content = ""
+            source_content = ""
+            target_reply_content = ""
+            like_state = 0
+            if idx is not None:
+                root_pk = idx.root or 0
+                parent_pk = idx.parent or 0
+                target_pk = parent_pk if parent_pk else root_pk
+                subject_id = str(idx.oid)
+                root_id = str(root_pk) if root_pk else ""
+                source_id = biz_id
+                target_id = str(target_pk) if target_pk else ""
+                source_content = comment_content.get(int(biz_id), "")
+                if root_pk:
+                    root_reply_content = comment_content.get(root_pk, "")
+                # 被回复的是楼中楼评论才展示 target 正文（回复根评论时由 root 正文承载）
+                if target_pk and target_pk != root_pk:
+                    target_reply_content = comment_content.get(target_pk, "")
+                like_state = like_state_map.get(int(biz_id), 0)
+
             return EventMsgfeedItem(
                 id=latest.id or 0,
                 users=users,
@@ -431,10 +535,19 @@ class EventService:
                     item_id=latest.id or 0,
                     type=etype,
                     business=latest.source_type.value if latest.source_type else "",
+                    biz_id=latest.biz_id,
+                    subject_id=subject_id,
+                    root_id=root_id,
+                    source_id=source_id,
+                    target_id=target_id,
                     title=latest.source_title,
                     desc=latest.content,
                     image=latest.source_cover,
                     uri=latest.jump_url,
+                    root_reply_content=root_reply_content,
+                    source_content=source_content,
+                    target_reply_content=target_reply_content,
+                    like_state=like_state,
                     ctime=int(latest.created_at.timestamp()) if latest.created_at else 0,
                 ),
                 counts=cnt,
@@ -446,7 +559,12 @@ class EventService:
         for etype, stype, sid, cnt, _unread, latest_id in groups:
             rows = bucket.get((etype, stype, sid), [])
             total_items.append(
-                _to_item(etype.value if hasattr(etype, "value") else str(etype), rows, int(cnt or 0))
+                _to_item(
+                    etype.value if hasattr(etype, "value") else str(etype),
+                    stype,
+                    rows,
+                    int(cnt or 0),
+                )
             )
 
         # 再取一条判断是否还有下一页

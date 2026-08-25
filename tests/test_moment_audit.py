@@ -15,16 +15,17 @@
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import select, text
+from sqlmodel import col, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
-from app.models.db import EventMessage, TMoment, TMomentStat
+from app.models.db import EventMessage, TMoment, TInteractionStat, TResourceFeed
 from app.models.enums import (
     EventTypeEnum,
+    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
@@ -89,7 +90,13 @@ async def _bind_engine_per_test():
     async with new_session() as s:
         await s.exec(
             text(
-                f"DELETE FROM TMomentStat WHERE dynId IN "
+                f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId IN "
+                f"(SELECT dynId FROM TMoment WHERE mid IN ({A_MID}, {A_MID2}))"
+            )
+        )
+        await s.exec(
+            text(
+                f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId IN "
                 f"(SELECT dynId FROM TMoment WHERE mid IN ({A_MID}, {A_MID2}))"
             )
         )
@@ -107,7 +114,13 @@ async def _bind_engine_per_test():
     async with new_session() as s:
         await s.exec(
             text(
-                f"DELETE FROM TMomentStat WHERE dynId IN "
+                f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId IN "
+                f"(SELECT dynId FROM TMoment WHERE mid IN ({A_MID}, {A_MID2}))"
+            )
+        )
+        await s.exec(
+            text(
+                f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId IN "
                 f"(SELECT dynId FROM TMoment WHERE mid IN ({A_MID}, {A_MID2}))"
             )
         )
@@ -136,7 +149,7 @@ async def _seed_moment(
     content: str | None = None,
     with_stat: bool = True,
 ) -> int:
-    did = generate_moment_id()
+    did = await generate_moment_id()
     now = __import__("datetime").datetime.now()
     content = content if content is not None else await _real_content()
     dyn = TMoment(
@@ -154,14 +167,32 @@ async def _seed_moment(
     session.add(dyn)
     await session.flush()
     if with_stat:
-        session.add(TMomentStat(dynId=did))
+        # 2.36.0：计数统一 TInteractionStat
+        session.add(
+            TInteractionStat(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=did)
+        )
+    session.add(
+        TResourceFeed(
+            bizType=InteractionBizTypeEnum.DYNAMIC,
+            bizId=did,
+            mid=mid,
+            pubTime=(now if audit_status is MomentAuditStatusEnum.NORMAL else None),
+            auditStatus=audit_status.value,
+            tags=[],
+        )
+    )
     await session.commit()
     return did
 
 
 async def _set_src_repost_count(session, src_id: int, value: int) -> None:
     stat = (
-        await session.exec(select(TMomentStat).where(TMomentStat.dynId == src_id))
+        await session.exec(
+            select(TInteractionStat).where(
+                col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TInteractionStat.bizId) == src_id,
+            )
+        )
     ).one_or_none()
     assert stat is not None, "源动态统计行必须存在"
     stat.repostCount = value
@@ -170,7 +201,12 @@ async def _set_src_repost_count(session, src_id: int, value: int) -> None:
 
 async def _get_repost_count(session, src_id: int) -> int:
     stat = (
-        await session.exec(select(TMomentStat).where(TMomentStat.dynId == src_id))
+        await session.exec(
+            select(TInteractionStat).where(
+                col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TInteractionStat.bizId) == src_id,
+            )
+        )
     ).one_or_none()
     return stat.repostCount if stat else 0
 
@@ -334,6 +370,79 @@ async def test_reject_auditing_forward_no_decrement():
         assert await _get_repost_count(s, src) == 5  # 未触发
 
 
+# ==================== P27 按状态筛选（2.30.0）====================
+
+
+async def test_pending_list_filters_by_status():
+    """2.30.0：pending_list 支持按 audit_status 筛选，各状态互不串扰。"""
+    async with new_session() as s:
+        m_audit = await _seed_moment(
+            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+        )
+        m_normal = await _seed_moment(
+            s, A_MID, audit_status=MomentAuditStatusEnum.NORMAL
+        )
+        m_rejected = await _seed_moment(
+            s, A_MID, audit_status=MomentAuditStatusEnum.REJECTED
+        )
+
+        audit_resp = await MomentAuditService.pending_list(
+            s, audit_status=MomentAuditStatusEnum.AUDITING
+        )
+        normal_resp = await MomentAuditService.pending_list(
+            s, audit_status=MomentAuditStatusEnum.NORMAL
+        )
+        rejected_resp = await MomentAuditService.pending_list(
+            s, audit_status=MomentAuditStatusEnum.REJECTED
+        )
+
+        audit_ids = {it.dynId for it in audit_resp.items}
+        normal_ids = {it.dynId for it in normal_resp.items}
+        rejected_ids = {it.dynId for it in rejected_resp.items}
+
+        assert m_audit in audit_ids and m_audit not in normal_ids and m_audit not in rejected_ids
+        assert m_normal in normal_ids and m_normal not in audit_ids and m_normal not in rejected_ids
+        assert m_rejected in rejected_ids and m_rejected not in audit_ids and m_rejected not in normal_ids
+
+
+async def test_reject_normal_word_moment_reverts():
+    """失误过审撤回：normal 的 WORD 动态可驳回为 rejected（写原因 + 流水），
+    并立即从 normal 列表消失、进入 rejected 列表。"""
+    async with new_session() as s:
+        did = await _seed_moment(
+            s, A_MID, audit_status=MomentAuditStatusEnum.NORMAL
+        )
+        item = await MomentAuditService.reject(
+            s, did, operator_mid=ADMIN_MID, reject_reason="误过审，撤回"
+        )
+        assert item.auditStatus == MomentAuditStatusEnum.REJECTED.value
+
+        dyn = (
+            await s.exec(select(TMoment).where(TMoment.dynId == did))
+        ).one_or_none()
+        assert dyn.auditStatus is MomentAuditStatusEnum.REJECTED
+        assert dyn.auditRejectReason == "误过审，撤回"
+
+        normal_ids = {
+            it.dynId
+            for it in (
+                await MomentAuditService.pending_list(
+                    s, audit_status=MomentAuditStatusEnum.NORMAL
+                )
+            ).items
+        }
+        rejected_ids = {
+            it.dynId
+            for it in (
+                await MomentAuditService.pending_list(
+                    s, audit_status=MomentAuditStatusEnum.REJECTED
+                )
+            ).items
+        }
+        assert did not in normal_ids
+        assert did in rejected_ids
+
+
 # ==================== P6-T4 审核流水 ====================
 
 
@@ -375,9 +484,11 @@ __all__ = [
     "test_approve_sets_normal_and_pubtime",
     "test_detail_returns_snapshot_and_logs",
     "test_log_list_records_transition",
+    "test_pending_list_filters_by_status",
     "test_pending_list_only_auditing",
     "test_reject_auditing_forward_no_decrement",
     "test_reject_fires_audit_reject_event_to_author",
     "test_reject_forward_normal_decrements_src_repost_count",
+    "test_reject_normal_word_moment_reverts",
     "test_reject_sets_rejected_and_reason",
 ]

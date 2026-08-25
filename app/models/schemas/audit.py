@@ -15,7 +15,8 @@
 from sqlmodel import Field, SQLModel
 
 
-class AuditSourceInfo(SQLModel):
+from app.models.schemas.base import AutoStrMixin
+class AuditSourceInfo(SQLModel, AutoStrMixin):
     """审核项的内容来源（供管理端点击直达原始内容）。"""
 
     kind: str = Field(description="来源大类：comment 评论 / dm 私信")

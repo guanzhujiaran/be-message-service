@@ -93,7 +93,7 @@ async def _bind_engine_per_test():
 
 async def _create_topic(session, mid: int, name: str, **kw) -> TMomentTopic:
     topic = TMomentTopic(
-        topicId=generate_topic_id(),
+        topicId=await generate_topic_id(),
         topicName=name,
         creatorMid=mid,
         auditStatus=MomentTopicAuditStatusEnum.AUDITING,

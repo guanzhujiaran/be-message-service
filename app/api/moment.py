@@ -1,4 +1,4 @@
-"""动态发布 / 互动 / 话题&@&POI 类 HTTP 接口（/api/v1/moment）。
+"""动态发布 / 互动 / 话题&@&POI 类 HTTP 接口（/api/v1/community）。
 
 覆盖 P2-T7（发布）+ P4-T7（互动）+ P5-T7（话题 / @ / POI）：
 
@@ -31,15 +31,22 @@
 """
 
 import asyncio
-from datetime import datetime
 
 from sqlmodel import select, col, func
 from fastapi import APIRouter, Header, Query, Request
 
+from app.models.str_int import StrInt
+
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser, RootUser
 from app.models import StandardResponse
-from app.models.db import CommentSubject, TMoment, TMomentFavorite, TMomentLike, TMomentStat
+from app.models.db import (
+    CommentSubject,
+    TMoment,
+    TMomentFavorite,
+    TMomentLike,
+    TResourceReport,
+)
 from app.models.enums import (
     CommentTypeEnum,
     InteractionBizTypeEnum,
@@ -57,6 +64,8 @@ from app.models.schemas.moment import (
     MomentCreateCheckResp,
     MomentCreateReq,
     MomentCreateResp,
+    MomentDislikeReq,
+    MomentDislikeResp,
     MomentEditReq,
     MomentEditResp,
     MomentPoiResp,
@@ -66,6 +75,8 @@ from app.models.schemas.moment import (
     MomentReportResp,
     MomentRepostReq,
     MomentRepostResp,
+    MomentShareReq,
+    MomentShareResp,
     MomentThumbReq,
     MomentThumbResp,
     MomentTopicCreateReq,
@@ -90,7 +101,7 @@ from app.services.moment_publish import MomentPublishService
 from app.services.moment_topic import MomentTopicService
 from app.utils.ip_mask import extract_client_ip
 
-router = APIRouter(prefix="/api/v1/moment", tags=["moment"])
+router = APIRouter(prefix="/api/v1/community", tags=["moment"])
 
 
 def _client_ctx(
@@ -307,10 +318,235 @@ async def thumb(
     )
 
 
+@router.post(
+    "/dislike",
+    response_model=StandardResponse[MomentDislikeResp],
+    summary="点踩 / 取消点踩（2.35.0）",
+)
+async def dislike(
+    session: SessionDep,
+    user: RequiredUser,
+    req: MomentDislikeReq,
+) -> StandardResponse[MomentDislikeResp]:
+    """点踩 / 取消点踩（幂等）。
+
+    MVP 仅支持动态资源：`bizType` 必须为 `dynamic`，`bizId` 与 `dynId` 任取其一。
+    计数供 EdgeRank `dislike_ratio` 降权使用。
+    """
+    if req.bizType != "dynamic":
+        return StandardResponse(code=400, msg="点踩当前仅支持动态资源")
+    biz_id = req.bizId if req.bizId is not None else req.dynId
+    if biz_id is None:
+        return StandardResponse(code=400, msg="bizId/dynId 不合法")
+    try:
+        is_dislike, dislike_count = await MomentInteractionService.dislike(
+            session, user.mid, "dynamic", biz_id, req.up
+        )
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse(
+        data=MomentDislikeResp(
+            bizType="dynamic",
+            bizId=biz_id,
+            bizIdStr=str(biz_id),
+            dynId=biz_id,
+            dynIdStr=str(biz_id),
+            isDislike=is_dislike,
+            dislikeCount=dislike_count,
+        )
+    )
+
+
+@router.post(
+    "/share",
+    response_model=StandardResponse[MomentShareResp],
+    summary="分享上报（2.35.0）",
+)
+async def share(
+    session: SessionDep,
+    user: RequiredUser,
+    req: MomentShareReq,
+) -> StandardResponse[MomentShareResp]:
+    """分享上报：normal 动态 ``shareCount`` 原子 +1（行为上报，不幂等）。"""
+    try:
+        count = await MomentInteractionService.share(session, req.dynId)
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse(
+        data=MomentShareResp(
+            dynId=req.dynId,
+            dynIdStr=str(req.dynId),
+            shareCount=count,
+        )
+    )
+
+
+async def _verify_resources_exist(
+    session: SessionDep, biz_type: InteractionBizTypeEnum, ids: list[int]
+) -> list[str] | None:
+    """批量校验资源存在性（2.23.1 防乱调）。
+
+    - dynamic：本地查 TMoment（deletedAt 非空 / 非 normal 视为不存在）；
+    - lottery：批量 RPC 校验（RPC 失败返回 None → 弱依赖降级放行，避免误伤正常用户）；
+    - 其余未注册类型：放行。
+
+    Returns:
+        缺失的 bizId 字符串列表；全部存在返回 None。
+    """
+    if biz_type == InteractionBizTypeEnum.DYNAMIC:
+        dyn_rows = (
+            await session.exec(
+                select(TMoment.dynId).where(
+                    col(TMoment.dynId).in_(ids),
+                    col(TMoment.deletedAt).is_(None),
+                    col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+                )
+            )
+        ).all()
+        existing = {int(r) for r in dyn_rows}
+    elif biz_type == InteractionBizTypeEnum.LOTTERY:
+        from app.services.lottery_rpc import get_lottery_rpc_client
+
+        client = await get_lottery_rpc_client()
+        existing = await client.get_existing_lottery_ids(ids)
+        if existing is None:
+            existing = set(ids)  # RPC 校验不可用：降级放行
+    else:
+        existing = set(ids)
+    missing = [str(_id) for _id in ids if _id not in existing]
+    return missing or None
+
+
+async def _query_status_items(
+    session: SessionDep, biz_type: InteractionBizTypeEnum, ids: list[StrInt], mid: StrInt
+) -> list[InteractionStatusItem]:
+    """装配某类型多个资源的互动状态（计数 / 用户态 / 详情），供 status 两接口共用。"""
+    # 2.36.0：动态与非动态资源计数统一 TInteractionStat（batch_get_counts 全字段）
+    counts = await InteractionStatService.batch_get_counts(session, biz_type, ids)
+    like_counts = {b: c["likeCount"] for b, c in counts.items()}
+    fav_counts = {b: c["favoriteCount"] for b, c in counts.items()}
+    view_counts = {b: c["viewCount"] for b, c in counts.items()}
+    comment_counts = {b: c["commentCount"] for b, c in counts.items()}
+    repost_counts = {b: c["repostCount"] for b, c in counts.items()}
+    for _id in ids:
+        like_counts.setdefault(_id, 0)
+        fav_counts.setdefault(_id, 0)
+    if not InteractionStatService.is_dynamic(biz_type):
+        # 评论数：lottery 走评论系统实时计数（rpa_* 无评论功能 → 恒 0）
+        if biz_type == InteractionBizTypeEnum.LOTTERY:
+            subjects = (
+                await session.exec(
+                    select(CommentSubject).where(
+                        col(CommentSubject.type) == CommentTypeEnum.LOTTERY,
+                        col(CommentSubject.oid).in_(ids),
+                    )
+                )
+            ).all()
+            comment_counts = {s.oid: int(s.all_count) for s in subjects}
+        # 转发数：引用该资源生成的动态数（TMoment.bizType/bizRid 可见动态，转发到动态时写入）
+        rows = (
+            await session.exec(
+                select(TMoment.bizRid, func.count())
+                .where(
+                    col(TMoment.bizType) == biz_type,
+                    col(TMoment.bizRid).in_(ids),
+                    col(TMoment.deletedAt).is_(None),
+                    col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+                )
+                .group_by(TMoment.bizRid)
+            )
+        ).all()
+        repost_counts = {int(r): int(c) for r, c in rows}
+
+    # 当前用户点赞态 / 收藏态
+    liked_ids = set(
+        (
+            await session.exec(
+                select(TMomentLike.bizId).where(
+                    col(TMomentLike.bizType) == biz_type,
+                    col(TMomentLike.bizId).in_(ids),
+                    col(TMomentLike.mid) == mid,
+                )
+            )
+        ).all()
+    )
+    faved_ids = set(
+        (
+            await session.exec(
+                select(TMomentFavorite.bizId).where(
+                    col(TMomentFavorite.bizType) == biz_type,
+                    col(TMomentFavorite.bizId).in_(ids),
+                    col(TMomentFavorite.mid) == mid,
+                )
+            )
+        ).all()
+    )
+
+    # 非动态资源（RPA 等）详情经 RPC 从资源归属服务获取（弱依赖，失败 detail=None）
+    details: dict[int, object] = {}
+    if not InteractionStatService.is_dynamic(biz_type):
+        results = await asyncio.gather(
+            *[rpa_rpc_client.get_resource_detail(biz_type.to_text(), _id) for _id in ids],
+            return_exceptions=True,
+        )
+        for _id, res in zip(ids, results):
+            detail = None
+            if isinstance(res, Exception):
+                detail = None
+            elif res is not None and getattr(res, "detail", None) is not None:
+                detail = res.detail
+            details[_id] = detail
+
+    # 2.40.0：被举报人数（去重举报人，同一人多次举报只记一次）
+    # dynamic → bizType='dynamic'；非动态 → resourceType=资源类型枚举值
+    report_counts: dict[int, int] = {}
+    if ids:
+        if InteractionStatService.is_dynamic(biz_type):
+            _rp_where = (
+                col(TResourceReport.bizType) == "dynamic",
+                col(TResourceReport.bizId).in_(ids),
+            )
+        else:
+            _rp_where = (
+                col(TResourceReport.resourceType) == int(biz_type),
+                col(TResourceReport.bizId).in_(ids),
+            )
+        rp_rows = (
+            await session.exec(
+                select(
+                    TResourceReport.bizId,
+                    func.count(),
+                    func.count(func.distinct(TResourceReport.reportMid)),
+                )
+                .where(*_rp_where)
+                .group_by(col(TResourceReport.bizId))
+            )
+        ).all()
+        report_counts = {int(b): (int(c), int(p)) for b, c, p in rp_rows}
+
+    return [
+        InteractionStatusItem(
+            bizType=biz_type.to_text(),
+            bizId=str(_id),
+            isLike=_id in liked_ids,
+            isFavorite=_id in faved_ids,
+            likeCount=like_counts.get(_id, 0),
+            favoriteCount=fav_counts.get(_id, 0),
+            commentCount=comment_counts.get(_id, 0),
+            repostCount=repost_counts.get(_id, 0),
+            viewCount=view_counts.get(_id, 0),
+            reportCount=report_counts.get(_id, (0, 0))[0],
+            reportPeopleCount=report_counts.get(_id, (0, 0))[1],
+            detail=details.get(_id),
+        )
+        for _id in ids
+    ]
+
+
 @router.get(
     "/interaction/status",
     response_model=StandardResponse[InteractionStatusResp],
-    summary="批量查询某类型资源当前用户收藏/点赞态 + 计数",
+    summary="批量查询某类型资源当前用户收藏/点赞态 + 计数（列表专用，不累计浏览）",
 )
 async def interaction_status(
     session: SessionDep,
@@ -331,125 +567,56 @@ async def interaction_status(
     ids = ids[:50]
     mid = user.mid
 
-    # 计数：动态走 TMomentStat，非动态走 TInteractionStat
-    if InteractionStatService.is_dynamic(bizType):
-        like_counts: dict[int, int] = {}
-        fav_counts: dict[int, int] = {}
-        stats = (
-            await session.exec(
-                select(TMomentStat).where(col(TMomentStat.dynId).in_(ids))
-            )
-        ).all()
-        stats_by_id: dict[int, TMomentStat] = {s.dynId: s for s in stats}
-        comment_counts = {s.dynId: int(s.commentCount) for s in stats}
-        repost_counts = {s.dynId: int(s.repostCount) for s in stats}
-        for s in stats:
-            like_counts[s.dynId] = int(s.likeCount)
-            fav_counts[s.dynId] = int(s.favoriteCount)
-        for _id in ids:
-            like_counts.setdefault(_id, 0)
-            fav_counts.setdefault(_id, 0)
-        view_counts = {s.dynId: int(s.viewCount) for s in stats}
-    else:
-        counts = await InteractionStatService.batch_get_counts(session, bizType, ids)
-        like_counts = {b: c["likeCount"] for b, c in counts.items()}
-        fav_counts = {b: c["favoriteCount"] for b, c in counts.items()}
-        view_counts = {b: c["viewCount"] for b, c in counts.items()}
-        # 评论数：lottery 走 be-message 评论系统（CommentSubject.all_count 冗余计数），
-        # rpa_* 无评论功能 → 恒 0
-        comment_counts: dict[int, int] = {}
-        if bizType == InteractionBizTypeEnum.LOTTERY:
-            subjects = (
-                await session.exec(
-                    select(CommentSubject).where(
-                        col(CommentSubject.type) == CommentTypeEnum.LOTTERY,
-                        col(CommentSubject.oid).in_(ids),
-                    )
-                )
-            ).all()
-            comment_counts = {s.oid: int(s.all_count) for s in subjects}
-        # 转发数：引用该资源生成的动态数（TMoment.bizType/bizRid 可见动态，转发到动态时写入）
-        rows = (
-            await session.exec(
-                select(TMoment.bizRid, func.count())
-                .where(
-                    col(TMoment.bizType) == bizType,
-                    col(TMoment.bizRid).in_(ids),
-                    col(TMoment.deletedAt).is_(None),
-                    col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
-                )
-                .group_by(TMoment.bizRid)
-            )
-        ).all()
-        repost_counts: dict[int, int] = {int(r): int(c) for r, c in rows}
+    # 防乱调（2.23.1）：任一缺失 → 整体 400，不返回部分结果（列表接口不投递浏览 MQ）
+    missing = await _verify_resources_exist(session, bizType, ids)
+    if missing:
+        return StandardResponse(code=400, msg=f"资源不存在: {', '.join(missing)}")
 
-    # 当前用户点赞态 / 收藏态
-    liked_ids = set(
-        (
-            await session.exec(
-                select(TMomentLike.bizId).where(
-                    col(TMomentLike.bizType) == bizType,
-                    col(TMomentLike.bizId).in_(ids),
-                    col(TMomentLike.mid) == mid,
-                )
-            )
-        ).all()
-    )
-    faved_ids = set(
-        (
-            await session.exec(
-                select(TMomentFavorite.bizId).where(
-                    col(TMomentFavorite.bizType) == bizType,
-                    col(TMomentFavorite.bizId).in_(ids),
-                    col(TMomentFavorite.mid) == mid,
-                )
-            )
-        ).all()
-    )
-
-    # 非动态资源（RPA 等）详情经 RPC 从资源归属服务获取（弱依赖，失败 detail=None）
-    details: dict[int, object] = {}
-    if not InteractionStatService.is_dynamic(bizType):
-        results = await asyncio.gather(
-            *[rpa_rpc_client.get_resource_detail(bizType.to_text(), _id) for _id in ids],
-            return_exceptions=True,
-        )
-        for _id, res in zip(ids, results):
-            detail = None
-            if isinstance(res, Exception):
-                detail = None
-            elif res is not None and getattr(res, "detail", None) is not None:
-                detail = res.detail
-            details[_id] = detail
-
-    items = [
-        InteractionStatusItem(
-            bizType=bizType.to_text(),
-            bizId=str(_id),
-            isLike=_id in liked_ids,
-            isFavorite=_id in faved_ids,
-            likeCount=like_counts.get(_id, 0),
-            favoriteCount=fav_counts.get(_id, 0),
-            commentCount=comment_counts.get(_id, 0),
-            repostCount=repost_counts.get(_id, 0),
-            viewCount=view_counts.get(_id, 0),
-            detail=details.get(_id),
-        )
-        for _id in ids
-    ]
-
-    # 浏览统计触发点（2.23.0）：本接口为前端页面拉互动态的必调入口，
-    # 仅登录用户，对列表内每个资源投递 MQ（interaction.view 队列）异步去重累计：
-    # 主链路不阻塞、投递失败静默不拖慢 status，由消费者独立重试；
-    # 确保计数来自真实前端页面访问而非直接调 API（不提供前端主动上报接口）。
-    ref_date = datetime.now().strftime("%Y-%m-%d")
-    for _id in ids:
-        await publish_interaction_view(
-            InteractionViewPayload(
-                bizType=bizType.to_text(), bizId=str(_id), mid=mid, refDate=ref_date
-            )
-        )
+    items = await _query_status_items(session, bizType, ids, mid)
     return StandardResponse(data=InteractionStatusResp(items=items))
+
+
+@router.get(
+    "/interaction/status/{biz_id}",
+    response_model=StandardResponse[InteractionStatusItem],
+    summary="单资源互动状态（detail 页专用，兼作浏览统计触发点）",
+)
+async def interaction_status_detail(
+    session: SessionDep,
+    user: RequiredUser,
+    biz_id: str,
+    bizType: str = Query(description="资源类型（文字：dynamic/lottery/...）"),
+) -> StandardResponse[InteractionStatusItem]:
+    """查询单个资源互动状态；detail 页调用，查询后投递浏览 MQ 异步累计（2.23.1）。
+
+    列表批量接口不累计浏览，仅进入详情页（本接口）才 +1——
+    经 ViewLog 按 bizType+bizId+mid+refDate 去重幂等，同日重复进入详情不重复计数。
+    """
+    try:
+        biz_type = InteractionBizTypeEnum.from_text(bizType)
+    except (ValueError, KeyError):
+        return StandardResponse(code=400, msg=f"不支持的资源类型: {bizType}")
+    try:
+        biz_id_int = int(biz_id)
+    except ValueError:
+        return StandardResponse(code=400, msg="bizId 不合法")
+
+    # 防乱调：资源不存在 → 400（不投递浏览）
+    missing = await _verify_resources_exist(session, biz_type, [biz_id_int])
+    if missing:
+        return StandardResponse(code=400, msg=f"资源不存在: {', '.join(missing)}")
+
+    item = (await _query_status_items(session, biz_type, [biz_id_int], user.mid))[0]
+
+    # 浏览统计触发点（detail 专用）：投递 MQ 异步去重累计，主链路不阻塞
+    # 2.42.0：不再携带 refDate——消费端按 (bizType,bizId,mid) 每用户每资源一行，
+    # 由 lastViewAt 是否同一自然日判断跨天访问才 +1
+    await publish_interaction_view(
+        InteractionViewPayload(
+            bizType=biz_type.to_text(), bizId=str(biz_id_int), mid=user.mid
+        )
+    )
+    return StandardResponse(data=item)
 
 
 @router.post(
@@ -517,7 +684,7 @@ async def topic_hot_search(
 async def topic_detail(
     session: SessionDep,
     user: RequiredUser,
-    topicId: int,
+    topicId: StrInt,
 ) -> StandardResponse[MomentTopicDetailResp]:
     data = await MomentTopicService.topic_detail(
         session, topic_id=topicId, viewer_mid=user.mid
@@ -536,7 +703,7 @@ async def topic_detail(
 async def topic_feed(
     session: SessionDep,
     user: RequiredUser,
-    topicId: int,
+    topicId: StrInt,
     sort: str = Query(
         "hot", description="排序：hot=热门（互动数倒序）/ time=最新（发布时间倒序）"
     ),
@@ -667,7 +834,7 @@ async def poi_search(
 )
 async def get_upstat(
     session: SessionDep,
-    vmid: int = Query(..., description="目标用户 mid（对标 B 站 vmid 参数）"),
+    vmid: StrInt = Query(..., description="目标用户 mid（对标 B 站 vmid 参数，StrInt 兼容前端 str 传参）"),
     x_bili_mid: str | None = Header(default=None),
 ) -> StandardResponse[MomentUpStatResp]:
     """获取任意用户对外可见动态的总数与获赞总数（公开接口，无需登录）。

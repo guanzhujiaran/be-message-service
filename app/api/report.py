@@ -1,6 +1,7 @@
 """统一举报路由（2.14.0，动态 / 评论 / 用户空间三类举报合一）。
 
-- `POST /api/v1/report`：统一举报入口（需登录），`biz_type`+`biz_id` 区分来源；
+- `POST /api/v1/report`：统一举报入口（需登录），`biz_type`+`biz_id` 区分来源
+  （dynamic/comment/user/resource）；
 - `GET  /api/v1/report/admin/list`：管理端举报列表（root / 管理员）；
 - `POST /api/v1/report/admin/review`：管理端举报审核（root / 管理员）。
 
@@ -19,6 +20,9 @@ from app.models.schemas import (
 )
 from app.services.report import ReportService
 
+# 2.41.0：be-gateway 已合并为 /api/v1/ 通配转发，举报使用独立业务域
+#（动态域前缀由 /api/v1/moment 更名为 /api/v1/community）；统一举报任意资源
+#（dynamic/comment/user/resource 由 bizType 区分）。
 router = APIRouter(prefix="/api/v1/report", tags=["Report"])
 
 
@@ -30,7 +34,8 @@ async def create_report(
 ) -> StandardResponse:
     """统一举报：`biz_type`（dynamic/comment/user）+ `biz_id`（dynId/rpid/mid）区分来源。
 
-    幂等：同一用户对同一对象只记一次；动态/评论达阈值自动转审核（分开计算）。
+    幂等：同一用户对同一对象只记一次；达阈值仅「加入审核队列」（资源可见性不变，
+    2.40.0），下架等处置只由管理端审核（`admin/review` + `resourceAction=hide`）执行。
     """
     try:
         created, triggered = await ReportService.report(session, user.mid, req)
@@ -76,7 +81,11 @@ async def review(
     admin: AdminUser,
     req: ReportReviewReq,
 ) -> StandardResponse:
-    """管理端审核举报：resolve（属实已处理）/ reject（驳回）。"""
+    """管理端审核举报：resolve（属实已处理）/ reject（驳回）。
+
+    ``resolve`` 时可选 ``resourceAction=hide`` 联动下架被举报资源
+    （动态/评论 → hidden，2.38.0）。
+    """
     try:
         await ReportService.review(session, admin.mid, req)
     except ValueError as e:

@@ -9,6 +9,8 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
+from app.models.schemas.base import AutoStrMixin
+from app.models.str_int import StrInt
 
 
 class BanCreateReq(SQLModel):
@@ -18,7 +20,7 @@ class BanCreateReq(SQLModel):
     限时封禁必须给出 `duration_days`（>=1）。
     """
 
-    mids: list[int] = Field(description="待封禁用户 mid 列表（可批量）")
+    mids: list[StrInt] = Field(description="待封禁用户 mid 列表（可批量，StrInt 兼容前端 str 传参）")
     ban_services: list[str] = Field(
         description="封禁的服务范围：comment 评论 / dm 私信（可多选）"
     )
@@ -34,14 +36,14 @@ class BanCreateReq(SQLModel):
 class UnbanReq(SQLModel):
     """批量解封请求。"""
 
-    mids: list[int] = Field(description="待解封用户 mid 列表（可批量）")
+    mids: list[StrInt] = Field(description="待解封用户 mid 列表（可批量，StrInt 兼容前端 str 传参）")
     ban_services: list[str] | None = Field(
         default=None,
         description="仅解封指定服务（缺省表示解封该用户全部服务封禁）",
     )
 
 
-class BanItem(SQLModel):
+class BanItem(SQLModel, AutoStrMixin):
     """单条封禁记录（列表 / 回显用）。"""
 
     id: int
@@ -66,7 +68,7 @@ class BanListResp(SQLModel):
     page_size: int = 20
 
 
-class BanStatusResp(SQLModel):
+class BanStatusResp(SQLModel, AutoStrMixin):
     """某用户的封禁状态汇总（按服务维度）。"""
 
     mid: int
@@ -77,7 +79,7 @@ class BanStatusResp(SQLModel):
     )
 
 
-class BanServiceStatus(SQLModel):
+class BanServiceStatus(SQLModel, AutoStrMixin):
     """单个服务的封禁状态明细。"""
 
     banned: bool = Field(description="该服务是否当前生效中")

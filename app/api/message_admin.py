@@ -14,19 +14,20 @@ from pydantic import BaseModel
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser, RootUser
 from app.models import StandardResponse
+from app.models.str_int import StrInt
 from app.services.message_admin import MessageAdminService
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin"])
 
 
 class GrantAdminReq(BaseModel):
-    mid: int = Query(..., description="被授予权限的用户 mid")
+    mid: StrInt = Query(..., description="被授予权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
     permissions: list[str] = []
     note: str | None = None
 
 
 class RevokeAdminReq(BaseModel):
-    mid: int = Query(..., description="被撤销权限的用户 mid")
+    mid: StrInt = Query(..., description="被撤销权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
 
 
 class AdminItem(BaseModel):

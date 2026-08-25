@@ -116,14 +116,14 @@ async def _check_rate_limit(mid: int, message: str) -> None:
         hist.append((now, key))
 
 
-def generate_rpid() -> int:
+async def generate_rpid() -> int:
     """生成评论 id。
 
     直接复用 `app.core.sharding` 的雪花生成器：全局唯一、单调递增、
     高位内嵌毫秒时间戳。单调性带来一个额外好处 —— 「按 rpid 倒序」
     天然等价于「按发布时间倒序」，时间排序不需要再建时间索引。
     """
-    return generate_msgkey()
+    return await generate_msgkey()
 
 
 def parse_at_mids(message: str, declared: list[int] | None = None) -> list[int]:
@@ -301,7 +301,7 @@ class CommentService:
             if await FollowService.is_blocked_by(session, mid, reply_to_mid):
                 raise ValueError("对方已拉黑你，无法回复")
 
-        rpid = generate_rpid()
+        rpid = await generate_rpid()
         now = datetime.now()
 
         # ---- 内容审核（Phase 5.1，强依赖）：命中高危直接 rejected，疑似置 auditing ----
@@ -403,7 +403,9 @@ class CommentService:
         # 用户展示信息（昵称 / 等级 / 大会员等）不在本服务落库：
         # 用户主数据只有一份，在 pptr 的 Postgres，读评论列表时按需只读取回。
 
-        # ---- 弱依赖：通知（回复 / @ / 审核中 / 审核驳回），失败只告警不影响发评 ----
+        # ---- 弱依赖：通知（回复 / @ / 审核驳回），失败只告警不影响发评 ----
+        # 审核过程性状态不通知（D6）：进入审核态 / 审核通过不打扰作者，
+        # 仅命中高危词被自动驳回时通知作者原因。
         try:
             if audit_state == CommentStateEnum.REJECTED:
                 await CommentService.notify_audit_rejected(
@@ -411,31 +413,27 @@ class CommentService:
                     reason="评论内容包含违规或敏感词",
                     excerpt=message,
                 )
-            elif audit_state == CommentStateEnum.AUDITING:
-                # 进入审核态（命中疑似词 / 开启「先审后发」）：告知作者正在审核
-                source = build_comment_source(oid, CommentTypeEnum(req.type), rpid)
-                source_link = markup_inline_link(
-                    source.label, source.url or source.external_url
-                )
-                lines = [
-                    f"您在{source_link}发布的评论正在审核中，通过后将对外公开展示。",
-                    f"评论内容：{summarize_text(message)}",
-                ]
-                await NotifyService.send_to_user(
-                    mid,
-                    title="评论审核中",
-                    content="\n".join(lines),
-                    jump_url=source.url or source.external_url,
-                )
-            if root != 0 and reply_to_mid and reply_to_mid != mid:
-                await CommentService._notify_reply(
-                    mid, oid, rpid, reply_to_mid, message, uname, req.type
-                )
-            for at_mid in at_mids:
-                if at_mid != mid:
-                    await CommentService._notify_at(
-                        mid, oid, rpid, at_mid, uname, req.type
+            # 互动通知仅对 NORMAL 可见评论投递（D6）：auditing（审核中，暂不可见）
+            # 与 rejected / hidden（未通过 / 下架）的评论一律不投递回复 / @ 通知，
+            # 避免接收方点开看到「评论不可见」；审核通过后由管理端补发已跳过的通知。
+            if audit_state == CommentStateEnum.NORMAL:
+                if root != 0 and reply_to_mid and reply_to_mid != mid:
+                    await CommentService._notify_reply(
+                        mid, oid, rpid, reply_to_mid, message, uname, req.type
                     )
+                for at_mid in at_mids:
+                    if at_mid != mid:
+                        await CommentService._notify_at(
+                            mid, oid, rpid, at_mid, uname, req.type
+                        )
+                # 补偿通道标记（D6）：NORMAL 评论已即时投递，@ 记录置 notified=True，
+                # 避免审核通过补发时重复投递
+                await session.exec(
+                    update(CommentAt)
+                    .where(col(CommentAt.rpid) == rpid)
+                    .values(notified=True)
+                )
+                await session.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"评论通知投递失败（弱依赖，已忽略）: {e}")
 
@@ -538,9 +536,12 @@ class CommentService:
         if parent_row.root != root:
             raise ValueError("父评论与 root 不匹配")
 
-        # 继承父评论所在的会话串，保证「只看该对话」能串起完整上下文
+        # 评论区只分两级：楼中楼（二级）一律直接挂在一级评论 root 下，
+        # parent 指向 root 而非中间层，保证「删除二级不影响其对二级的回复」——
+        # 任意中间层被删，其回复（如三级）仍归属一级评论，继续贴在一级下，不会随之消失。
+        # reply_to_mid 仍保留被回复者（可能是二级作者），用于展示「回复 @xxx」。
         dialog = parent_row.dialog or root
-        return root, parent, dialog, parent_row.mid
+        return root, root, dialog, parent_row.mid
 
     # ==================== 删除 ====================
 
@@ -754,7 +755,7 @@ class CommentService:
                         actor_mid=actor_mid,
                         actor_name=actor_uname,
                         content=message,
-                        biz_id=str(rpid),
+                        biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
                     ),
                 )
         except Exception as e:  # noqa: BLE001
@@ -794,7 +795,7 @@ class CommentService:
                         source_id=str(oid),
                         actor_mid=actor_mid,
                         actor_name=actor_uname,
-                        biz_id=str(rpid),
+                        biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
                     ),
                 )
         except Exception as e:  # noqa: BLE001

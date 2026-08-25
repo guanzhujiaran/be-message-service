@@ -4,9 +4,11 @@
 防刷、敏感词审核。与 test_comment_crud.py 共用同一真实 MySQL，但使用独立 mid/oid 区间。
 """
 
+from datetime import datetime
+
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import select, text
+from sqlmodel import col, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core import database as db_mod
@@ -15,8 +17,16 @@ from app.core.database import new_pptr_session, new_session, test_pptr_connectio
 from app.models.db import (
     CommentAction,
     CommentIndex,
+    CommentSubject,
+    TMoment,
 )
-from app.models.enums import CommentActionEnum, CommentStateEnum, CommentTypeEnum
+from app.models.enums import (
+    CommentActionEnum,
+    CommentStateEnum,
+    CommentTypeEnum,
+    MomentAuditStatusEnum,
+    MomentTypeEnum,
+)
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
@@ -42,8 +52,23 @@ async def _bind_engine_per_test():
         expire_on_commit=False,
         autoflush=False,
     )
+    # pptr engine 也绑定当前事件循环：模块级单例绑定首个 loop，跨测试文件/
+    # 事件循环复用会报 "attached to a different loop"（与 test_moment_feed 一致）
+    pptr_engine = create_async_engine(
+        url=settings.postgres_pptr_url,
+        pool_pre_ping=True,
+        future=True,
+    )
+    db_mod.pptr_engine = pptr_engine
+    db_mod.pptr_session_maker = async_sessionmaker(
+        bind=pptr_engine,
+        class_=SQLModelAsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
     yield
     await engine.dispose()
+    await pptr_engine.dispose()
 
 
 _OID = 883_000_000_000
@@ -73,11 +98,73 @@ async def _cleanup(oid: int, mids: set[int]) -> None:
         if mids:
             placeholders = ",".join(str(m) for m in mids)
             await s.exec(text(f"DELETE FROM msg_event WHERE mid IN ({placeholders}) OR actor_mid IN ({placeholders})"))
+        # 测试挂载的真实动态行（TMomentStat 由 FK ON DELETE CASCADE 级联清理）
+        await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
         await s.commit()
 
 
+async def _ensure_moment(session, oid: int, mid: int) -> None:
+    """确保测试 oid 有对应真实 TMoment 行（评论 stat 回写的父行）。
+
+    DYNAMIC 评论的 `commentCount ±1`（审核通过 / 驳回 / 删除）会回写
+    `TMomentStat`（ensure_stat_row + incr/decr_stat），而 `TMomentStat.dynId`
+    外键指向 `TMoment.dynId`——测试 oid 若没有父行会外键失败
+    （见 `TMomentStat_dynId_fkey`）。
+    """
+    exists = (
+        await session.exec(select(TMoment.dynId).where(TMoment.dynId == oid))
+    ).one_or_none()
+    if exists is None:
+        now = datetime.utcnow()  # noqa: DTZ003
+        session.add(
+            TMoment(
+                dynId=oid,
+                mid=mid,
+                dynType=MomentTypeEnum.WORD,
+                contentText="comment-seed",
+                contentJson=[{"type": "WORDS", "text": "comment-seed"}],
+                auditStatus=MomentAuditStatusEnum.NORMAL,
+                pubTime=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.flush()
+
+
+async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) -> None:
+    """先审后发：把 `add` 发布的 auditing 评论显式审核通过为 NORMAL，并补齐计数。
+
+    `comment_pre_audit=True` 下发布即 `auditing`，auditing 不计入
+    `root_count/all_count`（见 comment.py「仅 NORMAL 才计入」），审核通过时补 +1。
+    不走 `CommentAdminService.set_state`：其内部回写 `TMomentStat`，而测试 oid 为
+    虚构值、`TMomentStat.dynId` 外键指向不存在的 `TMoment` 会失败。
+    """
+    row = (
+        await session.exec(
+            select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
+        )
+    ).one()
+    row.state = CommentStateEnum.NORMAL
+    session.add(row)
+    subject = (
+        await session.exec(
+            select(CommentSubject).where(
+                col(CommentSubject.oid) == oid,
+                col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+            )
+        )
+    ).one_or_none()
+    if subject is not None:
+        subject.all_count += 1
+        if is_root:
+            subject.root_count += 1
+        session.add(subject)
+    await session.commit()
+
+
 async def _add(session, mid, oid, *, message="测试评论", up_mid=0, root="0", parent="0", at_mids=None, uname=None):
-    return (
+    rpid = (
         await CommentService.add(
             session,
             mid,
@@ -95,6 +182,11 @@ async def _add(session, mid, oid, *, message="测试评论", up_mid=0, root="0",
             ip_v6="2408:8207:78d2:1a00::1",
         )
     ).rpid
+    # 评论挂在真实动态上（stat 回写的父行）
+    await _ensure_moment(session, oid, mid)
+    # 先审后发：发布即 auditing，显式审核通过置 NORMAL（一级评论补 root_count）
+    await _pass_audit(session, int(rpid), oid, is_root=root in ("0", 0))
+    return rpid
 
 
 async def test_like_hate_idempotent_and_counts() -> None:
@@ -196,7 +288,10 @@ async def test_at_search() -> None:
         async with new_pptr_session() as ps:
             await ps.exec(text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": _SEARCH_MID})
             await ps.exec(text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": _SEARCH_MID})
+            # 无 relationship 声明，UoW 无法推断依赖顺序：必须先 flush 父表
+            # TUserInfo 让 mid 在当前事务可见，再写 TUserDetail（见 pptr_user.create_user）
             ps.add(PptrUserInfo(uid=_SEARCH_MID, user_name="搜索目标用户ABC", role="level0"))
+            await ps.flush()
             ps.add(PptrUserDetail(mid=_SEARCH_MID, uname="搜索目标用户ABC", sign="", sex=""))
             await ps.commit()
 
@@ -229,8 +324,10 @@ async def test_admin_audit_plaintext_ip_stats() -> None:
             # 明文 IP 仅管理端可见
             ip_v4, ip_v6 = await CommentAdminService.get_plaintext_ip(s, int(rpid))
             assert ip_v4 == "203.0.113.45" and ip_v6 == "2408:8207:78d2:1a00::1"
-            # 审核队列包含它
-            queue, total = await CommentAdminService.list_audit_queue(s, 1, 20)
+            # 审核队列包含它（位置参数会把 1 误传给 states，必须关键字传参）
+            queue, total = await CommentAdminService.list_audit_queue(
+                s, page_num=1, page_size=20
+            )
             assert total >= 1 and any(i.rpid == rpid for i in queue)
             # 统计：全局评论总数 >= 1
             stats = await CommentAdminService.get_stats(s)
@@ -363,3 +460,168 @@ async def test_author_sees_own_auditing_comment(
             _ = own_detail
     finally:
         await _cleanup(oid, {_AUTHOR, _VIEWER})
+
+
+async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D6：互动通知（回复 / @）仅对 NORMAL 可见评论投递。
+
+    auditing（审核中，暂不可见）与 rejected / hidden（未通过 / 下架）的评论
+    一律不投递回复 / @ 通知，避免接收方点开看到「评论不可见」；仅 NORMAL 投递。
+    """
+    from app.models.enums import EventTypeEnum
+    from app.models.schemas import EventReportReq
+    from app.services.event import EventService as EventSvc
+
+    # 关掉「先审后发」，保证无敏感词评论直接 NORMAL（与
+    # test_author_sees_own_auditing_comment 同理），使状态判定可控
+    monkeypatch.setattr(settings, "comment_pre_audit", False)
+
+    calls: list[EventReportReq] = []
+
+    async def fake_report(session, req: EventReportReq) -> None:
+        calls.append(req)
+
+    monkeypatch.setattr(EventSvc, "report", fake_report)
+
+    oid = _next_oid()
+
+    def _build(root_rpid: int, message: str) -> CommentAddReq:
+        return CommentAddReq(
+            oid=str(oid),
+            # LOTTERY 类型避开 DYNAMIC 的 MomentStat 外键关联
+            # （测试 oid 没有对应的 TMoment 父行），与
+            # test_author_sees_own_auditing_comment 保持一致
+            type=CommentTypeEnum.LOTTERY,
+            root=str(root_rpid),
+            parent=str(root_rpid),
+            message=message,
+            at_mids=[_AT_USER],
+        )
+
+    try:
+        async with new_session() as s:
+            # 先建一条 NORMAL 根评论（作者为 _UP）作为楼中楼回复目标：
+            # _AUTHOR 回复它可触发 REPLY 通知（reply_to_mid != mid）
+            root_resp = await CommentService.add(
+                s,
+                _UP,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=CommentTypeEnum.LOTTERY,
+                    message="根评论",
+                ),
+                uname=f"user{_UP}",
+            )
+            root_rpid = int(root_resp.rpid)
+
+        # 1) NORMAL 评论（楼中楼回复 + @）：投递回复 + @ 通知
+        async with new_session() as s:
+            resp = await CommentService.add(
+                s, _AUTHOR, _build(root_rpid, "正常回复内容"), uname=f"user{_AUTHOR}"
+            )
+            assert resp.state is CommentStateEnum.NORMAL
+        assert any(r.event_type is EventTypeEnum.REPLY for r in calls), "NORMAL 应投递回复通知"
+        assert any(r.event_type is EventTypeEnum.AT for r in calls), "NORMAL 应投递@通知"
+        calls.clear()
+
+        # 2) REJECTED 评论（高危词 + 回复 + @）：不投递互动通知
+        async with new_session() as s:
+            resp = await CommentService.add(
+                s, _AUTHOR, _build(root_rpid, "这是诈骗内容"), uname=f"user{_AUTHOR}"
+            )
+            assert resp.state is CommentStateEnum.REJECTED
+        assert calls == [], "REJECTED 评论不应投递回复 / @ 通知"
+
+        # 3) AUDITING 评论（疑似词 + 回复 + @）：不投递互动通知
+        async with new_session() as s:
+            resp = await CommentService.add(
+                s, _AUTHOR, _build(root_rpid, "这个链接加微信看广告"), uname=f"user{_AUTHOR}"
+            )
+            assert resp.state is CommentStateEnum.AUDITING
+        assert calls == [], "AUDITING 评论不应投递回复 / @ 通知"
+    finally:
+        await _cleanup(oid, {_AUTHOR, _UP})
+
+
+async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D6 补偿通道：审核通过 / 恢复（非 NORMAL → NORMAL）补发先前跳过的回复 / @ 通知。
+
+    auditing 评论发评时不投递互动通知（`msg_comment_at.notified=False`）；
+    管理端审核通过后，补发回复 + @ 通知，且已投递的 @ 记录标记 `notified=True`，
+    再次翻转为 NORMAL 不重复补发。
+    """
+    from app.models.enums import EventTypeEnum
+    from app.models.schemas import EventReportReq
+    from app.services.event import EventService as EventSvc
+
+    # 关掉「先审后发」：无敏感词评论（含根评论）直接 NORMAL，作为楼中楼回复目标；
+    # 疑似词子评论仍会命中预筛进 AUDITING（与 test_interact_notify_only_for_visible_comment 同理）
+    monkeypatch.setattr(settings, "comment_pre_audit", False)
+
+    calls: list[EventReportReq] = []
+
+    async def fake_report(session, req: EventReportReq) -> None:
+        calls.append(req)
+
+    monkeypatch.setattr(EventSvc, "report", fake_report)
+
+    oid = _next_oid()
+
+    try:
+        # 根评论（作者 _UP）作为楼中楼回复目标
+        async with new_session() as s:
+            root_resp = await CommentService.add(
+                s,
+                _UP,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=CommentTypeEnum.LOTTERY,
+                    message="根评论",
+                ),
+                uname=f"user{_UP}",
+            )
+            root_rpid = int(root_resp.rpid)
+
+        # 1) AUDITING 评论（疑似词 + 回复 + @）：不投递互动通知
+        async with new_session() as s:
+            resp = await CommentService.add(
+                s,
+                _AUTHOR,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=CommentTypeEnum.LOTTERY,
+                    root=str(root_rpid),
+                    parent=str(root_rpid),
+                    message="这个链接加微信看广告",
+                    at_mids=[_AT_USER],
+                ),
+                uname=f"user{_AUTHOR}",
+            )
+            assert resp.state is CommentStateEnum.AUDITING
+        assert calls == [], "AUDITING 评论不应投递回复 / @ 通知"
+        rpid = int(resp.rpid)
+
+        # 2) 管理端审核通过（AUDITING → NORMAL）：补发回复 + @ 通知
+        async with new_session() as s:
+            ok = await CommentAdminService.set_state(
+                s, rpid, CommentStateEnum.NORMAL, note="内容合规", operator_mid=_VIEWER
+            )
+            assert ok
+        assert any(r.event_type is EventTypeEnum.REPLY for r in calls), "审核通过应补发回复通知"
+        assert any(r.event_type is EventTypeEnum.AT for r in calls), "审核通过应补发@通知"
+        calls.clear()
+
+        # 3) 下架后再次恢复 NORMAL：@ 已投递（notified=True）不再重复补发；
+        #    回复通知无独立标记字段，会再次调用（EventService dedup_key 幂等兜底，不落重复事件）
+        async with new_session() as s:
+            await CommentAdminService.set_state(
+                s, rpid, CommentStateEnum.HIDDEN, note="违规", operator_mid=_VIEWER
+            )
+        calls.clear()
+        async with new_session() as s:
+            await CommentAdminService.set_state(
+                s, rpid, CommentStateEnum.NORMAL, operator_mid=_VIEWER
+            )
+        assert not any(r.event_type is EventTypeEnum.AT for r in calls), "已投递的@不应重复补发"
+    finally:
+        await _cleanup(oid, {_AUTHOR, _UP, _VIEWER})

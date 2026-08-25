@@ -11,13 +11,15 @@ from app.models.enums import (
     DmRelationEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
+from app.models.schemas.base import AutoStrMixin
 from app.models.schemas.comment import CommentUserBrief
+from app.models.str_int import StrInt
 
 
 class DmSendReq(SQLModel):
     """发送一条私信。"""
 
-    receiver_mid: int = Field(description="接收者mid")
+    receiver_mid: StrInt = Field(description="接收者mid（雪花 ID，StrInt 兼容前端 str 传参）")
     content: str = Field(min_length=1, max_length=20000, description="消息内容")
     msg_type: DmMsgTypeEnum = Field(default=DmMsgTypeEnum.TEXT, description="消息类型")
     receiver_name: str | None = Field(
@@ -38,7 +40,7 @@ class DmSendResp(SQLModel):
     )
 
 
-class DmSessionItem(SQLModel):
+class DmSessionItem(SQLModel, AutoStrMixin):
     """会话列表中的一个会话。"""
 
     talker_mid: int
@@ -63,7 +65,7 @@ class DmSessionListResp(SQLModel):
     stranger_unread: int = Field(default=0, description="陌生人会话未读数之和")
 
 
-class DmMessageItem(SQLModel):
+class DmMessageItem(SQLModel, AutoStrMixin):
     """聊天记录中的一条消息。"""
 
     msgkey: str
@@ -79,6 +81,12 @@ class DmMessageItem(SQLModel):
     )
     created_at: datetime | None = None
     audit_state: DmAuditStateEnum = DmAuditStateEnum.NORMAL
+    recalled_at: datetime | None = Field(
+        default=None, description="撤回时间（仅撤回后非空）"
+    )
+    recalled_by: int | None = Field(
+        default=None, description="撤回操作者mid（前端据此展示「你/对方撤回了一条消息」）"
+    )
 
 
 class DmMessageListResp(SQLModel):
@@ -115,17 +123,17 @@ class DmOperationResp(SQLModel):
 class DmAckReq(SQLModel):
     """标记会话已读，把未读数清零并抬高已读水位。"""
 
-    talker_mid: int = Field(description="对话方mid")
+    talker_mid: StrInt = Field(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
     ack_msgkey: str | None = Field(
         default=None, description="已读到的最大 msgkey，为空表示全部已读"
     )
 
 
 class DmSessionDeleteReq(SQLModel):
-    talker_mid: int = Field(description="要删除的会话对方mid")
+    talker_mid: StrInt = Field(description="要删除的会话对方mid（雪花 ID，StrInt 兼容前端 str 传参）")
 
 
-class DmAuditItem(SQLModel):
+class DmAuditItem(SQLModel, AutoStrMixin):
     """私信审核队列中的一条消息。"""
 
     msgkey: str = Field(description="消息全局唯一键（字符串）")
@@ -189,7 +197,7 @@ class DmAuditListResp(SQLModel):
     )
 
 
-class DmSessionContextResp(SQLModel):
+class DmSessionContextResp(SQLModel, AutoStrMixin):
     """私信会话上下文（管理端「内容来源」点击后查看前后消息）。"""
 
     session_key: str

@@ -20,12 +20,18 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
-from sqlmodel import col, delete, select
+from sqlmodel import col, delete, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
-from app.models.db import TMoment, TMomentAuditLog, TMomentStat, TMomentTopic, TMomentTopicRel
+from app.models.db import (
+    TMoment,
+    TMomentAuditLog,
+    TMomentTopic,
+    TMomentTopicRel,
+    TResourceFeed,
+)
 from app.models.enums import (
     EventTypeEnum,
     InteractionBizTypeEnum,
@@ -137,7 +143,7 @@ def _to_base_resp(dyn: TMoment) -> dict[str, Any]:
     return {
         "dynId": dyn.dynId,
         "dynIdStr": str(dyn.dynId),
-        "auditStatus": dyn.auditStatus.value,
+        "auditStatus": dyn.auditStatus.name,
         "dynType": dyn.dynType.name,
     }
 
@@ -280,6 +286,29 @@ async def _persist_topic_rels(
         session.add(TMomentTopicRel(dynId=dyn_id, topicId=tid))
 
 
+def _persist_resource_feed(
+    session: AsyncSession,
+    moment_id: int,
+    mid: int,
+    topics: list[Any] | None,
+) -> None:
+    """发布时写通用 Feed 元数据行（2.36.0，替代 TMomentStat 建行）。
+
+    初始状态：``auditStatus=auditing``、``pubTime=None``（审核通过后由
+    ``moment_audit`` 写 pubTime 并置 normal）；``tags`` 冗余话题 id 列表，
+    供推荐流个性化 / 话题流过滤。
+    """
+    session.add(
+        TResourceFeed(
+            bizType=InteractionBizTypeEnum.DYNAMIC,
+            bizId=moment_id,
+            mid=mid,
+            auditStatus=MomentAuditStatusEnum.AUDITING.value,
+            tags=[t.topicId for t in topics] if topics else [],
+        )
+    )
+
+
 async def _get_dynamic_or_404(session: AsyncSession, moment_id: int) -> TMoment:
     """按 dynId 取动态主表行，不存在抛 ValueError（由路由层转 404/400）。"""
     row = (
@@ -362,7 +391,7 @@ class MomentPublishService:
         client_ip: str | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
-        moment_id = generate_moment_id()
+        moment_id = await generate_moment_id()
         now = datetime.now()
         content_text = _nodes_to_text(nodes)
         # 2.22.0：多话题——主话题写 TMoment.topicId（=topics[0]），全部写 TMomentTopicRel
@@ -393,11 +422,11 @@ class MomentPublishService:
             updated_at=now,
         )
         session.add(dyn)
-        # 父子链：先 flush 父行，拿到 dynId 后再插统计子行
+        # 父子链：先 flush 父行，拿到 dynId 后再写 Feed 元数据行
         await session.flush()
         if topics:
             await _persist_topic_rels(session, moment_id, [t.topicId for t in topics])
-        session.add(TMomentStat(dynId=moment_id))
+        _persist_resource_feed(session, moment_id, mid, topics)
         session.add(
             _build_audit_log(
                 moment_id=moment_id,
@@ -432,7 +461,7 @@ class MomentPublishService:
         if src_dyn.auditStatus != MomentAuditStatusEnum.NORMAL or src_dyn.deletedAt is not None:
             raise ValueError("只能转发审核通过的动态")
 
-        moment_id = generate_moment_id()
+        moment_id = await generate_moment_id()
         now = datetime.now()
         content_text = _nodes_to_text(nodes)
         # 2.22.0：多话题——主话题写 TMoment.topicId（=topics[0]），全部写 TMomentTopicRel
@@ -461,7 +490,7 @@ class MomentPublishService:
         await session.flush()
         if topics:
             await _persist_topic_rels(session, moment_id, [t.topicId for t in topics])
-        session.add(TMomentStat(dynId=moment_id))
+        _persist_resource_feed(session, moment_id, mid, topics)
         # 注意：创建转发动态时源动态 repostCount 不 +1（状态机触发点 ⑥），
         # 必须等管理员审核通过（P6-T2）才对 srcDyn.repostCount +1。
         session.add(
@@ -497,7 +526,7 @@ class MomentPublishService:
         if src_dyn.auditStatus != MomentAuditStatusEnum.NORMAL or src_dyn.deletedAt is not None:
             raise ValueError("只能转发审核通过的动态")
 
-        moment_id = generate_moment_id()
+        moment_id = await generate_moment_id()
         now = datetime.now()
         nodes = req.content or []
         content_text = _nodes_to_text(nodes)
@@ -516,7 +545,7 @@ class MomentPublishService:
         )
         session.add(dyn)
         await session.flush()
-        session.add(TMomentStat(dynId=moment_id))
+        _persist_resource_feed(session, moment_id, mid, None)
         session.add(
             _build_audit_log(
                 moment_id=moment_id,
@@ -591,6 +620,19 @@ class MomentPublishService:
         dyn.isTop = 0
         dyn.topTime = None
         dyn.updated_at = now
+        # 2.36.0：同步通用 Feed 元数据（回审核 + pubTime 置空 + 更新话题 tags）
+        await session.exec(
+            update(TResourceFeed)
+            .where(
+                col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceFeed.bizId) == dyn.dynId,
+            )
+            .values(
+                auditStatus=MomentAuditStatusEnum.AUDITING.value,
+                pubTime=None,
+                tags=[t.topicId for t in topics] if topics else [],
+            )
+        )
 
         session.add(
             _build_audit_log(
@@ -649,6 +691,15 @@ class MomentPublishService:
         dyn.isTop = 0
         dyn.topTime = None
         dyn.updated_at = now
+        # 2.36.0：同步通用 Feed 元数据（软删不入 Feed）
+        await session.exec(
+            update(TResourceFeed)
+            .where(
+                col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceFeed.bizId) == dyn.dynId,
+            )
+            .values(deletedAt=now)
+        )
 
         session.add(
             _build_audit_log(

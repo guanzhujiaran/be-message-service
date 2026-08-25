@@ -13,9 +13,9 @@
 必须登录**（需知道"我"是谁），使用 RequiredUser。
 """
 
-from datetime import datetime
-
 from fastapi import APIRouter, Header, Query
+
+from app.models.str_int import StrInt
 from loguru import logger
 
 from app.core.database import SessionDep
@@ -30,9 +30,8 @@ from app.models.schemas.moment import (
 )
 from app.services.follow import FollowService
 from app.services.moment_feed import MomentFeedService
-from app.services.moment_stat import MomentStatService
 
-router = APIRouter(prefix="/api/v1/moment", tags=["moment-feed"])
+router = APIRouter(prefix="/api/v1/community", tags=["moment-feed"])
 
 
 async def _resolve_viewer(x_bili_mid: str | None) -> int | None:
@@ -46,6 +45,31 @@ async def _resolve_viewer(x_bili_mid: str | None) -> int | None:
     return mid if mid > 0 else None
 
 
+_SHOWLIST_LIMIT = 100
+
+
+def _parse_dyn_id_list(raw: str | None) -> list[int] | None:
+    """解析逗号分隔 dynId 列表（去非法、去重、限 _SHOWLIST_LIMIT 个防滥用）。"""
+    if not raw:
+        return None
+    result: list[int] = []
+    seen: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            did = int(part)
+        except (TypeError, ValueError):
+            continue
+        if did > 0 and did not in seen:
+            seen.add(did)
+            result.append(did)
+            if len(result) >= _SHOWLIST_LIMIT:
+                break
+    return result or None
+
+
 @router.get(
     "/feed/all",
     response_model=StandardResponse[MomentFeedResp],
@@ -55,21 +79,42 @@ async def _resolve_viewer(x_bili_mid: str | None) -> int | None:
 async def feed_all(
     session: SessionDep,
     x_bili_mid: str | None = Header(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=50),
+    sort: str = Query(
+        "recommend",
+        description="排序：recommend=EdgeRank 推荐流（默认，无分页游标，last_showlist 去重）/ time=最新（pubTime 倒序 + historyOffset 游标）",
+    ),
+    ps: int = Query(default=20, ge=1, le=50, description="单页条数（对齐 B 站 ps，优先于 page_size）"),
+    last_showlist: str | None = Query(
+        default=None,
+        description="已展示的 dynId 列表（逗号分隔，服务端去重，上限 100 个）",
+    ),
+    last_clicklist: str | None = Query(
+        default=None,
+        description="已互动的 dynId 列表（逗号分隔，预留反馈通道，当前不参与排序）",
+    ),
+    fresh_idx: int | None = Query(default=None, description="刷新序号（1 起递增，仅日志统计）"),
+    fresh_idx_1h: int | None = Query(default=None, description="1 小时内刷新次数（仅日志统计）"),
+    uniq_id: str | None = Query(default=None, description="客户端唯一 ID"),
+    # ---- 以下参数为 time 模式保留 / 旧客户端兼容（recommend 模式忽略）----
+    page: int = Query(default=1, ge=1, description="[recommend 忽略] 分页页码"),
+    page_size: int = Query(default=20, ge=1, le=50, description="[兼容] 等价 ps，ps 优先"),
     update_baseline: int | None = Query(default=None),
     history_offset: int | None = Query(default=None),
-    refresh_type: int = Query(default=1, description="1=刷新,2=翻页"),
+    refresh_type: int = Query(default=1, description="1=刷新,2=翻页（recommend 忽略）"),
 ) -> StandardResponse[MomentFeedResp]:
     viewer = await _resolve_viewer(x_bili_mid)
     data = await MomentFeedService.comprehensive_feed(
         session,
         page=page,
-        page_size=page_size,
+        page_size=ps if ps else page_size,
         update_baseline=update_baseline,
         history_offset=history_offset,
         refresh_type=refresh_type,
         viewer_mid=viewer,
+        sort=sort if sort in ("recommend", "time") else "recommend",
+        last_showlist=_parse_dyn_id_list(last_showlist),
+        last_clicklist=_parse_dyn_id_list(last_clicklist),
+        uniq_id=uniq_id,
     )
     return StandardResponse(data=data)
 
@@ -111,7 +156,7 @@ async def feed_following(
 )
 async def feed_space(
     session: SessionDep,
-    mid: int,
+    mid: StrInt,
     x_bili_mid: str | None = Header(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
@@ -144,7 +189,7 @@ async def feed_space(
 )
 async def detail(
     session: SessionDep,
-    moment_id: int,
+    moment_id: StrInt,
     x_bili_mid: str | None = Header(default=None),
 ) -> StandardResponse[MomentDetailResp]:
     if moment_id <= 0:
@@ -153,17 +198,8 @@ async def detail(
     data = await MomentFeedService.get_detail(session, moment_id, viewer_mid=viewer)
     if data is None:
         return StandardResponse(code=404, msg="动态不存在或暂不可见")
-    # 浏览计数：由后端在真实访问详情时自动累计（仅登录用户，按 mid+dynId+refDate 去重）。
-    # 不依赖前端上报，避免被手动调用伪造虚增浏览量。
-    if viewer:
-        try:
-            await MomentStatService.report_view(
-                session, moment_id, viewer, datetime.now().strftime("%Y-%m-%d")
-            )
-            await session.commit()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"浏览计数失败 (dynId={moment_id}, mid={viewer}): {e}")
-            await session.rollback()
+    # 浏览计数：2.41.0 起统一由 GET /interaction/status/{bizId}（detail 页必调）投递 MQ
+    # 异步累计，此处不再同步上报（避免与 status 接口双计）。
     return StandardResponse(data=data)
 
 
@@ -196,7 +232,7 @@ async def details_batch(
 )
 async def get_moment_likers(
     session: SessionDep,
-    moment_id: int,
+    moment_id: StrInt,
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[MomentLikerListResp]:
@@ -218,7 +254,7 @@ async def get_moment_likers(
 )
 async def get_moment_forwards(
     session: SessionDep,
-    moment_id: int,
+    moment_id: StrInt,
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[MomentForwardListResp]:

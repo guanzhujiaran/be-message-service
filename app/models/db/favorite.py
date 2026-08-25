@@ -22,7 +22,8 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text, UniqueConstraint, text
 from sqlmodel import Field, Index, PrimaryKeyConstraint
 
-from app.models.db.base import TimestampMixin, int_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import InteractionBizTypeEnum
 
 
@@ -65,7 +66,7 @@ class TMomentFavorite(TimestampMixin, table=True):
     pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
     bizType: InteractionBizTypeEnum = Field(
         default=InteractionBizTypeEnum.DYNAMIC,
-        sa_type=int_enum_type(InteractionBizTypeEnum),
+        sa_type=SAEnum(InteractionBizTypeEnum),
         nullable=False,
         description="资源类型（IntEnum 落库 INT）：1=dynamic,2=lottery,3=rpa_action,4=rpa_workflow,5=rpa_browser",
     )

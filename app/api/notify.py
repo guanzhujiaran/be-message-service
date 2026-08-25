@@ -20,6 +20,7 @@ from app.core.database import SessionDep
 from app.dependencies import AdminUser, RequiredUser
 from app.models import StandardResponse
 from app.models.enums import NotifyStatusEnum
+from app.models.str_int import StrInt
 from app.models.schemas import (
     BiliSystemNotifyResp,
     NotifyAdminItem,
@@ -168,7 +169,7 @@ async def create_notify(
     summary="修改系统通知（管理员）",
 )
 async def update_notify(
-    session: SessionDep, admin: AdminUser, notify_id: int, req: NotifyUpdateReq
+    session: SessionDep, admin: AdminUser, notify_id: StrInt, req: NotifyUpdateReq
 ) -> StandardResponse[NotifyAdminItem]:
     data = await NotifyService.update(session, notify_id, req)
     if data is None:
@@ -182,7 +183,7 @@ async def update_notify(
     summary="撤回系统通知（管理员）",
 )
 async def revoke_notify(
-    session: SessionDep, admin: AdminUser, notify_id: int
+    session: SessionDep, admin: AdminUser, notify_id: StrInt
 ) -> StandardResponse[bool]:
     ok = await NotifyService.revoke(session, notify_id)
     if not ok:

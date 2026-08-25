@@ -4,7 +4,7 @@
 
 | 文件 | 用途 |
 |---|---|
-| [app/models/db/base.py](file:///home/minato/BilibiliExplosion/be-message-service/app/models/db/base.py) | MySQL 主库 ORM 模型公共基类（TimestampMixin / int_enum_type / str_enum_type） |
+| [app/models/db/base.py](file:///home/minato/BilibiliExplosion/be-message-service/app/models/db/base.py) | MySQL 主库 ORM 模型公共基类（TimestampMixin / IntEnum / StrEnum） |
 | [app/models/db/comment.py](file:///home/minato/BilibiliExplosion/be-message-service/app/models/db/comment.py) | MySQL 主库现有模型规范参考（camelCase 列名、sa.JSON、枚举列类型） |
 | [enums.py](file:///home/minato/BilibiliExplosion/be-message-service/app/models/enums.py) | 枚举定义规范参考 |
 | [sharding.py](file:///home/minato/BilibiliExplosion/be-message-service/app/core/sharding.py) | 雪花 ID 生成器 |

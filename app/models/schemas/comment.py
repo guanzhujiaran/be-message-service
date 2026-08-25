@@ -22,7 +22,8 @@ from app.models.schemas.audit import AuditSourceInfo
 # ==================== 公共片段 ====================
 
 
-class CommentUserBrief(SQLModel):
+from app.models.schemas.base import AutoStrMixin
+class CommentUserBrief(SQLModel, AutoStrMixin):
     """评论卡片上展示的用户信息（直连 pptr Postgres 只读取得，本服务不冗余）。
 
     仅使用 pptr 现有四张表（TUserInfo / TUserDetail / TUserVip / TUserLevel）中**实际存在**
@@ -55,7 +56,7 @@ class CommentUserBrief(SQLModel):
     official_title: str | None = None
 
 
-class CommentItem(SQLModel):
+class CommentItem(SQLModel, AutoStrMixin):
     """一条评论的完整视图模型。"""
 
     rpid: str = Field(description="评论id（字符串）")
@@ -107,9 +108,6 @@ class CommentItem(SQLModel):
     is_essence: bool = False
     is_up_liked: bool = False
 
-    # IP 已打码；前端优先展示 v6，无 v6 再回落 v4，两者皆空则不展示
-    ip_v4_masked: str | None = None
-    ip_v6_masked: str | None = None
     # IP 属地（服务端 GeoIP 解析，如「浙江 杭州」）+ 运营商 ISP
     ip_location: str | None = None
     ip_isp: str | None = None
@@ -131,7 +129,7 @@ CommentItem.model_rebuild()
 # ==================== 发布 / 删除 ====================
 
 
-class CommentAddReq(SQLModel):
+class CommentAddReq(SQLModel, AutoStrMixin):
     """发表评论。"""
 
     oid: str = Field(description="业务实体id（字符串）")
@@ -157,7 +155,7 @@ class CommentAddReq(SQLModel):
     )
 
 
-class CommentAddResp(SQLModel):
+class CommentAddResp(SQLModel, AutoStrMixin):
     rpid: str = Field(description="新评论id（字符串）")
     root: str = "0"
     parent: str = "0"
@@ -167,11 +165,11 @@ class CommentAddResp(SQLModel):
     )
 
 
-class CommentDelReq(SQLModel):
+class CommentDelReq(SQLModel, AutoStrMixin):
     rpid: str = Field(description="待删除的评论id（字符串）")
 
 
-class CommentOperationResp(SQLModel):
+class CommentOperationResp(SQLModel, AutoStrMixin):
     affected: int = 0
     message: str = ""
 
@@ -179,7 +177,7 @@ class CommentOperationResp(SQLModel):
 # ==================== 列表 ====================
 
 
-class CommentListResp(SQLModel):
+class CommentListResp(SQLModel, AutoStrMixin):
     """一级评论列表。"""
 
     items: list[CommentItem] = Field(default_factory=list)
@@ -208,7 +206,7 @@ class CommentListResp(SQLModel):
     )
 
 
-class CommentSubListResp(SQLModel):
+class CommentSubListResp(SQLModel, AutoStrMixin):
     """楼中楼（子评论）列表。"""
 
     items: list[CommentItem] = Field(default_factory=list)
@@ -218,7 +216,7 @@ class CommentSubListResp(SQLModel):
     page_size: int = 20
 
 
-class CommentCountResp(SQLModel):
+class CommentCountResp(SQLModel, AutoStrMixin):
     """评论区计数。"""
 
     oid: str
@@ -231,14 +229,14 @@ class CommentCountResp(SQLModel):
 # ==================== 互动 ====================
 
 
-class CommentActionReq(SQLModel):
+class CommentActionReq(SQLModel, AutoStrMixin):
     """点赞 / 点踩 / 取消。"""
 
     rpid: str = Field(description="评论id（字符串）")
     action: CommentActionEnum = Field(description="0取消 / 1点赞 / 2点踩")
 
 
-class CommentActionResp(SQLModel):
+class CommentActionResp(SQLModel, AutoStrMixin):
     rpid: str
     action: CommentActionEnum = CommentActionEnum.NONE
     like_count: int = 0
@@ -248,7 +246,7 @@ class CommentActionResp(SQLModel):
 # ==================== 置顶 / 管理 ====================
 
 
-class CommentReportReq(SQLModel):
+class CommentReportReq(SQLModel, AutoStrMixin):
     """举报评论。"""
 
     rpid: str = Field(description="被举报评论id（字符串）")
@@ -256,7 +254,7 @@ class CommentReportReq(SQLModel):
     reasonDesc: str | None = Field(default=None, max_length=500, description="补充描述（选填）")
 
 
-class CommentReportResp(SQLModel):
+class CommentReportResp(SQLModel, AutoStrMixin):
     """举报评论响应。"""
 
     rpid: str = Field(description="被举报评论id（字符串）")
@@ -264,7 +262,7 @@ class CommentReportResp(SQLModel):
     switched_to_auditing: bool = Field(default=False, description="本次举报后是否已触发转审核（state→auditing）")
 
 
-class CommentTopReq(SQLModel):
+class CommentTopReq(SQLModel, AutoStrMixin):
     """置顶 / 取消置顶（内容作者或管理员）。"""
 
     oid: str = Field(description="业务实体id（字符串）")
@@ -273,12 +271,12 @@ class CommentTopReq(SQLModel):
     top: bool = Field(default=True, description="True 置顶 / False 取消置顶")
 
 
-class CommentTopResp(SQLModel):
+class CommentTopResp(SQLModel, AutoStrMixin):
     top_rpid: str | None = Field(default=None, description="当前置顶评论id")
     success: bool = True
 
 
-class CommentAuditReq(SQLModel):
+class CommentAuditReq(SQLModel, AutoStrMixin):
     """管理端人工审核 / 上下架。"""
 
     rpid: str = Field(description="待处理评论id（字符串）")
@@ -287,7 +285,7 @@ class CommentAuditReq(SQLModel):
     note: str | None = Field(default=None, max_length=256, description="审核备注")
 
 
-class CommentBulkAuditReq(SQLModel):
+class CommentBulkAuditReq(SQLModel, AutoStrMixin):
     """管理端批量人工审核 / 上下架。"""
 
     rpids: list[str] = Field(description="待处理评论id列表（字符串）")
@@ -302,7 +300,7 @@ class CommentBulkAuditReq(SQLModel):
     )
 
 
-class CommentBulkAuditResp(SQLModel):
+class CommentBulkAuditResp(SQLModel, AutoStrMixin):
     """批量审核结果汇总。"""
 
     total: int = Field(default=0, description="请求条数")
@@ -310,7 +308,7 @@ class CommentBulkAuditResp(SQLModel):
     failed: list[str] = Field(default_factory=list, description="失败的 rpid 列表")
 
 
-class CommentAuditItem(SQLModel):
+class CommentAuditItem(SQLModel, AutoStrMixin):
     """审核队列中的一条评论。"""
 
     rpid: str
@@ -333,7 +331,7 @@ class CommentAuditItem(SQLModel):
     )
 
 
-class CommentAuditListResp(SQLModel):
+class CommentAuditListResp(SQLModel, AutoStrMixin):
     items: list[CommentAuditItem] = Field(default_factory=list)
     total: int = 0
     page_num: int = 1
@@ -346,7 +344,7 @@ class CommentAuditListResp(SQLModel):
     )
 
 
-class CommentSourceResp(SQLModel):
+class CommentSourceResp(SQLModel, AutoStrMixin):
     """一条评论的内容来源详情（管理端「内容来源」点击时按需拉取）。"""
 
     rpid: str
@@ -361,12 +359,12 @@ class CommentSourceResp(SQLModel):
     all_count: int = Field(default=0, description="评论区评论总数（含楼中楼）")
 
 
-class CommentAuditResp(SQLModel):
+class CommentAuditResp(SQLModel, AutoStrMixin):
     rpid: str
     state: CommentStateEnum
 
 
-class CommentStatsResp(SQLModel):
+class CommentStatsResp(SQLModel, AutoStrMixin):
     """评论区全局统计（管理端）。"""
 
     total_comments: int = 0

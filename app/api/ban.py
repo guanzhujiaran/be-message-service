@@ -24,6 +24,7 @@ from app.core.database import SessionDep
 from app.dependencies import CurrentUser, UserPermission, require_permission
 from app.models import StandardResponse
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
+from app.models.str_int import StrInt
 from app.models.schemas import (
     BanCreateReq,
     BanListResp,
@@ -158,7 +159,7 @@ async def list_bans(
 async def ban_status(
     session: SessionDep,
     user: Annotated[AuthInfo, Depends(require_permission(UserPermission.USER_BAN_VIEW))],
-    mid: int = Query(..., description="待查询用户 mid"),
+    mid: StrInt = Query(..., description="待查询用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
 ) -> StandardResponse[BanStatusResp]:
     """查询某用户在各服务的封禁状态（实时计算到期）。"""
     data = await BanService.get_status(session, mid)

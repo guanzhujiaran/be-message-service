@@ -8,7 +8,7 @@
 >
 > - JSON 正文用 `sa.JSON()`（非 PG 的 `JSONB`）；
 > - 时间戳用 `datetime` + `TimestampMixin`（`onupdate=datetime.now()`），**不使用** `DateTime(timezone=True)` / `func.now()`；
-> - 枚举列用 `int_enum_type()` / `str_enum_type()` 映射为 `INTEGER` / `VARCHAR` 存 value（`native_enum=False`，新增枚举值无需 DDL），**不使用** PG 原生 ENUM；
+> - 枚举列用 `IntEnum()` / `StrEnum()` 映射为 `INTEGER` / `VARCHAR` 存 value（`native_enum=False`，新增枚举值无需 DDL），**不使用** PG 原生 ENUM；
 > - `mid` 系用户字段（`mid` / `accusedMid` / `reportMid` / `operatorMid`）**仅存 BIGINT，不建跨库外键**——用户主数据在 pptr Postgres（`TUserInfo`），MySQL 主库惯例不引用，渲染时由 `PptrUserService` 只读回查（与 `msg_user_follow` / `msg_user_ban` 一致）；
 > - 仅 `TMoment.repostSrcDynId → TMoment.dynId` 为同库自引用 FK（`ON DELETE SET NULL`）。
 
@@ -154,10 +154,13 @@
 - `idx_topic_creator_created (creatorMid, createdAt DESC)` → 「我创建的话题」（含全部状态）
 
 > **雪花 ID（对外发布 ID 统一规则，见 `.codebuddy/rules/snowflake-id.mdc`）**：
-> `topicId` 为**非自增**雪花 ID（位布局：31 bits 分钟时间戳 + 4 bits worker + 4 bits 序列号 = 39 bits），
+> `topicId` 为**非自增**雪花 ID（位布局：`| 时间戳(分钟) | 4 bits worker | N bits 序列号 |`，总位数恒 39 bits；
+> 默认 `sequence_bits=4` 即 31+4+4，每 worker 每分钟最多 16 个；`sequence_bits` 可通过环境变量
+> `TOPIC_ID_SEQUENCE_BITS` 放宽（默认 4，范围 4~15，时间戳位宽相应缩减为 `31-(sequence_bits-4)`），
+> **仅限清库重建的开发/测试环境**，生产保持默认 4），
 > 由 `bili-common/bili_common/core/snowflake.py::MinuteSnowflakeIdGenerator` 生成，be-message-service 侧
-> `app/core/sharding.py::generate_topic_id()` 封装（独立配置 `topic_id_worker_id` / `topic_id_epoch_sec`，
-> 与 uid / moment_id 数值空间分离）。创建话题时由应用层显式赋值 `topicId`，数据库不做自增。
+> `app/core/sharding.py::generate_topic_id()` 封装（独立配置 `topic_id_worker_id` / `topic_id_epoch_sec` /
+> `topic_id_sequence_bits`，与 uid / moment_id 数值空间分离）。创建话题时由应用层显式赋值 `topicId`，数据库不做自增。
 
 ### 4.4.1 动态-话题多对多关系表 `TMomentTopicRel`（2.22.0 新增）
 
@@ -252,6 +255,33 @@
 **索引：** `idx_fav_mid_created (mid, createdAt DESC)`（我收藏的列表）、`idx_fav_folder_created (folderId, createdAt DESC)`、`idx_fav_biz (bizType, bizId)`
 
 > **计数双写**：收藏/取消收藏时，动态资源（`bizType='dynamic'`）原子 ±1 `TMomentStat.favoriteCount`（按用户去重，即同一用户在所有收藏夹都取消后才 -1）；非动态资源原子 ±1 `TInteractionStat.favoriteCount`。
+
+### 4.8.1 收藏夹封面审核表 `TFolderCoverAudit`（2.28.0 新增）
+
+> 收藏夹封面「先审后发」（对齐头像审核 `TUserAvatarAudit` 模式）：
+> - 用户提交收藏夹封面（创建/更新收藏夹携带 `coverUrl`）→ 本表插入一条 `auditStatus=pending` 记录，`TFavoriteFolder.cover_url` **保持原封面**（新夹为空）；
+> - 审核通过 → `auditStatus=approved`，`newCover` 被写入 `TFavoriteFolder.cover_url` 对外公开（**同库同事务**）；
+> - 审核驳回 → `auditStatus=rejected`，保持原封面，`auditReason` 记录驳回原因。
+>
+> `TFavoriteFolder.cover_url` 只存**审核通过后**的封面（对外公开），与 `newCover` 解耦。
+
+| 列名 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| `pk` | BIGINT | PK, autoincrement | |
+| `folderId` | BIGINT | NOT NULL | 所属收藏夹 id（雪花 ID，仅存 ID 不建跨表 FK） |
+| `mid` | BIGINT | 仅存 UID，不建跨库 FK，NOT NULL | 提交封面的用户 UID |
+| `oldCover` | VARCHAR(1024) | NULL | 提交时的旧封面 URL（用于对比/追溯） |
+| `newCover` | VARCHAR(1024) | NOT NULL | 申请的新封面 URL |
+| `auditStatus` | VARCHAR(16) | DEFAULT 'pending' | 审核状态：pending/approved/rejected（`FolderCoverAuditStatusEnum`） |
+| `auditOperatorMid` | BIGINT | NULL | 审核人 MID（admin） |
+| `auditReason` | VARCHAR(500) | NULL | 驳回原因 / 备注（驳回时填写） |
+| `auditedAt` | TIMESTAMPTZ | NULL | 审核时间 |
+| `createdAt` | TIMESTAMPTZ | DEFAULT now() | |
+| `updatedAt` | TIMESTAMPTZ | DEFAULT now(), onupdate=now() | |
+
+**索引：** `idx_folder_cover_audit_status_created (auditStatus, createdAt DESC)`（管理端待审队列）、`idx_folder_cover_audit_folder_status (folderId, auditStatus)`（用户侧按夹查状态 / 覆盖旧 pending）
+
+> **同一收藏夹至多一条 pending**：服务层保证——提交新封面时把该夹所有 pending 记录置为 `rejected`（reason 固定「已重新提交新申请」）再插入新记录（同事务），避免管理端队列出现同一收藏夹的重复待审。
 
 ### 4.9 点赞明细表 `TMomentLike`（2.17.0 泛化）
 

@@ -17,12 +17,13 @@
 from datetime import datetime
 
 from loguru import logger
-from sqlmodel import col, func, select
+from sqlmodel import col, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import TMoment, TMomentAuditLog
+from app.models.db import TMoment, TMomentAuditLog, TResourceFeed
 from app.models.enums import (
     EventTypeEnum,
+    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
     MomentAuditStatusEnum,
@@ -38,6 +39,37 @@ from app.models.schemas.moment import (
 )
 from app.services.moment_stat import MomentStatService
 from app.services.pptr_user import PptrUserService
+
+
+async def _sync_resource_feed(
+    session: AsyncSession,
+    moment_id: int,
+    *,
+    audit_status: str | None = None,
+    pub_time: datetime | None = None,
+    deleted_at: datetime | None = None,
+) -> None:
+    """审核 / 删除时同步通用 Feed 元数据行（2.36.0）。
+
+    仅更新传入字段；行不存在时静默跳过（发布链路已保证先建行）。
+    """
+    values: dict[str, object] = {}
+    if audit_status is not None:
+        values["auditStatus"] = audit_status
+    if pub_time is not None:
+        values["pubTime"] = pub_time
+    if deleted_at is not None:
+        values["deletedAt"] = deleted_at
+    if not values:
+        return
+    await session.exec(
+        update(TResourceFeed)
+        .where(
+            col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+            col(TResourceFeed.bizId) == moment_id,
+        )
+        .values(**values)
+    )
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -64,7 +96,7 @@ def _to_audit_item(dyn: TMoment, author) -> MomentAuditItem:
         contentText=dyn.contentText,
         pubTime=_iso(dyn.pubTime),
         createdTime=_iso(dyn.created_at),
-        auditStatus=dyn.auditStatus.value,
+        auditStatus=dyn.auditStatus.name,
         isTop=dyn.isTop,
         topicId=dyn.topicId,
     )
@@ -158,10 +190,15 @@ class MomentAuditService:
     async def pending_list(
         session: AsyncSession,
         *,
+        audit_status: MomentAuditStatusEnum = MomentAuditStatusEnum.AUDITING,
         page_num: int = 1,
         page_size: int = 20,
     ) -> MomentAuditListResp:
-        """管理员待审核列表：auditStatus=auditing，按创建时间倒序，分页。"""
+        """管理员审核列表：按 audit_status 过滤（默认 auditing，保持旧行为），按创建时间倒序，分页。
+
+        2.30.0 起支持按状态筛选：auditing（待审核）/ normal（已过审，可执行「驳回」撤回）/
+        rejected（已驳回，可执行「通过」恢复）/ hidden（已下架）。
+        """
         page_num = max(1, page_num)
         page_size = min(max(1, page_size), 50)
 
@@ -170,7 +207,7 @@ class MomentAuditService:
                 await session.exec(
                     select(func.count())
                     .select_from(TMoment)
-                    .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.AUDITING)
+                    .where(col(TMoment.auditStatus) == audit_status)
                 )
             ).one()
             or 0
@@ -178,7 +215,7 @@ class MomentAuditService:
         rows = (
             await session.exec(
                 select(TMoment)
-                .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.AUDITING)
+                .where(col(TMoment.auditStatus) == audit_status)
                 .order_by(col(TMoment.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -191,6 +228,61 @@ class MomentAuditService:
         return MomentAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
         )
+
+    # ==================== 审核总统计（Phase M）====================
+
+    @staticmethod
+    async def statistics(session: AsyncSession) -> dict:
+        """动态审核总统计：按 dynType × auditStatus 二维聚合 TMoment。
+
+        一次 GROUP BY 完成，禁止循环发 COUNT；返回结构化统计供管理后台概览。
+        """
+        rows = (
+            await session.exec(
+                select(TMoment.dynType, TMoment.auditStatus, func.count())
+                .select_from(TMoment)
+                .group_by(TMoment.dynType, TMoment.auditStatus)
+            )
+        ).all()
+
+        by_type: dict[str, dict[str, int]] = {}
+        by_status: dict[str, int] = {}
+        total = 0
+        for dyn_type, audit_status, cnt in rows:
+            tname = (
+                dyn_type.name
+                if isinstance(dyn_type, MomentTypeEnum)
+                else str(dyn_type)
+            )
+            sname = (
+                audit_status.value
+                if isinstance(audit_status, MomentAuditStatusEnum)
+                else str(audit_status)
+            )
+            bucket = by_type.setdefault(
+                tname,
+                {"auditing": 0, "normal": 0, "rejected": 0, "hidden": 0, "total": 0},
+            )
+            bucket[sname] = bucket.get(sname, 0) + cnt
+            bucket["total"] += cnt
+            by_status[sname] = by_status.get(sname, 0) + cnt
+            total += cnt
+
+        return {
+            "byType": [
+                {
+                    "dynType": tname,
+                    "auditing": b["auditing"],
+                    "normal": b["normal"],
+                    "rejected": b["rejected"],
+                    "hidden": b["hidden"],
+                    "total": b["total"],
+                }
+                for tname, b in by_type.items()
+            ],
+            "byStatus": by_status,
+            "total": total,
+        }
 
     # ==================== 审核通过（P6-T2）====================
 
@@ -214,6 +306,10 @@ class MomentAuditService:
         dyn.auditStatus = MomentAuditStatusEnum.NORMAL
         dyn.pubTime = now
         dyn.updated_at = now
+        # 2.36.0：同步通用 Feed 元数据（normal + pubTime，此后入 Feed）
+        await _sync_resource_feed(
+            session, moment_id, audit_status="normal", pub_time=now
+        )
 
         # 状态机触发点①：FORWARD 且源动态存在 → 源动态 repostCount +1
         if dyn.dynType is MomentTypeEnum.FORWARD and dyn.repostSrcDynId:
@@ -257,6 +353,8 @@ class MomentAuditService:
         dyn.auditStatus = MomentAuditStatusEnum.REJECTED
         dyn.auditRejectReason = reject_reason
         dyn.updated_at = now
+        # 2.36.0：同步通用 Feed 元数据（rejected，不入 Feed）
+        await _sync_resource_feed(session, moment_id, audit_status="rejected")
 
         # 状态机触发点②：FORWARD ∧ before=normal → 源动态 repostCount -1
         if (

@@ -18,10 +18,13 @@ from typing import Any
 
 from sqlmodel import Field, SQLModel
 
+from app.models.str_int import StrInt
+
 # ==================== 富文本节点 ====================
 
 
-class MomentContentNode(SQLModel):
+from app.models.schemas.base import AutoStrMixin
+class MomentContentNode(SQLModel, AutoStrMixin):
     """动态正文中的一个富文本节点。
 
     节点类型：WORDS / AT / TOPIC / LINK / RESOURCE（2.17.0 新增）。
@@ -39,26 +42,26 @@ class MomentContentNode(SQLModel):
     picMeta: dict[str, Any] | None = Field(default=None, description="图片元信息（LINK 且 renderAsImage=true 时）")
 
 
-class MomentContentParagraph(SQLModel):
+class MomentContentParagraph(SQLModel, AutoStrMixin):
     """一个段落（含若干节点）。MVP 简化为单段落多节点，预留多段落扩展。"""
 
     nodes: list[MomentContentNode] = Field(default_factory=list, description="段落内的富文本节点")
 
 
-class MomentRepostSrc(SQLModel):
+class MomentRepostSrc(SQLModel, AutoStrMixin):
     """转发源引用。"""
 
     dynId: int = Field(description="转发源动态 ID（int）")
 
 
-class MomentTopicRef(SQLModel):
+class MomentTopicRef(SQLModel, AutoStrMixin):
     """话题引用。"""
 
     topicId: int = Field(description="话题 ID（int）")
     topicName: str | None = Field(default=None, description="话题名称")
 
 
-class MomentLbsRef(SQLModel):
+class MomentLbsRef(SQLModel, AutoStrMixin):
     """LBS 位置引用。"""
 
     poi: str | None = Field(default=None, description="POI 名称")
@@ -66,13 +69,13 @@ class MomentLbsRef(SQLModel):
     lng: float | None = Field(default=None, description="经度")
 
 
-class MomentCreateOption(SQLModel):
+class MomentCreateOption(SQLModel, AutoStrMixin):
     """发布选项。"""
 
     closeComment: int = Field(default=0, description="是否关闭评论：0=否,1=是")
 
 
-class MomentAttachRef(SQLModel):
+class MomentAttachRef(SQLModel, AutoStrMixin):
     """附加卡资源引用（2.21.0，对标 B 站 `CreateCommonAttachCard { type, biz_id }`）。
 
     只保存 `bizType` + `bizId`（不冗余存 name/cover/jumpUrl 快照），
@@ -86,7 +89,7 @@ class MomentAttachRef(SQLModel):
 # ==================== 请求体 ====================
 
 
-class MomentCreateReq(SQLModel):
+class MomentCreateReq(SQLModel, AutoStrMixin):
     """创建动态请求。
 
     scene 限定 MVP 支持的两种：WORD（纯文字）/ FORWARD（转发）。
@@ -104,10 +107,10 @@ class MomentCreateReq(SQLModel):
     option: MomentCreateOption | None = Field(default=None, description="发布选项")
 
 
-class MomentEditReq(SQLModel):
+class MomentEditReq(SQLModel, AutoStrMixin):
     """编辑动态请求（rejected / auditing 编辑后自动回 auditing）。"""
 
-    dynId: int = Field(description="动态 ID（int）")
+    dynId: StrInt = Field(description="动态 ID（int，兼容前端 str 传参）")
     scene: str = Field(description="动态场景：WORD / FORWARD")
     content: list[MomentContentNode] = Field(description="富文本正文节点列表", min_length=1)
     attach: MomentAttachRef | None = Field(default=None, description="附加卡资源引用（2.21.0）")
@@ -118,38 +121,38 @@ class MomentEditReq(SQLModel):
     option: MomentCreateOption | None = Field(default=None, description="发布选项")
 
 
-class MomentRemoveReq(SQLModel):
+class MomentRemoveReq(SQLModel, AutoStrMixin):
     """删除动态请求（软删）。"""
 
-    dynId: int = Field(description="动态 ID（int）")
+    dynId: StrInt = Field(description="动态 ID（int，兼容前端 str 传参）")
 
 
-class MomentRepostReq(SQLModel):
+class MomentRepostReq(SQLModel, AutoStrMixin):
     """转发动态请求（FORWARD）。"""
 
-    srcDynId: int = Field(description="源动态 ID（int）")
+    srcDynId: StrInt = Field(description="源动态 ID（int，兼容前端 str 传参）")
     content: list[MomentContentNode] | None = Field(default=None, description="转发语节点列表（可为空）")
 
 
-class MomentTopReq(SQLModel):
+class MomentTopReq(SQLModel, AutoStrMixin):
     """空间置顶 / 取消置顶请求。"""
 
-    dynId: int = Field(description="动态 ID（int）")
+    dynId: StrInt = Field(description="动态 ID（int，兼容前端 str 传参）")
 
 
-class MomentCreateCheckReq(SQLModel):
+class MomentCreateCheckReq(SQLModel, AutoStrMixin):
     """发布页预校验请求。"""
 
     scene: str = Field(description="动态场景：WORD / FORWARD")
 
 
-class MomentDetailsReq(SQLModel):
+class MomentDetailsReq(SQLModel, AutoStrMixin):
     """批量动态详情请求。"""
 
-    dynamicIds: list[int] = Field(description="动态 ID 列表（限 20 条）", max_length=20)
+    dynamicIds: list[StrInt] = Field(description="动态 ID 列表（限 20 条，兼容前端 str 传参）", max_length=20)
 
 
-class MomentThumbReq(SQLModel):
+class MomentThumbReq(SQLModel, AutoStrMixin):
     """点赞 / 取消点赞请求（2.17.0 泛化支持多业务资源）。
 
     `bizType` 默认 `dynamic`，此时 `bizId` 等价 `dynId`（二者任传其一）；
@@ -157,20 +160,20 @@ class MomentThumbReq(SQLModel):
     """
 
     bizType: str = Field(default="dynamic", description="资源类型：dynamic/lottery/rpa_action/rpa_workflow/rpa_browser（对外文字，DB 存 int）")
-    bizId: int | None = Field(default=None, description="资源 ID（int；动态时=动态 ID）")
-    dynId: int | None = Field(default=None, description="[兼容]动态 ID（int）")
+    bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
+    dynId: StrInt | None = Field(default=None, description="[兼容]动态 ID（int|str，兼容前端 str 传参）")
     up: int = Field(default=1, description="1=点赞, 2=取消点赞")
 
 
-class MomentReportReq(SQLModel):
+class MomentReportReq(SQLModel, AutoStrMixin):
     """举报动态请求。"""
 
-    dynId: int = Field(description="被举报动态 ID（int）")
+    dynId: StrInt = Field(description="被举报动态 ID（int，兼容前端 str 传参）")
     reasonType: int = Field(description="举报原因类型（MomentReportReasonEnum 值）")
     reasonDesc: str | None = Field(default=None, description="补充描述（选填）")
 
 
-class MomentThumbResp(SQLModel):
+class MomentThumbResp(SQLModel, AutoStrMixin):
     """点赞响应（2.17.0 泛化）。"""
 
     bizType: str = Field(default="dynamic", description="资源类型")
@@ -182,7 +185,46 @@ class MomentThumbResp(SQLModel):
     likeCount: int = Field(default=0, description="操作后点赞数")
 
 
-class MomentReportResp(SQLModel):
+class MomentDislikeReq(SQLModel, AutoStrMixin):
+    """点踩 / 取消点踩请求（2.35.0）。
+
+    对齐点赞：`bizType` 默认 `dynamic`，此时 `bizId` 等价 `dynId`（二者任传其一）。
+    当前 MVP 仅支持动态资源（非动态 400）。
+    """
+
+    bizType: str = Field(default="dynamic", description="资源类型（当前仅支持 dynamic）")
+    bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
+    dynId: StrInt | None = Field(default=None, description="[兼容]动态 ID（int|str，兼容前端 str 传参）")
+    up: int = Field(default=1, description="1=点踩, 2=取消点踩")
+
+
+class MomentDislikeResp(SQLModel, AutoStrMixin):
+    """点踩响应（2.35.0）。"""
+
+    bizType: str = Field(default="dynamic", description="资源类型")
+    bizId: int = Field(description="资源 ID（int）")
+    bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
+    dynId: int | None = Field(default=None, description="[兼容]动态 ID")
+    dynIdStr: str | None = Field(default=None, description="[兼容]动态 ID（字符串）")
+    isDislike: bool = Field(default=False, description="操作后当前用户是否已点踩")
+    dislikeCount: int = Field(default=0, description="操作后点踩数")
+
+
+class MomentShareReq(SQLModel, AutoStrMixin):
+    """分享上报请求（2.35.0）。"""
+
+    dynId: StrInt = Field(description="被分享动态 ID（int，兼容前端 str 传参）")
+
+
+class MomentShareResp(SQLModel, AutoStrMixin):
+    """分享上报响应（2.35.0）。"""
+
+    dynId: int = Field(description="动态 ID（int）")
+    dynIdStr: str = Field(description="动态 ID（字符串，避免精度丢失）")
+    shareCount: int = Field(default=0, description="操作后分享数")
+
+
+class MomentReportResp(SQLModel, AutoStrMixin):
     """举报响应。"""
 
     dynId: int = Field(description="被举报动态 ID（int）")
@@ -193,12 +235,12 @@ class MomentReportResp(SQLModel):
 # ==================== 响应体 ====================
 
 
-class MomentBaseResp(SQLModel):
+class MomentBaseResp(SQLModel, AutoStrMixin):
     """动态写操作通用响应。"""
 
     dynId: int = Field(description="动态 ID（int）")
     dynIdStr: str = Field(description="动态 ID（字符串，避免精度丢失）")
-    auditStatus: str = Field(description="审核状态字符串：auditing/normal/rejected/hidden")
+    auditStatus: str = Field(description="审核状态成员名字符串：AUDITING/NORMAL/REJECTED/HIDDEN")
     dynType: str = Field(description="动态类型字符串：WORD/FORWARD")
 
 
@@ -210,7 +252,7 @@ class MomentEditResp(MomentBaseResp):
     """编辑动态响应。"""
 
 
-class MomentRemoveResp(SQLModel):
+class MomentRemoveResp(SQLModel, AutoStrMixin):
     """删除动态响应。"""
 
     dynId: int = Field(description="动态 ID（int）")
@@ -222,7 +264,7 @@ class MomentRepostResp(MomentBaseResp):
     """转发动态响应。"""
 
 
-class MomentTopResp(SQLModel):
+class MomentTopResp(SQLModel, AutoStrMixin):
     """置顶 / 取消置顶响应。"""
 
     dynId: int = Field(description="动态 ID（int）")
@@ -230,7 +272,7 @@ class MomentTopResp(SQLModel):
     isTop: int = Field(description="是否置顶：0=否,1=是")
 
 
-class MomentCreateCheckResp(SQLModel):
+class MomentCreateCheckResp(SQLModel, AutoStrMixin):
     """发布页预校验响应。"""
 
     setting: dict = Field(default_factory=dict, description="发布设置（MVP 留空扩展）")
@@ -241,11 +283,11 @@ class MomentCreateCheckResp(SQLModel):
 # ==================== Feed / 详情 响应体 ====================
 
 
-class MomentModule(SQLModel):
+class MomentModule(SQLModel, AutoStrMixin):
     """动态详情 / Feed 卡片中的一个渲染模块（对齐 B站 DynModuleType）。"""
 
     moduleType: str = Field(
-        description="模块类型：author/desc/dynamic/forward/extend/additional/stat/interaction"
+        description="模块类型：author/desc/dynamic/forward/extend/additional/interaction"
     )
     # author 模块
     mid: int | None = Field(default=None, description="发布者 UID")
@@ -275,16 +317,11 @@ class MomentModule(SQLModel):
     name: str | None = Field(default=None, description="附加卡标题（RPC 实时获取）")
     cover: str | None = Field(default=None, description="附加卡封面（RPC 实时获取）")
     jumpUrl: str | None = Field(default=None, description="附加卡跳转链接（RPC 实时获取）")
-    # stat 模块
-    likeCount: int | None = Field(default=None, description="点赞数")
-    commentCount: int | None = Field(default=None, description="评论数")
-    repostCount: int | None = Field(default=None, description="转发数")
-    viewCount: int | None = Field(default=None, description="浏览数")
     # interaction 模块
     isLike: bool | None = Field(default=None, description="当前用户是否已赞")
 
 
-class MomentFeedItem(SQLModel):
+class MomentFeedItem(SQLModel, AutoStrMixin):
     """Feed 流 / 详情中的单条动态卡片。"""
 
     dynId: int = Field(description="动态 ID（int）")
@@ -299,20 +336,27 @@ class MomentFeedItem(SQLModel):
     ipLocation: str | None = Field(default=None, description="IP 属地（如「浙江 杭州」，服务端 GeoIP 解析）")
     ipIsp: str | None = Field(default=None, description="IP 运营商 ISP")
     modules: list[MomentModule] = Field(default_factory=list, description="渲染模块列表")
-    stat: dict = Field(default_factory=dict, description="统计快照（likeCount/commentCount/repostCount/viewCount）")
 
 
-class MomentFeedResp(SQLModel):
-    """Feed 流响应（含游标分页字段）。"""
+class MomentFeedResp(SQLModel, AutoStrMixin):
+    """Feed 流响应。
+
+    2.32.0 起综合页 ``sort=recommend`` 为**推荐流模式**（对齐 B 站 rcmd）：
+    - 无 page/offset 游标语义，``updateBaseline`` / ``historyOffset`` / ``updateNum`` 置空；
+    - ``hasMore`` = 排除客户端 ``last_showlist`` 后候选是否仍有剩余；
+    - 请求侧通过 ``last_showlist``（已展示 dynId）驱动服务端去重。
+
+    ``sort=time`` 最新模式仍使用 ``historyOffset`` 游标分页（原语义不变）。
+    """
 
     items: list[MomentFeedItem] = Field(default_factory=list)
-    hasMore: bool = Field(default=False, description="是否还有下一页")
-    updateBaseline: int | None = Field(default=None, description="刷新基线（最新一条 dynId）")
-    historyOffset: int | None = Field(default=None, description="历史偏移（最旧一条 dynId）")
-    updateNum: int = Field(default=0, description="相对基线的新增条数")
+    hasMore: bool = Field(default=False, description="是否还有更多（recommend=排除已展示后候选仍有剩余 / time=是否有下一页）")
+    updateBaseline: int | None = Field(default=None, description="刷新基线（最新一条 dynId，recommend 模式置空）")
+    historyOffset: int | None = Field(default=None, description="历史偏移（最旧一条 dynId，recommend 模式置空）")
+    updateNum: int = Field(default=0, description="相对基线的新增条数（recommend 模式恒 0）")
 
 
-class MomentUpStatResp(SQLModel):
+class MomentUpStatResp(SQLModel, AutoStrMixin):
     """空间统计响应（对标 B 站 `/x/space/upstat`）。
 
     统计某用户对外可见动态的总数与获赞总数。
@@ -324,7 +368,11 @@ class MomentUpStatResp(SQLModel):
 
 
 class MomentDetailResp(MomentFeedItem):
-    """动态详情响应（单条完整卡片）。"""
+    """动态详情响应（单条完整卡片）。
+
+    2.41.0：详情/Feed **不返回统计**（外层 ``stat`` 字段与 ``module_stat`` 模块均已移除）
+    ——互动状态 / 计数统一由 ``GET /api/v1/community/interaction/status`` 查询。
+    """
 
 
 # MomentModule.srcMoment ↔ MomentFeedItem.modules 存在循环引用，
@@ -335,7 +383,7 @@ MomentFeedItem.model_rebuild()
 # ==================== Phase 5：话题 & @ & POI ====================
 
 
-class MomentTopicInfo(SQLModel):
+class MomentTopicInfo(SQLModel, AutoStrMixin):
     """话题广场单条话题信息。"""
 
     topicId: int = Field(description="话题 ID（int）")
@@ -348,14 +396,14 @@ class MomentTopicInfo(SQLModel):
     isHot: int = Field(default=0, description="是否热门话题")
 
 
-class MomentTopicSquareResp(SQLModel):
+class MomentTopicSquareResp(SQLModel, AutoStrMixin):
     """话题广场列表响应。"""
 
     items: list[MomentTopicInfo] = Field(default_factory=list, description="话题列表")
     hasMore: bool = Field(default=False, description="是否还有下一页")
 
 
-class MomentTopicDetailItem(SQLModel):
+class MomentTopicDetailItem(SQLModel, AutoStrMixin):
     """话题详情（对齐 B 站 `top_details` 结构）。
 
     - ``topic_item``：话题主体信息（浏览/讨论/收藏/动态/点赞数等）；
@@ -383,7 +431,7 @@ class MomentTopicDetailItem(SQLModel):
     )
 
 
-class MomentTopicDetailResp(SQLModel):
+class MomentTopicDetailResp(SQLModel, AutoStrMixin):
     """话题详情响应（对齐 B 站 `data.top_details`）。"""
 
     top_details: MomentTopicDetailItem = Field(
@@ -393,7 +441,7 @@ class MomentTopicDetailResp(SQLModel):
     click_area_card: dict[str, Any] = Field(default_factory=dict)
 
 
-class MomentTopicFeedResp(SQLModel):
+class MomentTopicFeedResp(SQLModel, AutoStrMixin):
     """话题下动态 Feed 响应（复用综合页游标结构）。"""
 
     topicId: int = Field(description="话题 ID")
@@ -405,7 +453,7 @@ class MomentTopicFeedResp(SQLModel):
     updateNum: int = Field(default=0)
 
 
-class MomentAtUserItem(SQLModel):
+class MomentAtUserItem(SQLModel, AutoStrMixin):
     """@用户推荐 / 搜索结果项（基础展示信息，来自 pptr）。"""
 
     mid: int = Field(description="用户 UID")
@@ -414,21 +462,21 @@ class MomentAtUserItem(SQLModel):
     remark: str | None = Field(default=None, description="备注 / 关系标签（如「互关」）")
 
 
-class MomentAtListResp(SQLModel):
+class MomentAtListResp(SQLModel, AutoStrMixin):
     """@用户推荐列表（按分组：关注 / 粉丝）。"""
 
     following: list[MomentAtUserItem] = Field(default_factory=list, description="我关注的人")
     followers: list[MomentAtUserItem] = Field(default_factory=list, description="我的粉丝")
 
 
-class MomentAtSearchResp(SQLModel):
+class MomentAtSearchResp(SQLModel, AutoStrMixin):
     """@用户搜索结果。"""
 
     items: list[MomentAtUserItem] = Field(default_factory=list)
     hasMore: bool = Field(default=False)
 
 
-class MomentPoiItem(SQLModel):
+class MomentPoiItem(SQLModel, AutoStrMixin):
     """POI 地点项（本地模式：来自已发 Moment 的 lbsPoi 去重）。"""
 
     poi: str = Field(description="POI 名称")
@@ -437,7 +485,7 @@ class MomentPoiItem(SQLModel):
     dynCount: int = Field(default=0, description="使用该 POI 的 Moment 数")
 
 
-class MomentPoiResp(SQLModel):
+class MomentPoiResp(SQLModel, AutoStrMixin):
     """POI 附近 / 关键词搜索响应（MVP 本地模式，未接外部地图 API）。"""
 
     items: list[MomentPoiItem] = Field(default_factory=list)
@@ -447,7 +495,7 @@ class MomentPoiResp(SQLModel):
 # ==================== 2.19.0：话题创建与审核 ====================
 
 
-class MomentTopicCreateReq(SQLModel):
+class MomentTopicCreateReq(SQLModel, AutoStrMixin):
     """创建话题请求（当前登录用户）。"""
 
     topicName: str = Field(description="话题名称（1-30 字，全局唯一）")
@@ -455,7 +503,7 @@ class MomentTopicCreateReq(SQLModel):
     topicDesc: str | None = Field(default=None, max_length=200, description="话题描述（≤200 字）")
 
 
-class MomentTopicCreateResp(SQLModel):
+class MomentTopicCreateResp(SQLModel, AutoStrMixin):
     """创建话题响应（创建即进入审核，auditStatus='auditing'）。"""
 
     topicId: int = Field(description="话题 ID")
@@ -463,7 +511,7 @@ class MomentTopicCreateResp(SQLModel):
     auditStatus: str = Field(description="审核状态（auditing）")
 
 
-class MomentTopicMineItem(SQLModel):
+class MomentTopicMineItem(SQLModel, AutoStrMixin):
     """「我创建的话题」单条（含审核状态与驳回原因）。"""
 
     topicId: int = Field(description="话题 ID")
@@ -476,14 +524,14 @@ class MomentTopicMineItem(SQLModel):
     createdAt: str | None = Field(default=None, description="创建时间（ISO）")
 
 
-class MomentTopicMineResp(SQLModel):
+class MomentTopicMineResp(SQLModel, AutoStrMixin):
     """「我创建的话题」列表响应。"""
 
     items: list[MomentTopicMineItem] = Field(default_factory=list)
     hasMore: bool = Field(default=False)
 
 
-class MomentTopicAuditItem(SQLModel):
+class MomentTopicAuditItem(SQLModel, AutoStrMixin):
     """管理端话题审核队列中的单条话题（含创建者昵称/头像，pptr 回查）。"""
 
     topicId: int = Field(description="话题 ID")
@@ -496,7 +544,7 @@ class MomentTopicAuditItem(SQLModel):
     createdAt: str | None = Field(default=None, description="创建时间（ISO）")
 
 
-class MomentTopicAuditListResp(SQLModel):
+class MomentTopicAuditListResp(SQLModel, AutoStrMixin):
     """管理端话题待审核列表响应。"""
 
     items: list[MomentTopicAuditItem] = Field(default_factory=list)
@@ -505,17 +553,17 @@ class MomentTopicAuditListResp(SQLModel):
     page_size: int = Field(default=20)
 
 
-class MomentTopicAuditApproveReq(SQLModel):
+class MomentTopicAuditApproveReq(SQLModel, AutoStrMixin):
     """话题审核通过请求。"""
 
-    topicId: int = Field(description="话题 ID")
+    topicId: StrInt = Field(description="话题 ID（兼容前端 str 传参）")
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class MomentTopicAuditRejectReq(SQLModel):
+class MomentTopicAuditRejectReq(SQLModel, AutoStrMixin):
     """话题审核驳回请求。"""
 
-    topicId: int = Field(description="话题 ID")
+    topicId: StrInt = Field(description="话题 ID（兼容前端 str 传参）")
     rejectReason: str = Field(description="驳回原因")
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
@@ -523,7 +571,7 @@ class MomentTopicAuditRejectReq(SQLModel):
 # ==================== Phase 6：审核管理 ====================
 
 
-class MomentAuditItem(SQLModel):
+class MomentAuditItem(SQLModel, AutoStrMixin):
     """管理员审核队列中的单条动态（含作者昵称 / 头像，来自 pptr 回查）。"""
 
     dynId: int = Field(description="动态 ID（int）")
@@ -540,7 +588,7 @@ class MomentAuditItem(SQLModel):
     topicId: int | None = Field(default=None, description="关联话题 ID")
 
 
-class MomentAuditListResp(SQLModel):
+class MomentAuditListResp(SQLModel, AutoStrMixin):
     """管理员待审核列表响应。"""
 
     items: list[MomentAuditItem] = Field(default_factory=list)
@@ -549,22 +597,22 @@ class MomentAuditListResp(SQLModel):
     page_size: int = Field(default=20)
 
 
-class MomentAuditActionReq(SQLModel):
+class MomentAuditActionReq(SQLModel, AutoStrMixin):
     """审核通过请求。"""
 
-    dynId: int = Field(description="动态 ID（int）")
+    dynId: StrInt = Field(description="动态 ID（int，兼容前端 str 传参）")
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class MomentAuditRejectReq(SQLModel):
+class MomentAuditRejectReq(SQLModel, AutoStrMixin):
     """审核驳回请求。"""
 
-    dynId: int = Field(description="动态 ID（int）")
+    dynId: StrInt = Field(description="动态 ID（int，兼容前端 str 传参）")
     rejectReason: str = Field(description="驳回原因")
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class MomentAuditLogItem(SQLModel):
+class MomentAuditLogItem(SQLModel, AutoStrMixin):
     """单条审核流转记录（管理后台流水）。"""
 
     pk: int = Field(description="记录主键")
@@ -579,7 +627,7 @@ class MomentAuditLogItem(SQLModel):
     createdTime: str | None = Field(default=None, description="操作时间（ISO）")
 
 
-class MomentAuditLogListResp(SQLModel):
+class MomentAuditLogListResp(SQLModel, AutoStrMixin):
     """审核记录流水响应。"""
 
     items: list[MomentAuditLogItem] = Field(default_factory=list)
@@ -588,15 +636,38 @@ class MomentAuditLogListResp(SQLModel):
     page_size: int = Field(default=20)
 
 
-class MomentAuditDetailResp(SQLModel):
+class MomentAuditDetailResp(SQLModel, AutoStrMixin):
     """单条动态审核详情（含全部状态 + 历史流转）。"""
 
     item: MomentAuditItem | None = Field(default=None, description="动态当前快照")
     logs: list[MomentAuditLogItem] = Field(default_factory=list, description="审核流转历史")
 
 
+class MomentAuditTypeStat(SQLModel, AutoStrMixin):
+    """单个动态类型的审核状态计数。"""
+
+    dynType: str = Field(description="动态类型：WORD/FORWARD")
+    auditing: int = Field(default=0, description="审核中数量")
+    normal: int = Field(default=0, description="已过审数量")
+    rejected: int = Field(default=0, description="已驳回数量")
+    hidden: int = Field(default=0, description="已下架数量")
+    total: int = Field(default=0, description="该类型合计")
+
+
+class MomentAuditStatisticsResp(SQLModel, AutoStrMixin):
+    """动态审核总统计：各类型明细 + 全局状态汇总。"""
+
+    byType: list[MomentAuditTypeStat] = Field(
+        default_factory=list, description="各动态类型明细（含各状态计数）"
+    )
+    byStatus: dict[str, int] = Field(
+        default_factory=dict, description="全局按审核状态汇总（auditing/normal/rejected/hidden）"
+    )
+    total: int = Field(default=0, description="动态总数")
+
+
 # ==================== Phase 8：点赞明细 / 转发列表（P8-T9）====================
-class MomentLikerItem(SQLModel):
+class MomentLikerItem(SQLModel, AutoStrMixin):
     """单条点赞记录（用户简要 + 点赞时间）。"""
 
     mid: int = Field(description="点赞用户 mid")
@@ -607,7 +678,7 @@ class MomentLikerItem(SQLModel):
     )
 
 
-class MomentForwardItem(SQLModel):
+class MomentForwardItem(SQLModel, AutoStrMixin):
     """单条转发记录（被转发过来的动态简要）。"""
 
     dynId: int = Field(description="转发动态 ID")
@@ -618,7 +689,7 @@ class MomentForwardItem(SQLModel):
     text: str | None = Field(default=None, description="转发时的 desc 模块正文（去除富文本）")
 
 
-class MomentLikerListResp(SQLModel):
+class MomentLikerListResp(SQLModel, AutoStrMixin):
     """点赞明细列表响应。"""
 
     items: list[MomentLikerItem] = Field(default_factory=list, description="点赞用户列表")
@@ -627,7 +698,7 @@ class MomentLikerListResp(SQLModel):
     page_size: int = Field(default=20, description="每页条数")
 
 
-class MomentForwardListResp(SQLModel):
+class MomentForwardListResp(SQLModel, AutoStrMixin):
     """转发列表响应。"""
 
     items: list[MomentForwardItem] = Field(default_factory=list, description="转发列表")
@@ -668,6 +739,10 @@ __all__ = [
     "MomentPoiResp",
     "MomentRemoveReq",
     "MomentRemoveResp",
+    "MomentDislikeReq",
+    "MomentDislikeResp",
+    "MomentShareReq",
+    "MomentShareResp",
     "MomentReportReq",
     "MomentReportResp",
     "MomentRepostReq",

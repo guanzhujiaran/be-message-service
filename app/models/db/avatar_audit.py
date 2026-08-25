@@ -17,7 +17,8 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Index, PrimaryKeyConstraint, text
 from sqlmodel import Field
 
-from app.models.db.base import TimestampMixin, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import AvatarAuditStatusEnum
 
 
@@ -39,7 +40,7 @@ class TUserAvatarAudit(TimestampMixin, table=True):
     newAvatar: str = Field(default=None, nullable=False, max_length=1024, description="申请的新头像 URL")
     auditStatus: AvatarAuditStatusEnum = Field(
         default=AvatarAuditStatusEnum.PENDING,
-        sa_type=str_enum_type(AvatarAuditStatusEnum),
+        sa_type=SAEnum(AvatarAuditStatusEnum),
         description="审核状态：pending/approved/rejected",
     )
     auditOperatorMid: int | None = Field(default=None, sa_type=BIGINT, description="审核人 MID（admin）")

@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import CommentContent, CommentIndex, CommentSubject
+from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
 from app.models.enums import CommentStateEnum, CommentTypeEnum, NotifyLevelEnum
 from app.models.schemas import (
     CommentAuditItem,
@@ -57,9 +57,11 @@ class CommentAdminService:
         注意：状态翻转不调整冗余计数（计数保持冻结），计数漂移由
         Phase 5.10 的对账定时任务统一校准。
 
-        四种状态变更都会向作者发送系统通知，正文统一带上「来源评论区 + 原文摘要」，
-        并把可跳转地址挂到 `jump_url`；其中 REJECTED（审核未通过）/ HIDDEN（下架）
-        额外把管理员填写的 `note` 作为处理原因写进正文。
+        仅负面结果（REJECTED 驳回 / HIDDEN 下架）向作者发送系统通知，正文统一带上
+        「来源评论区 + 原文摘要」，并把可跳转地址挂到 `jump_url`，同时把管理员填写的
+        `note` 作为处理原因写进正文；审核过程性状态（NORMAL 通过 / AUDITING 进入审核）
+        不通知（D6）。状态由非 `NORMAL` 翻转为 `NORMAL`（审核通过 / 恢复）时，
+        弱依赖补发先前因不可见而跳过的互动通知（回复 / @，D6 补偿通道）。
         """
         row = (
             await session.exec(
@@ -102,30 +104,14 @@ class CommentAdminService:
                 )
             await session.commit()
 
-        # 状态实际变化时，按变更类型向作者推送系统通知（弱依赖：失败仅告警）
+        # 状态实际变化时的通知（全部弱依赖：失败仅告警）：
+        # - 负面结果（驳回 / 下架）向作者推送系统通知；审核过程性状态不通知（D6）：
+        #   评论通过后自然对外可见，无需系统通知打扰作者。
+        # - 审核通过 / 恢复（非 NORMAL → NORMAL）补发先前跳过的互动通知（回复 / @），
+        #   避免接收方错过"评论已可见"后的回复 / @ 提醒（D6 补偿通道）。
         if prev_state != state:
             try:
-                if state == CommentStateEnum.NORMAL:
-                    # 审核通过 / 恢复：对外可见
-                    await CommentAdminService._notify_state_changed(
-                        session,
-                        rpid,
-                        row,
-                        title="评论审核通过",
-                        summary="发布的评论已通过审核，现已对外公开展示。",
-                        operator_mid=operator_mid,
-                    )
-                elif state == CommentStateEnum.AUDITING:
-                    # 被打回审核：对外不可见，等待复审
-                    await CommentAdminService._notify_state_changed(
-                        session,
-                        rpid,
-                        row,
-                        title="评论审核中",
-                        summary="发布的评论已被移入审核队列，通过后将对外公开展示。",
-                        operator_mid=operator_mid,
-                    )
-                elif state == CommentStateEnum.REJECTED:
+                if state == CommentStateEnum.REJECTED:
                     await CommentService.notify_audit_rejected(
                         row.mid,
                         rpid,
@@ -143,6 +129,8 @@ class CommentAdminService:
                         note=note,
                         operator_mid=operator_mid,
                     )
+                elif state == CommentStateEnum.NORMAL:
+                    await CommentAdminService._resend_interact_notify(session, rpid, row)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"评论状态变更通知投递失败（弱依赖）: {e}")
         return True
@@ -190,35 +178,67 @@ class CommentAdminService:
         return content
 
     @staticmethod
-    async def _notify_state_changed(
+    async def _resend_interact_notify(
         session: AsyncSession,
         rpid: int,
         row: CommentIndex,
-        title: str,
-        summary: str,
-        operator_mid: int,
     ) -> None:
-        """通过 / 打回审核的通知：与驳回、下架同构。
+        """审核通过 / 恢复后，补发先前因不可见而跳过的互动通知（回复 / @）。
 
-        通知不能只有一句「已通过审核」这种空话——作者往往同时有多条评论在审，
-        必须让他一眼看出「是哪个评论区的哪条内容」，并能直接点回原处。
-        因此正文同样带上来源与原文摘要，`jump_url` 挂可跳转地址。
+        D6 补偿通道：评论在 auditing / rejected / hidden 期间一律不投递互动通知
+        （`msg_comment_at.notified=False`）；状态翻转为 `NORMAL`（审核通过 / 恢复）后，
+        补齐回复与 @ 通知，并把 @ 记录标记为已投递（`notified=True`），避免重复补发。
+
+        独立会话投递（`_notify_reply` / `_notify_at` 内部 `new_session`），失败仅告警，
+        不影响审核结果本身。
         """
-        source = build_comment_source(row.oid, row.type, rpid)
-        excerpt = await CommentAdminService._load_excerpt(session, rpid)
-        source_link = markup_inline_link(source.label, source.url or source.external_url)
+        # 评论作者昵称（弱依赖：取不到就 None，通知不展示昵称也可接受）
+        actor_uname: str | None = None
+        try:
+            profiles = await PptrUserService.get_many([row.mid])
+            actor_uname = getattr(profiles.get(row.mid), "uname", None)
+        except Exception:  # noqa: BLE001
+            actor_uname = None
 
-        lines = [f"您在{source_link}{summary}"]
-        if excerpt:
-            lines.append(f"评论内容：{summarize_text(excerpt)}")
+        excerpt = await CommentAdminService._load_excerpt(session, rpid) or ""
 
-        await NotifyService.send_to_user(
-            row.mid,
-            title=title,
-            content="\n".join(lines),
-            jump_url=source.url or source.external_url,
-            creator_mid=operator_mid,
-        )
+        # 回复通知
+        if row.root != 0 and row.reply_to_mid and row.reply_to_mid != row.mid:
+            await CommentService._notify_reply(
+                row.mid,
+                row.oid,
+                row.rpid,
+                row.reply_to_mid,
+                excerpt,
+                actor_uname,
+                row.type,
+            )
+
+        # @ 通知：仅补发未投递过的记录
+        pending_ats = (
+            await session.exec(
+                select(CommentAt).where(
+                    col(CommentAt.rpid) == rpid,
+                    col(CommentAt.notified) == False,  # noqa: E712
+                )
+            )
+        ).all()
+        for at in pending_ats:
+            if at.at_mid == row.mid:
+                # 不给自己发 @ 提醒（与 add 时保持一致）
+                continue
+            await CommentService._notify_at(
+                row.mid,
+                row.oid,
+                row.rpid,
+                at.at_mid,
+                actor_uname,
+                row.type,
+            )
+            at.notified = True
+            session.add(at)
+        if pending_ats:
+            await session.commit()
 
     @staticmethod
     async def _notify_hidden(

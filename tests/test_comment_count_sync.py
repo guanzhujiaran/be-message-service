@@ -75,6 +75,10 @@ async def _cleanup(oid: int) -> None:
         )
         await s.exec(text(f"DELETE FROM msg_comment_index WHERE oid = {oid}"))
         await s.exec(text(f"DELETE FROM msg_comment_subject WHERE oid = {oid}"))
+        await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {oid}"))
+        await s.exec(
+            text(f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {oid}")
+        )
         await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
         await s.commit()
 
@@ -125,9 +129,10 @@ async def _subject_counts(session, oid: int) -> tuple[int, int]:
 
 
 async def _stat_comment_count(session, oid: int) -> int:
+    # 2.36.0：动态计数统一 TInteractionStat（bizType=1=DYNAMIC）
     row = (
         await session.exec(
-            text(f"SELECT commentCount FROM TMomentStat WHERE dynId = {oid}")
+            text(f"SELECT commentCount FROM TInteractionStat WHERE bizType = 1 AND bizId = {oid}")
         )
     ).one_or_none()
     return int(row[0]) if row else 0

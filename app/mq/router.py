@@ -25,9 +25,12 @@ from app.core.config import settings
 from app.tasks import shutdown_scheduler, start_scheduler
 
 # RabbitRouter 内部会创建一个 RabbitBroker 实例并自行管理其生命周期
-# （start / stop 都由 router 的 lifespan 接管，main.py 不再手动调用）
-
-router = RabbitRouter(settings.rabbitmq_url)
+# （start / stop 都由 router 的 lifespan 接管，main.py 不再手动调用）。
+# log_level 控制 FastStream 框架自身的日志级别（settings.faststream_log_level）。
+router = RabbitRouter(
+    settings.rabbitmq_url,
+    log_level=settings.faststream_log_level_int,
+)
 
 # 单一 broker 实例，供 publisher / RPC 服务端 / health 检查共用
 broker = router.broker

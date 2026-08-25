@@ -19,6 +19,20 @@ class Settings(BaseSettings):
 
     # ==================== RabbitMQ ====================
     rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/?heartbeat=180"
+    # FastStream（RabbitMQ 消费者 / 发布者）内部日志级别：DEBUG / INFO / WARNING / ERROR / CRITICAL，
+    # 通过环境变量 FASTSTREAM_LOG_LEVEL 覆盖。仅影响 FastStream 框架自身的标准库日志，
+    # 不影响本项目 loguru 业务日志。
+    faststream_log_level: str = "INFO"
+    # 业务日志（loguru）输出级别：DEBUG / INFO / WARNING / ERROR / CRITICAL，通过环境变量
+    # LOG_LEVEL 覆盖。约定：**生产只打印 WARNING 及以上**（默认 WARNING，压日志量），
+    # 开发环境设 DEBUG 看全量。日志默认只输出到 stderr（容器日志由 docker logs 收集）。
+    log_level: str = "WARNING"
+    # 运行环境：development / production，通过环境变量 APP_ENV 覆盖（默认 production）。
+    # 仅 development 会在 LOG_FILE_DIR 下额外把 WARNING 及以上日志写入文件，便于排查；
+    # production 不写任何日志文件。
+    app_env: str = "production"
+    # 开发环境日志文件目录（环境变量 LOG_FILE_DIR 覆盖，默认项目下 logs/）
+    log_file_dir: str = "logs"
 
     # ==================== HTTP ====================
     # HTTP 健康检查服务监听地址（AsgiFastStream 暴露 /health 路由）
@@ -76,6 +90,10 @@ class Settings(BaseSettings):
     uid_epoch_sec: int = 1756684800
     # uid worker 编号（0~15），通过环境变量 UID_WORKER_ID 设置，多实例部署时互不相同
     uid_worker_id: int = 1
+    # uid 序列号位宽（默认 4 = 每 worker 每分钟最多 16 个，总位数恒 39 bits）。
+    # 开发/测试环境可放宽（如 7 = 每分钟 128 个）支撑灌数；⚠️ 变更位宽会改变对外
+    # ID 数值空间、与已发布 ID 可能重叠，仅限清库重建的环境启用，生产保持默认 4。
+    uid_sequence_bits: int = 4
 
     # ==================== moment_id（动态 ID，独立的短雪花 ID）====================
     # 与 uid 使用**不同的** epoch / worker 配置，避免两者在同一分钟内序列号碰撞
@@ -84,10 +102,18 @@ class Settings(BaseSettings):
     moment_id_epoch_sec: int = 1756771200
     # moment_id worker 编号（0~15），通过环境变量 MOMENT_ID_WORKER_ID 设置，多实例部署时互不相同
     moment_id_worker_id: int = 2
+    # moment_id 序列号位宽（默认 4 = 每 worker 每分钟最多 16 个，总位数恒 39 bits）。
+    # 开发/测试环境可放宽（如 7 = 每分钟 128 个）支撑灌数；⚠️ 变更位宽会改变对外
+    # ID 数值空间、与已发布 ID 可能重叠，仅限清库重建的环境启用，生产保持默认 4。
+    moment_id_sequence_bits: int = 4
     # topic_id epoch（秒级时间戳）：默认 2026-08-16 00:00:00 UTC+8，可通过环境变量 TOPIC_ID_EPOCH_SEC 覆盖
     topic_id_epoch_sec: int = 1756915200
     # topic_id worker 编号（0~15），通过环境变量 TOPIC_ID_WORKER_ID 设置，多实例部署时互不相同
     topic_id_worker_id: int = 3
+    # topic_id 序列号位宽（默认 4 = 每 worker 每分钟最多 16 个，总位数恒 39 bits）。
+    # 开发/测试环境可放宽（如 7 = 每分钟 128 个）支撑灌数；⚠️ 变更位宽会改变对外
+    # ID 数值空间、与已发布 ID 可能重叠，仅限清库重建的环境启用，生产保持默认 4。
+    topic_id_sequence_bits: int = 4
 
     # ==================== GeoIP（IP 属地解析）====================
     # GeoLite2 mmdb 数据库目录（含 GeoLite2-City.mmdb 等）。
@@ -104,6 +130,87 @@ class Settings(BaseSettings):
     notify_dispatch_interval_seconds: int = 60
     # 是否启用后台定时任务
     scheduler_enabled: bool = True
+
+    # ==================== EdgeRank 推荐排序（2.27.0）====================
+    # 公域 Feed（综合 Feed / 话题 Feed / 话题广场）的推荐排序算法：
+    #   score = (w_like·likeCount + w_comment·commentCount + w_repost·repostCount
+    #            + w_view·viewCount + w_favorite·favoriteCount) × decay(age)
+    #   decay(age) = 0.5 ** (age_seconds / half_life_seconds)
+    # 权重以 JSON 对象传入（环境变量），如
+    #   EDGERANK_FEED_WEIGHTS='{"like":1.0,"comment":1.5,"repost":2.0,"view":0.1,"favorite":1.2}'
+    # 综合 Feed 半衰期（秒）：内容保鲜期较长，默认 24h
+    edgerank_feed_half_life_seconds: int = 86400
+    edgerank_feed_weights: dict[str, float] = {
+        "like": 1.0,
+        "comment": 1.5,
+        "repost": 2.0,
+        "view": 0.1,
+        "favorite": 1.2,
+        "share": 0.8,
+    }
+    # 话题 Feed（/feed/topic/{id}?sort=hot）半衰期（秒）：话题热点时效性强，默认 6h，
+    # 评论/转发权重更高（话题讨论氛围）
+    edgerank_topic_feed_half_life_seconds: int = 21600
+    edgerank_topic_feed_weights: dict[str, float] = {
+        "like": 1.2,
+        "comment": 1.8,
+        "repost": 1.5,
+        "view": 0.05,
+        "favorite": 1.0,
+    }
+    # 话题广场 / 热搜半衰期（秒）：默认 12h；话题分 = Σ(w·log(count+1))·decay(pubTime)
+    edgerank_topic_square_half_life_seconds: int = 43200
+    edgerank_topic_square_weights: dict[str, float] = {
+        "dynCount": 1.0,
+        "viewCount": 0.6,
+        "isHot": 5.0,
+        "sortWeight": 2.0,
+    }
+    # 综合 Feed recommend 模式候选集：最近 N 小时内、上限 M 条（走 idx_dynamic_pubtime_visible）
+    edgerank_candidate_window_hours: int = 72
+    edgerank_candidate_limit: int = 300
+    # 总开关：False 时 recommend/hot 回退为时间倒序（打分函数返回时间等价分）
+    edgerank_enabled: bool = True
+    # ==================== EdgeRank 个性化（2.33.0）====================
+    # 综合页 recommend 对登录用户叠加个性化因子：score = base + Σ(w_personal·signal)。
+    # 三类信号（均为「加分」，不乘 decay，保证关注作者/偏好话题的新内容稳定靠前）：
+    #   w_follow          关注作者（msg_user_follow，最强）
+    #   w_liked_author    点赞过的作者（TMomentLike+TMoment，关注冷启动补充）
+    #   w_topic           互动过的话题（TMomentTopicRel）
+    # 未登录 / 开关关闭 → 退化为纯全局排序（与 2.32.0 一致）。
+    edgerank_personalized_enabled: bool = True
+    edgerank_personalized_follow_weight: float = 3.0
+    edgerank_personalized_liked_author_weight: float = 1.5
+    edgerank_personalized_topic_weight: float = 1.2
+    # 点赞历史回看条数（信号来源上限，防全量扫描；0 表示不加载点赞/话题信号）
+    edgerank_personalized_like_history_limit: int = 200
+    # ==================== EdgeRank 匿名随机（2.34.0）====================
+    # 未登录用户不以全局排序返回：以客户端 uniq_id 为随机种子派生一组扰动权重
+    # （每项 × [1±perturb_ratio]），不同匿名用户/会话看到不同排序；
+    # uniq_id 缺失时每次请求随机。
+    edgerank_anon_randomize_enabled: bool = True
+    edgerank_anon_perturb_ratio: float = 0.3
+    # ==================== EdgeRank 多维打分（2.35.0）====================
+    # content_quality 附加维度：
+    edgerank_engagement_weight: float = 0.5  # 互动率 (like+comment+repost)/max(view,1)，防僵尸爆款
+    edgerank_rich_weight: float = 0.4  # 内容丰富度（contentJson 含图片/视频/LINK 节点）
+    edgerank_forward_penalty: float = -0.6  # FORWARD 转发惩罚（负权重）
+    # fresh_bonus = w/(1+viewCount)：新内容冷启动，防被高互动旧内容埋没
+    edgerank_fresh_weight: float = 1.0
+    # feedback：点踩降权 = -w·dislike_ratio（dislike/(dislike+like)）
+    edgerank_dislike_penalty: float = 2.0
+    # 登录用户 last_clicklist 已互动作者/话题加权
+    edgerank_click_weight: float = 1.0
+    # author_signal：作者质量（moment_author_quality.avgEngagement）+ 刷屏惩罚
+    edgerank_author_quality_weight: float = 0.8
+    # 近 7 天发布量每超过该阈值 1 条惩罚分
+    edgerank_author_publish_threshold: int = 5
+    edgerank_author_spam_penalty: float = 0.2
+    # 2.37.0 通用维度：举报数降权（每 1 条 pending 举报扣分，按 resourceType+bizId 统计）
+    edgerank_report_penalty: float = 0.5
+    # 作者粉丝/等级（moment_author_quality.fansCount / currentLevel，定时任务聚合）
+    edgerank_fans_weight: float = 0.2  # log(1+fans)
+    edgerank_level_weight: float = 0.1  # currentLevel
 
     # ==================== 私信策略 ====================
     # 消息可撤回的时间窗口（秒），超过则不允许撤回
@@ -217,10 +324,22 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @property
+    def faststream_log_level_int(self) -> int:
+        """FastStream 日志级别字符串对应的 logging 级别整数（非法值回退 INFO）。"""
+        import logging
+
+        return getattr(logging, self.faststream_log_level.upper(), logging.INFO)
+
     def model_post_init(self, __context) -> None:
         """.env 中证书的换行符是字面 \n，需转为真实换行符才能被 PEM 解析。"""
         if self.casdoor_certificate and "\\n" in self.casdoor_certificate:
             self.casdoor_certificate = self.casdoor_certificate.replace("\\n", "\n")
+        # 防御：连接池总上限（pool_size + max_overflow）不得超过安全余量（100）。
+        # 曾出现 .env 误配 mysql_pool_size=10000 → 进程疯狂建连接打满 MySQL(1040 Too many connections)。
+        if self.mysql_pool_size + self.mysql_max_overflow > 100:
+            self.mysql_pool_size = 20
+            self.mysql_max_overflow = 30
 
     @property
     def mysql_sync_url(self) -> str:

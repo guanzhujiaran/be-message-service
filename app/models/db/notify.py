@@ -16,7 +16,8 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text
 from sqlmodel import Column, Field, SQLModel, UniqueConstraint
 
-from app.models.db.base import TimestampMixin, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import NotifyLevelEnum, NotifyStatusEnum, NotifyTargetTypeEnum
 
 
@@ -35,7 +36,7 @@ class NotifyMessage(TimestampMixin, table=True):
     # ---- 目标受众（按用户类型推送）----
     target_type: NotifyTargetTypeEnum = Field(
         default=NotifyTargetTypeEnum.ALL,
-        sa_type=str_enum_type(NotifyTargetTypeEnum),
+        sa_type=SAEnum(NotifyTargetTypeEnum),
         index=True,
         description="目标用户类型",
     )
@@ -47,12 +48,12 @@ class NotifyMessage(TimestampMixin, table=True):
 
     level: NotifyLevelEnum = Field(
         default=NotifyLevelEnum.NORMAL,
-        sa_type=str_enum_type(NotifyLevelEnum),
+        sa_type=SAEnum(NotifyLevelEnum),
         description="通知重要级别",
     )
     status: NotifyStatusEnum = Field(
         default=NotifyStatusEnum.DRAFT,
-        sa_type=str_enum_type(NotifyStatusEnum),
+        sa_type=SAEnum(NotifyStatusEnum),
         index=True,
         description="通知状态",
     )

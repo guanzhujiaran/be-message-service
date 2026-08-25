@@ -15,7 +15,8 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
-class UserActLogItem(SQLModel):
+from app.models.schemas.base import AutoStrMixin
+class UserActLogItem(SQLModel, AutoStrMixin):
     """单条登录 / 行为记录（TUserActInfoLog）。"""
 
     time: datetime = Field(description="行为发生时间（timezone-aware）")
@@ -25,14 +26,14 @@ class UserActLogItem(SQLModel):
     act_info: str = Field(default="login_succ", description="行为类型：login_succ / reg")
 
 
-class UserActLogListResp(SQLModel):
+class UserActLogListResp(SQLModel, AutoStrMixin):
     """登录记录列表（最近 7 天）。"""
 
     items: list[UserActLogItem] = Field(default_factory=list)
     has_more: bool = Field(default=False, description="是否还有下一页")
 
 
-class UserExpRecordItem(SQLModel):
+class UserExpRecordItem(SQLModel, AutoStrMixin):
     """单条经验变动记录（TUserExpRecord）。"""
 
     time: datetime = Field(description="经验增加时间（timezone-aware）")
@@ -42,7 +43,7 @@ class UserExpRecordItem(SQLModel):
     ref_date: str = Field(default="", description="行为引用日期 YYYY-MM-DD")
 
 
-class UserExpRecordListResp(SQLModel):
+class UserExpRecordListResp(SQLModel, AutoStrMixin):
     """经验记录列表（最近 7 天）。"""
 
     items: list[UserExpRecordItem] = Field(default_factory=list)

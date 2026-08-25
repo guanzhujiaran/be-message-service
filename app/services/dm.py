@@ -59,8 +59,9 @@ from app.services.setting import SettingService
 _PREVIEW_LEN = 100
 
 
-def make_session_key(a: int, b: int) -> str:
+def make_session_key(a: int | str, b: int | str) -> str:
     """会话键：小 mid_大 mid，保证双方算出的键一致。"""
+    a, b = int(a), int(b)
     lo, hi = (a, b) if a <= b else (b, a)
     return f"{lo}_{hi}"
 
@@ -90,7 +91,7 @@ class DmService:
             raise ValueError("不能给自己发送私信")
 
         session_key = make_session_key(sender_mid, receiver_mid)
-        msgkey = generate_msgkey()
+        msgkey = await generate_msgkey()
         msg_ts = parse_timestamp_ms(msgkey)
         preview = _preview(req.content, req.msg_type)
 
@@ -391,6 +392,8 @@ class DmService:
                     content_ready=ready,
                     created_at=r.created_at,
                     audit_state=r.audit_state,
+                    recalled_at=r.recalled_at,
+                    recalled_by=r.recalled_by,
                 )
             )
 
@@ -446,6 +449,10 @@ class DmService:
             return False, "消息不存在"
         if row.sender_uid != operator_mid:
             return False, "只能撤回自己发送的消息"
+        # 删除是单方面的：自己视角已删除（DELETED）的消息，撤回入口关闭，
+        # 对方视角不受影响（仍可见，但对方非发送者本就不可撤回）。
+        if row.msg_status is DmMsgStatusEnum.DELETED:
+            return False, "消息已删除，无法撤回"
         if row.msg_status is DmMsgStatusEnum.RECALLED:
             return True, "消息已撤回"
 
@@ -456,7 +463,8 @@ class DmService:
             return False, f"超过 {settings.dm_recall_window_seconds} 秒的消息不可撤回"
 
         now = datetime.now()
-        # 撤回是双向的：一次更新掉收发双方的索引行
+        # 撤回是双向的：一次更新掉收发双方的索引行，并记录撤回操作者，
+        # 双方聊天记录据此展示「你/对方撤回了一条消息」。
         await session.exec(  # type: ignore[call-overload]
             update(DmMessageIndex)
             .where(col(DmMessageIndex.msgkey) == msgkey)
@@ -464,6 +472,7 @@ class DmService:
                 msg_status=DmMsgStatusEnum.RECALLED,
                 content_preview="[消息已撤回]",
                 recalled_at=now,
+                recalled_by=operator_mid,
                 updated_at=now,
             )
         )

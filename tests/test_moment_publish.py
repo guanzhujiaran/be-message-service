@@ -12,15 +12,21 @@
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import select, text
+from sqlmodel import col, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
-from app.models.db import TMoment, TMomentAuditLog, TMomentStat
+from app.models.db import (
+    TMoment,
+    TMomentAuditLog,
+    TInteractionStat,
+    TResourceFeed,
+)
 from app.models.enums import (
+    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
@@ -147,7 +153,12 @@ async def _cleanup(moment_ids: list[int]) -> None:
     async with new_session() as s:
         for did in moment_ids:
             await s.exec(text(f"DELETE FROM TMomentAuditLog WHERE dynId = {did}"))
-            await s.exec(text(f"DELETE FROM TMomentStat WHERE dynId = {did}"))
+            await s.exec(
+                text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}")
+            )
+            await s.exec(
+                text(f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {did}")
+            )
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
         await s.commit()
 
@@ -160,7 +171,7 @@ async def _seed_dynamic(
     audit_status: MomentAuditStatusEnum = MomentAuditStatusEnum.NORMAL,
     repost_src: int | None = None,
 ) -> int:
-    did = generate_moment_id()
+    did = await generate_moment_id()
     now = __import__("datetime").datetime.now()
     reals = await fetch_real_dyns(1)
     content_text = reals[0].content_text if reals else "seed"
@@ -178,7 +189,18 @@ async def _seed_dynamic(
     )
     session.add(dyn)
     await session.flush()
-    session.add(TMomentStat(dynId=did))
+    # 2.36.0：计数统一 TInteractionStat + Feed 元数据 TResourceFeed
+    session.add(TInteractionStat(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=did))
+    session.add(
+        TResourceFeed(
+            bizType=InteractionBizTypeEnum.DYNAMIC,
+            bizId=did,
+            mid=mid,
+            pubTime=(now if audit_status is MomentAuditStatusEnum.NORMAL else None),
+            auditStatus=audit_status.value,
+            tags=[],
+        )
+    )
     await session.commit()
     return did
 
@@ -190,13 +212,19 @@ async def test_create_word_auditing():
     )
     async with new_session() as s:
         data = await MomentPublishService.create(s, D_MID, req)
-        assert data["auditStatus"] == "auditing"
+        assert data["auditStatus"] == MomentAuditStatusEnum.AUDITING
         assert data["dynType"] == "WORD"
-        # 统计子行已建
-        stat = (
-            await s.exec(select(TMomentStat).where(TMomentStat.dynId == data["dynId"]))
+        # 2.36.0：Feed 元数据行已建（计数表惰性）
+        feed = (
+            await s.exec(
+                select(TResourceFeed).where(
+                    col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TResourceFeed.bizId) == data["dynId"],
+                )
+            )
         ).one()
-        assert stat is not None
+        assert feed is not None
+        assert feed.auditStatus == MomentAuditStatusEnum.AUDITING.value
         # 审核日志已写
         log = (
             await s.exec(
@@ -227,7 +255,12 @@ async def test_create_forward_ok_and_no_repost_incr():
     async with new_session() as s:
         src = await _seed_dynamic(s, D_MID2, MomentTypeEnum.WORD)
         src_stat = (
-            await s.exec(select(TMomentStat).where(TMomentStat.dynId == src))
+            await s.exec(
+                select(TInteractionStat).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == src,
+                )
+            )
         ).one()
         before = src_stat.repostCount
         req = MomentCreateReq(
@@ -236,10 +269,15 @@ async def test_create_forward_ok_and_no_repost_incr():
             repostSrc={"dynId": src},
         )
         data = await MomentPublishService.create(s, D_MID, req)
-        assert data["auditStatus"] == "auditing"
+        assert data["auditStatus"] == MomentAuditStatusEnum.AUDITING
         # 创建时源动态 repostCount 不 +1（状态机触发点⑥）
         src_stat2 = (
-            await s.exec(select(TMomentStat).where(TMomentStat.dynId == src))
+            await s.exec(
+                select(TInteractionStat).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == src,
+                )
+            )
         ).one()
         assert src_stat2.repostCount == before
         await _cleanup([src, data["dynId"]])
@@ -254,7 +292,7 @@ async def test_edit_normal_forward_decrs_src():
         )
         # 模拟来源已被审核通过（normal）+ repostCount 已被 P6 加过 1
         await s.exec(
-            text(f"UPDATE TMomentStat SET repostCount = 1 WHERE dynId = {src}")
+            text(f"UPDATE TInteractionStat SET repostCount = 1 WHERE bizType = 1 AND bizId = {src}")
         )
         await s.commit()
 
@@ -265,10 +303,15 @@ async def test_edit_normal_forward_decrs_src():
         )
         data = await MomentPublishService.edit(s, D_MID, req)
         # 编辑后回 auditing
-        assert data["auditStatus"] == "auditing"
+        assert data["auditStatus"] == MomentAuditStatusEnum.AUDITING
         # 源动态 repostCount -1（触发点③）
         src_stat = (
-            await s.exec(select(TMomentStat).where(TMomentStat.dynId == src))
+            await s.exec(
+                select(TInteractionStat).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == src,
+                )
+            )
         ).one()
         assert src_stat.repostCount == 0
         await _cleanup([src, fwd])
@@ -281,7 +324,7 @@ async def test_remove_normal_forward_decrs_src():
             s, D_MID, MomentTypeEnum.FORWARD, repost_src=src
         )
         await s.exec(
-            text(f"UPDATE TMomentStat SET repostCount = 1 WHERE dynId = {src}")
+            text(f"UPDATE TInteractionStat SET repostCount = 1 WHERE bizType = 1 AND bizId = {src}")
         )
         await s.commit()
 
@@ -289,7 +332,12 @@ async def test_remove_normal_forward_decrs_src():
         assert data["success"] is True
         # 源动态 repostCount -1（触发点④）
         src_stat = (
-            await s.exec(select(TMomentStat).where(TMomentStat.dynId == src))
+            await s.exec(
+                select(TInteractionStat).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == src,
+                )
+            )
         ).one()
         assert src_stat.repostCount == 0
         # 软删标记

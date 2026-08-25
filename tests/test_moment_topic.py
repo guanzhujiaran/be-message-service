@@ -22,8 +22,13 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
-from app.models.db import TMoment, TMomentStat, TMomentTopic
-from app.models.enums import MomentAuditStatusEnum, MomentTopicAuditStatusEnum, MomentTypeEnum
+from app.models.db import TMoment, TMomentStat, TMomentTopic, TResourceFeed
+from app.models.enums import (
+    InteractionBizTypeEnum,
+    MomentAuditStatusEnum,
+    MomentTopicAuditStatusEnum,
+    MomentTypeEnum,
+)
 from app.models.schemas.moment import (
     MomentAtListResp,
     MomentAtSearchResp,
@@ -61,7 +66,27 @@ async def _bind_engine_per_test():
         expire_on_commit=False,
         autoflush=False,
     )
+    # pptr engine 也绑定当前事件循环：模块级单例绑定首个 loop，跨测试文件/
+    # 事件循环复用会报 "attached to a different loop"（与 test_moment_feed 一致）
+    pptr_engine = create_async_engine(
+        url=settings.postgres_pptr_url,
+        pool_pre_ping=True,
+        future=True,
+    )
+    db_mod.pptr_engine = pptr_engine
+    db_mod.pptr_session_maker = async_sessionmaker(
+        bind=pptr_engine,
+        class_=SQLModelAsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
     async with new_session() as s:
+        await s.exec(
+            text(
+                f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId IN "
+                f"(SELECT dynId FROM TMoment WHERE mid IN ({T_MID}, {T_MID2}))"
+            )
+        )
         await s.exec(
             text(
                 f"DELETE FROM TMomentStat WHERE dynId IN "
@@ -78,6 +103,7 @@ async def _bind_engine_per_test():
         await s.commit()
     yield
     await engine.dispose()
+    await pptr_engine.dispose()
 
 
 def _new_topic(
@@ -117,7 +143,7 @@ async def _seed_moment(
     lbs_lat: float | None = None,
     lbs_lng: float | None = None,
 ) -> int:
-    did = generate_moment_id()
+    did = await generate_moment_id()
     now = __import__("datetime").datetime.now()
     reals = await fetch_real_dyns(1)
     content_text = reals[0].content_text if reals else "seed"
@@ -139,6 +165,18 @@ async def _seed_moment(
     session.add(dyn)
     await session.flush()
     session.add(TMomentStat(dynId=did))
+    # 2.36.0：通用 Feed 元数据行（comprehensive_feed 推荐流候选来自本表，
+    # normal + pubTime 才会入候选；auditing 时不写 pubTime）
+    session.add(
+        TResourceFeed(
+            bizType=InteractionBizTypeEnum.DYNAMIC,
+            bizId=did,
+            mid=mid,
+            auditStatus=MomentAuditStatusEnum.NORMAL.value,
+            pubTime=now if audit_status is MomentAuditStatusEnum.NORMAL else None,
+            tags=[topic_id] if topic_id else [],
+        )
+    )
     await session.commit()
     return did
 
@@ -146,6 +184,7 @@ async def _seed_moment(
 async def _cleanup(topics: list[int], moment_ids: list[int]) -> None:
     async with new_session() as s:
         for did in moment_ids:
+            await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}"))
             await s.exec(text(f"DELETE FROM TMomentStat WHERE dynId = {did}"))
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
         for tid in topics:

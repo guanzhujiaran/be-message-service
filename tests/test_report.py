@@ -2,9 +2,9 @@
 
 覆盖：
 - `ReportBaseService.record_report` 幂等（一人一对象一次）；
-- 统一 `ReportService.report`：动态→`TMomentReport`、评论→`CommentReport`、用户空间→`TUserReport`
+- 统一 `ReportService.report`：动态→`TResourceReport`、评论→`CommentReport`、用户空间→`TUserReport`
   三类写入对应子表；pics 非法 / biz 对象不存在校验；
-- 动态举报达阈值（`report_threshold`）联动转 `TMoment` auditing；
+- 动态举报达阈值（`report_threshold`）仅「加入审核队列」（资源状态不变，2.40.0）；
 - 管理端 `list_reports` / `review`。
 
 测试用独立 mid / dynId 区间，避免与既有用例互相干扰；用例结束清理数据。
@@ -19,11 +19,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
+from app.models.db import EventMessage, TResourceFeed
 from app.models.db.comment import CommentReport
-from app.models.db.moment import TMoment, TMomentReport
+from app.models.db.moment import TMoment, TResourceReport
 from app.models.db.report import TUserReport
 from app.models.enums import (
     CommentTypeEnum,
+    EventTypeEnum,
+    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
 )
@@ -40,7 +43,7 @@ _UP = 906_101
 REP_A = 906_102
 REP_B = 906_103
 REP_C = 906_104
-_TABLES = ("TMomentReport", "msg_comment_report", "TUserReport")
+_TABLES = ("TResourceReport", "msg_comment_report", "TUserReport")
 _seq = 0
 
 
@@ -88,7 +91,15 @@ async def _cleanup(oid: int) -> None:
             await s.exec(
                 text(f"DELETE FROM {t} WHERE bizId = {oid}")
             )
+        await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizId = {oid}"))
         await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
+        # 处置/审核通知事件（作者/举报人/审核员区间）
+        await s.exec(
+            text(
+                f"DELETE FROM msg_event WHERE mid IN ({_MID}, {REP_A}, {REP_B}, {REP_C}) "
+                f"OR actor_mid IN ({REP_A}, {REP_B}, {REP_C})"
+            )
+        )
         await s.commit()
 
 
@@ -163,7 +174,7 @@ async def test_record_report_idempotent():
 
 
 async def test_report_dynamic_writes_tmoment_report():
-    """举报动态 → 写入 TMomentReport（bizType=dynamic）。"""
+    """举报动态 → 写入 TResourceReport（bizType=dynamic）。"""
     oid = _next_oid()
     try:
         async with new_session() as s:
@@ -177,11 +188,310 @@ async def test_report_dynamic_writes_tmoment_report():
         async with new_session() as s:
             rows = (
                 await s.exec(
-                    select(TMomentReport).where(col(TMomentReport.bizId) == oid)
+                    select(TResourceReport).where(col(TResourceReport.bizId) == oid)
                 )
             ).all()
             assert len(rows) == 1
             assert rows[0].bizType == "dynamic"
+    finally:
+        await _cleanup(oid)
+
+
+async def test_review_resolve_hide_hides_moment():
+    """2.38.0：审核 resolve + resourceAction=hide → 被举报动态下架（TMoment hidden）。"""
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            await _create_moment(s, oid)
+        async with new_session() as s:
+            created, _ = await ReportService.report(
+                s, REP_A, ReportCreateReq(bizType="dynamic", bizId=oid, reasonType=1)
+            )
+            assert created is True
+            pk = (
+                await s.exec(
+                    select(TResourceReport.pk).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+        async with new_session() as s:
+            await ReportService.review(
+                s, REP_B,
+                ReportReviewReq(
+                    reportPk=int(pk),
+                    decision="resolve",
+                    resourceAction="hide",
+                    remark="违规下架",
+                ),
+            )
+        async with new_session() as s:
+            dyn = (
+                await s.exec(select(TMoment).where(col(TMoment.dynId) == oid))
+            ).one()
+            assert dyn.auditStatus is MomentAuditStatusEnum.HIDDEN  # 管理员下架
+            rec = (
+                await s.exec(
+                    select(TResourceReport).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+            assert rec.auditStatus == "resolved"  # 举报已处置
+            # 2.38.0：作者（mid 非空）收到 HIDE 下架通知
+            evs = (
+                await s.exec(
+                    select(EventMessage).where(
+                        EventMessage.mid == _MID,
+                        EventMessage.event_type == EventTypeEnum.HIDE,
+                    )
+                )
+            ).all()
+            assert len(evs) >= 1
+            assert evs[0].actor_mid == REP_B
+    finally:
+        await _cleanup(oid)
+
+
+async def test_report_resource_lottery_not_hideable():
+    """2.40.0：lottery（crawler 资源）举报 + resolve/hide → **拒绝下架**（Feed 保持 normal）。"""
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            now = __import__("datetime").datetime.now()
+            s.add(
+                TResourceFeed(
+                    bizType=InteractionBizTypeEnum.LOTTERY,
+                    bizId=oid,
+                    mid=_MID,
+                    pubTime=now,
+                    auditStatus="normal",
+                    tags=[],
+                )
+            )
+            await s.commit()
+        async with new_session() as s:
+            created, _ = await ReportService.report(
+                s, REP_A,
+                ReportCreateReq(
+                    bizType="resource", bizId=oid,
+                    resourceType=int(InteractionBizTypeEnum.LOTTERY),
+                    reasonType=1,
+                ),
+            )
+            assert created is True
+            pk = (
+                await s.exec(
+                    select(TResourceReport.pk).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+        async with new_session() as s:
+            await ReportService.review(
+                s, REP_B,
+                ReportReviewReq(
+                    reportPk=int(pk), decision="resolve", resourceAction="hide"
+                ),
+            )
+        async with new_session() as s:
+            feed = (
+                await s.exec(
+                    select(TResourceFeed).where(
+                        col(TResourceFeed.bizType) == InteractionBizTypeEnum.LOTTERY,
+                        col(TResourceFeed.bizId) == oid,
+                    )
+                )
+            ).one()
+            assert feed.auditStatus == "normal"  # 不允许下架 → 仍在 Feed
+            rec = (
+                await s.exec(
+                    select(TResourceReport).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+            assert rec.auditStatus == "resolved"  # 举报已处置（仅记录）
+    finally:
+        await _cleanup(oid)
+
+
+async def test_report_resource_rpa_hide_exits_feed():
+    """2.40.0：rpa_* 资源举报 + resolve/hide → Feed 层退出（允许下架）。"""
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            now = __import__("datetime").datetime.now()
+            s.add(
+                TResourceFeed(
+                    bizType=InteractionBizTypeEnum.RPA_ACTION,
+                    bizId=oid,
+                    mid=_MID,
+                    pubTime=now,
+                    auditStatus="normal",
+                    tags=[],
+                )
+            )
+            await s.commit()
+        async with new_session() as s:
+            created, _ = await ReportService.report(
+                s, REP_A,
+                ReportCreateReq(
+                    bizType="resource", bizId=oid,
+                    resourceType=int(InteractionBizTypeEnum.RPA_ACTION),
+                    reasonType=1,
+                ),
+            )
+            assert created is True
+            pk = (
+                await s.exec(
+                    select(TResourceReport.pk).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+        async with new_session() as s:
+            await ReportService.review(
+                s, REP_B,
+                ReportReviewReq(
+                    reportPk=int(pk), decision="resolve", resourceAction="hide"
+                ),
+            )
+        async with new_session() as s:
+            feed = (
+                await s.exec(
+                    select(TResourceFeed).where(
+                        col(TResourceFeed.bizType) == InteractionBizTypeEnum.RPA_ACTION,
+                        col(TResourceFeed.bizId) == oid,
+                    )
+                )
+            ).one()
+            assert feed.auditStatus == "hidden"  # rpa 允许下架 → 退出 Feed
+    finally:
+        await _cleanup(oid)
+
+
+async def test_report_list_aggregates_report_count():
+    """2.40.0：管理端列表 ReportItem.reportCount 聚合同对象累计举报次数。"""
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            await _create_moment(s, oid)
+        async with new_session() as s:
+            for mid in (REP_A, REP_B, REP_C):
+                created, _ = await ReportService.report(
+                    s, mid,
+                    ReportCreateReq(bizType="dynamic", bizId=oid, reasonType=1),
+                )
+                assert created is True
+        async with new_session() as s:
+            resp = await ReportService.list_reports(
+                s, biz_type="dynamic", page=1, page_size=50
+            )
+            targets = [it for it in resp.items if it.bizId == oid]
+            assert targets and targets[0].reportCount >= 3  # 被举报次数
+            assert targets[0].reportPeopleCount >= 3  # 举报人数（去重）
+    finally:
+        await _cleanup(oid)
+
+
+async def test_report_review_reject_notifies_reporter():
+    """2.40.0：审核 reject（举报不成立）→ 举报记录移出队列 + 通知举报人。"""
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            await _create_moment(s, oid)
+        async with new_session() as s:
+            created, _ = await ReportService.report(
+                s, REP_A, ReportCreateReq(bizType="dynamic", bizId=oid, reasonType=1)
+            )
+            assert created is True
+            pk = (
+                await s.exec(
+                    select(TResourceReport.pk).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+        async with new_session() as s:
+            await ReportService.review(
+                s, REP_B,
+                ReportReviewReq(reportPk=int(pk), decision="reject", remark="举报不成立"),
+            )
+        async with new_session() as s:
+            rec = (
+                await s.exec(
+                    select(TResourceReport).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+            assert rec.auditStatus == "rejected"  # 移出待处理队列
+            evs = (
+                await s.exec(
+                    select(EventMessage).where(
+                        EventMessage.mid == REP_A,
+                        EventMessage.event_type == EventTypeEnum.REPORT_REJECT,
+                    )
+                )
+            ).all()
+            assert len(evs) >= 1  # 通知举报人"举报未通过"
+            assert evs[0].actor_mid == REP_B
+    finally:
+        await _cleanup(oid)
+
+
+async def test_report_review_resolve_notifies_reporter():
+    """2.40.0：审核 resolve（举报成立）→ 通知举报人（REPORT_RESOLVED）。"""
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            await _create_moment(s, oid)
+        async with new_session() as s:
+            created, _ = await ReportService.report(
+                s, REP_A, ReportCreateReq(bizType="dynamic", bizId=oid, reasonType=1)
+            )
+            assert created is True
+            pk = (
+                await s.exec(
+                    select(TResourceReport.pk).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+        async with new_session() as s:
+            await ReportService.review(
+                s, REP_B,
+                ReportReviewReq(reportPk=int(pk), decision="resolve", remark="成立"),
+            )
+        async with new_session() as s:
+            rec = (
+                await s.exec(
+                    select(TResourceReport).where(
+                        col(TResourceReport.bizId) == oid,
+                        col(TResourceReport.reportMid) == REP_A,
+                    )
+                )
+            ).one()
+            assert rec.auditStatus == "resolved"
+            evs = (
+                await s.exec(
+                    select(EventMessage).where(
+                        EventMessage.mid == REP_A,
+                        EventMessage.event_type == EventTypeEnum.REPORT_RESOLVED,
+                    )
+                )
+            ).all()
+            assert len(evs) >= 1  # 通知举报人"举报成立"
+            assert evs[0].actor_mid == REP_B
     finally:
         await _cleanup(oid)
 
@@ -277,7 +587,7 @@ async def test_report_missing_dynamic():
 
 
 async def test_report_dynamic_threshold_linkage():
-    """动态举报达阈值（3）联动转 TMoment auditing。"""
+    """2.40.0：动态举报达阈值（3）仅加入审核队列——资源状态不变（不下架）。"""
     oid = _next_oid()
     try:
         async with new_session() as s:
@@ -290,12 +600,13 @@ async def test_report_dynamic_threshold_linkage():
                 )
                 assert created is True
             if reporter == REP_C:
-                assert triggered is True  # 第 3 次达阈值触发转审
+                assert triggered is True  # 第 3 次达阈值（仅队列标记）
         async with new_session() as s:
             dyn = (
                 await s.exec(select(TMoment).where(col(TMoment.dynId) == oid))
             ).one()
-            assert dyn.auditStatus == MomentAuditStatusEnum.AUDITING
+            # 2.40.0：达阈值不下架、不转审核——资源状态保持 normal，等管理员在队列中决定
+            assert dyn.auditStatus == MomentAuditStatusEnum.NORMAL
     finally:
         await _cleanup(oid)
 

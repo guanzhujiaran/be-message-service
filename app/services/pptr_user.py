@@ -612,7 +612,7 @@ class PptrUserService:
                 parsed_birthday = None
 
         # uid 为 0 时由雪花算法生成；非 0 时保留原值（外部指定 uid 的场景）
-        _uid = uid if uid else generate_uid()
+        _uid = uid if uid else await generate_uid()
 
         info = PptrUserInfo(
             uid=_uid,
@@ -891,6 +891,16 @@ class PptrUserService:
                 )
             ).first()
             if d is None:
+                # 父表 TUserInfo 不存在时禁止插入 TUserDetail（mid 外键强约束
+                # `TUserDetail_mid_fkey` 指向 TUserInfo.uid），提前给出明确业务错误，
+                # 避免落入 ForeignKeyViolationError（对运营/人工介入排查更友好）。
+                parent = (
+                    await s.exec(
+                        select(PptrUserInfo.uid).where(PptrUserInfo.uid == int(uid))
+                    )
+                ).first()
+                if parent is None:
+                    raise ValueError(f"用户不存在 uid={uid}，无法写入公开资料")
                 # 昵称唯一校验（新建行）：不可与已有用户重复
                 if uname and await PptrUserService._uname_taken(
                     uname, self_uid=int(uid), session=s

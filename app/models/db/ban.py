@@ -18,7 +18,8 @@ from datetime import datetime
 from sqlalchemy import BIGINT, JSON, Column, Index
 from sqlmodel import Field, SQLModel
 
-from app.models.db.base import TimestampMixin, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
 
 
@@ -50,7 +51,7 @@ class UserBan(TimestampMixin, table=True):
 
     # 时长类型：temporary 限时 / permanent 永久
     duration_type: BanDurationTypeEnum = Field(
-        sa_type=str_enum_type(BanDurationTypeEnum),
+        sa_type=SAEnum(BanDurationTypeEnum),
         description="封禁时长类型：temporary 限时 / permanent 永久",
     )
     # 限时封禁天数（temporary 时必填，>=1）；permanent 时为 None
@@ -67,7 +68,7 @@ class UserBan(TimestampMixin, table=True):
     # 记录状态：active 生效中 / lifted 已解封
     status: BanStatusEnum = Field(
         default=BanStatusEnum.ACTIVE,
-        sa_type=str_enum_type(BanStatusEnum),
+        sa_type=SAEnum(BanStatusEnum),
         index=True,
         description="封禁状态：active 生效中 / lifted 已解封",
     )

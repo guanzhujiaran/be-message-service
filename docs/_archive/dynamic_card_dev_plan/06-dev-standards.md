@@ -8,7 +8,7 @@
 
 - **必须** 使用 `SQLModel` 定义表，列名（`name`）使用 camelCase，Python 属性名与数据库列名完全一致
 - **必须** 时间戳统一继承 `TimestampMixin`（`datetime` + `default_factory=datetime.now` + `onupdate=datetime.now()`），**禁止**使用 `DateTime(timezone=True)` / `func.now()`
-- **必须** 使用 `Field` 参数声明 `nullable`/`primary_key`/`max_length`，`sa_type` 仅用于 `BIGINT`/`JSON`/`int_enum_type()`/`str_enum_type()` 等特殊类型
+- **必须** 使用 `Field` 参数声明 `nullable`/`primary_key`/`max_length`，`sa_type` 仅用于 `BIGINT`/`JSON`/`IntEnum()`/`StrEnum()` 等特殊类型
 - `sa_column_kwargs` **仅**用于：`server_default`、`onupdate`、`comment`、`autoincrement`
 - **禁止** 使用 `sa_column=Column(...)` 方式
 - 所有外键**必须**显式声明 `ForeignKeyConstraint`；**跨库用户字段（`mid`/`accusedMid`/`reportMid`/`operatorMid）仅存 BIGINT，不建外键**（用户主数据在 pptr Postgres，渲染时只读回查）；同库自引用（如 `repostSrcDynId → dynId`）用 `SET NULL`
@@ -17,8 +17,8 @@
 
 ### 6.2 枚举规范
 
-- 数据库存储 **int** 的枚举使用 `IntEnum`（如 `MomentTypeEnum`），列类型用 `int_enum_type(EnumCls)` 映射 `INTEGER` 存 value
-- 数据库存储 **VARCHAR** 的枚举使用 `StrEnum`（如 `AuditStatusEnum`），列类型用 `str_enum_type(EnumCls)` 映射 `VARCHAR` 存 value
+- 数据库存储 **int** 的枚举使用 `IntEnum`（如 `MomentTypeEnum`），列类型用 `IntEnum(EnumCls)` 映射 `INTEGER` 存 value
+- 数据库存储 **VARCHAR** 的枚举使用 `StrEnum`（如 `AuditStatusEnum`），列类型用 `StrEnum(EnumCls)` 映射 `VARCHAR` 存 value
 - 对外接口响应**必须**将 int 值转换为 string 名称（如 `dynType: 6 → "WORD"`）
 - 新增枚举**必须**追加到 `__all__` 并在 `app/models/db/__init__.py` / `app/models/__init__.py` 中导出
 

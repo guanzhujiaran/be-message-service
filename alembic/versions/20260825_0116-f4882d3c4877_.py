@@ -1,19 +1,18 @@
-"""base_all_tables
+"""empty message
 
-Revision ID: e11993cc8480
+Revision ID: f4882d3c4877
 Revises: 
-Create Date: 2026-08-17 20:57:44.188442
+Create Date: 2026-08-25 01:16:21.534756
 
 """
 from typing import Sequence, Union
-
+import sqlmodel
 from alembic import op
 import sqlalchemy as sa
-import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'e11993cc8480'
+revision: str = 'f4882d3c4877'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -37,25 +36,63 @@ def upgrade() -> None:
     op.create_index('idx_fav_folder_mid_created', 'TFavoriteFolder', ['mid', sa.literal_column('created_at DESC')], unique=False)
     op.create_index(op.f('ix_TFavoriteFolder_created_at'), 'TFavoriteFolder', ['created_at'], unique=False)
     op.create_index(op.f('ix_TFavoriteFolder_mid'), 'TFavoriteFolder', ['mid'], unique=False)
+    op.create_table('TFolderCoverAudit',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('folderId', sa.BIGINT(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.Column('oldCover', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=True),
+    sa.Column('newCover', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=False),
+    sa.Column('auditStatus', sa.Enum('PENDING', 'APPROVED', 'REJECTED', name='foldercoverauditstatusenum'), nullable=False),
+    sa.Column('auditOperatorMid', sa.BIGINT(), nullable=True),
+    sa.Column('auditReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('auditedAt', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('pk', name='TFolderCoverAudit_pkey'),
+    comment='收藏夹封面审核：pending/approved/rejected，通过后写入 cover_url'
+    )
+    op.create_index('idx_folder_cover_audit_folder_status', 'TFolderCoverAudit', ['folderId', 'auditStatus'], unique=False)
+    op.create_index('idx_folder_cover_audit_status_created', 'TFolderCoverAudit', ['auditStatus', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index(op.f('ix_TFolderCoverAudit_created_at'), 'TFolderCoverAudit', ['created_at'], unique=False)
     op.create_table('TInteractionStat',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('bizType', sa.Integer(), autoincrement=False, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), autoincrement=False, nullable=False),
     sa.Column('bizId', sa.BIGINT(), autoincrement=False, nullable=False),
-    sa.Column('likeCount', sa.BIGINT(), nullable=False),
-    sa.Column('favoriteCount', sa.BIGINT(), nullable=False),
+    sa.Column('likeCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('favoriteCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('viewCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('commentCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('repostCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('shareCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('dislikeCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('coinCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
     sa.PrimaryKeyConstraint('bizType', 'bizId', name='TInteractionStat_pkey'),
-    comment='通用交互计数：非动态资源(bizType,bizId)的收藏/点赞计数'
+    comment='通用交互计数：非动态资源(bizType,bizId)的收藏/点赞/浏览计数'
     )
     op.create_index(op.f('ix_TInteractionStat_created_at'), 'TInteractionStat', ['created_at'], unique=False)
+    op.create_table('TInteractionViewLog',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.Column('viewCount', sa.Integer(), nullable=False),
+    sa.Column('lastViewAt', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+    sa.PrimaryKeyConstraint('pk', name='TInteractionViewLog_pkey'),
+    sa.UniqueConstraint('bizType', 'bizId', 'mid', name='TInteractionViewLog_bizType_bizId_mid_key'),
+    comment='通用浏览去重表：每用户每资源一行，lastViewAt 判自然日窗口'
+    )
+    op.create_index(op.f('ix_TInteractionViewLog_created_at'), 'TInteractionViewLog', ['created_at'], unique=False)
     op.create_table('TMoment',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('dynId', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('dynType', sa.Integer(), nullable=False),
+    sa.Column('dynType', sa.Enum('FORWARD', 'WORD', name='momenttypeenum'), nullable=False),
     sa.Column('bizRid', sa.BIGINT(), nullable=True),
-    sa.Column('bizType', sa.Integer(), nullable=True),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), nullable=True),
     sa.Column('contentText', sa.Text(), nullable=True),
     sa.Column('contentJson', sa.JSON(), nullable=False),
     sa.Column('repostSrcDynId', sa.BIGINT(), nullable=True),
@@ -66,11 +103,11 @@ def upgrade() -> None:
     sa.Column('lbsLng', sa.Float(), nullable=True),
     sa.Column('ipLocation', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('ipIsp', sqlmodel.sql.sqltypes.AutoString(length=128), nullable=True),
-    sa.Column('visibleScope', sa.Integer(), nullable=False),
+    sa.Column('visibleScope', sa.Enum('PUBLIC', 'FOLLOWER', 'SELF', 'CHARGE', name='momentvisiblescopeenum'), nullable=False),
     sa.Column('closeComment', sa.Integer(), nullable=False),
     sa.Column('upChooseComment', sa.Integer(), nullable=False),
-    sa.Column('foldType', sa.Integer(), nullable=False),
-    sa.Column('auditStatus', sa.Enum('auditing', 'normal', 'rejected', 'hidden', name='momentauditstatusenum', native_enum=False, length=16), nullable=False),
+    sa.Column('foldType', sa.Enum('NONE', 'USER_FOLD', 'OVER_FREQ_FOLD', name='momentfoldtypeenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=False),
     sa.Column('auditRejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('isTop', sa.Integer(), nullable=False),
     sa.Column('topTime', sa.DateTime(), nullable=True),
@@ -93,7 +130,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Integer(), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('dynId', sa.BIGINT(), nullable=True),
     sa.Column('folderId', sa.BIGINT(), nullable=False),
@@ -123,7 +160,7 @@ def upgrade() -> None:
     sa.Column('isHot', sa.Integer(), nullable=False),
     sa.Column('sortWeight', sa.Integer(), nullable=False),
     sa.Column('creatorMid', sa.BIGINT(), nullable=False),
-    sa.Column('auditStatus', sa.Enum('auditing', 'normal', 'rejected', name='momenttopicauditstatusenum', native_enum=False, length=16), nullable=False),
+    sa.Column('auditStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', name='momenttopicauditstatusenum'), nullable=False),
     sa.Column('auditRejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('pubTime', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('topicId', name='TMomentTopic_pkey'),
@@ -133,6 +170,46 @@ def upgrade() -> None:
     op.create_index('idx_topic_audit_created', 'TMomentTopic', ['auditStatus', sa.literal_column('created_at DESC')], unique=False)
     op.create_index('idx_topic_creator_created', 'TMomentTopic', ['creatorMid', sa.literal_column('created_at DESC')], unique=False)
     op.create_index(op.f('ix_TMomentTopic_created_at'), 'TMomentTopic', ['created_at'], unique=False)
+    op.create_table('TResourceFeed',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), autoincrement=False, nullable=False),
+    sa.Column('bizId', sa.BIGINT(), autoincrement=False, nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=True),
+    sa.Column('pubTime', sa.DateTime(), nullable=True),
+    sa.Column('auditStatus', sqlmodel.sql.sqltypes.AutoString(length=32), nullable=False),
+    sa.Column('tags', sa.JSON(), nullable=False),
+    sa.Column('deletedAt', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('bizType', 'bizId', name='TResourceFeed_pkey'),
+    comment='通用资源 Feed 元数据：bizType+bizId 统一入 Feed 的排序元数据'
+    )
+    op.create_index('idx_resfeed_mid_pubtime', 'TResourceFeed', ['mid', sa.literal_column('pubTime DESC')], unique=False)
+    op.create_index('idx_resfeed_status_pubtime', 'TResourceFeed', ['auditStatus', sa.literal_column('pubTime DESC')], unique=False)
+    op.create_index(op.f('ix_TResourceFeed_created_at'), 'TResourceFeed', ['created_at'], unique=False)
+    op.create_table('TResourceReport',
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('resourceType', sa.BIGINT(), nullable=True),
+    sa.Column('accusedMid', sa.BIGINT(), nullable=False),
+    sa.Column('reportMid', sa.BIGINT(), nullable=False),
+    sa.Column('reasonType', sa.Integer(), nullable=False),
+    sa.Column('reasonDesc', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('pics', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('auditStatus', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('auditRemark', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('auditAdminMid', sa.BIGINT(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.Column('updated_at', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('pk'),
+    sa.UniqueConstraint('reportMid', 'bizType', 'bizId', name='TResourceReport_reportMid_bizType_bizId_key'),
+    comment='通用资源举报表：任意资源(bizType+bizId)可举报（继承 ReportBase）'
+    )
+    op.create_index('idx_tresource_report_biz', 'TResourceReport', ['bizType', 'bizId'], unique=False)
+    op.create_index(op.f('ix_TResourceReport_bizId'), 'TResourceReport', ['bizId'], unique=False)
+    op.create_index(op.f('ix_TResourceReport_bizType'), 'TResourceReport', ['bizType'], unique=False)
+    op.create_index(op.f('ix_TResourceReport_reportMid'), 'TResourceReport', ['reportMid'], unique=False)
+    op.create_index(op.f('ix_TResourceReport_resourceType'), 'TResourceReport', ['resourceType'], unique=False)
     op.create_table('TUserAvatarAudit',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -140,7 +217,7 @@ def upgrade() -> None:
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('oldAvatar', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=True),
     sa.Column('newAvatar', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=False),
-    sa.Column('auditStatus', sa.Enum('pending', 'approved', 'rejected', name='avatarauditstatusenum', native_enum=False, length=16), nullable=False),
+    sa.Column('auditStatus', sa.Enum('PENDING', 'APPROVED', 'REJECTED', name='avatarauditstatusenum'), nullable=False),
     sa.Column('auditOperatorMid', sa.BIGINT(), nullable=True),
     sa.Column('auditReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('auditedAt', sa.DateTime(), nullable=True),
@@ -163,6 +240,7 @@ def upgrade() -> None:
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('bizType', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('resourceType', sa.BIGINT(), nullable=True),
     sa.Column('accusedMid', sa.BIGINT(), nullable=False),
     sa.Column('reportMid', sa.BIGINT(), nullable=False),
     sa.Column('reasonType', sa.Integer(), nullable=False),
@@ -181,6 +259,20 @@ def upgrade() -> None:
     op.create_index(op.f('ix_TUserReport_bizId'), 'TUserReport', ['bizId'], unique=False)
     op.create_index(op.f('ix_TUserReport_bizType'), 'TUserReport', ['bizType'], unique=False)
     op.create_index(op.f('ix_TUserReport_reportMid'), 'TUserReport', ['reportMid'], unique=False)
+    op.create_index(op.f('ix_TUserReport_resourceType'), 'TUserReport', ['resourceType'], unique=False)
+    op.create_table('moment_author_quality',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), autoincrement=False, nullable=False),
+    sa.Column('avgEngagement', sa.Float(), nullable=False),
+    sa.Column('recentPublishCount', sa.Integer(), nullable=False),
+    sa.Column('violationCount', sa.Integer(), nullable=False),
+    sa.Column('fansCount', sa.BIGINT(), nullable=False),
+    sa.Column('currentLevel', sa.BIGINT(), nullable=False),
+    sa.PrimaryKeyConstraint('mid', name='moment_author_quality_pkey'),
+    comment='作者质量聚合：平均互动率/近7天发布量/违规数'
+    )
+    op.create_index(op.f('ix_moment_author_quality_created_at'), 'moment_author_quality', ['created_at'], unique=False)
     op.create_table('msg_admin',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -200,7 +292,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('rpid', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('action', sa.Integer(), nullable=False),
+    sa.Column('action', sa.Enum('NONE', 'LIKE', 'HATE', name='commentactionenum'), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('rpid', 'mid', name='uq_comment_action_rpid_mid')
     )
@@ -214,7 +306,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('rpid', sa.BIGINT(), nullable=False),
     sa.Column('oid', sa.BIGINT(), nullable=False),
-    sa.Column('type', sa.Enum('dynamic', 'article', 'lottery', 'feedback', 'other', name='commenttypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('type', sa.Enum('DYNAMIC', 'ARTICLE', 'LOTTERY', 'FEEDBACK', 'OTHER', name='commenttypeenum'), nullable=False),
     sa.Column('from_mid', sa.BIGINT(), nullable=False),
     sa.Column('at_mid', sa.BIGINT(), nullable=False),
     sa.Column('notified', sa.Boolean(), nullable=False),
@@ -247,7 +339,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('rpid', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('oid', sa.BIGINT(), nullable=False),
-    sa.Column('type', sa.Enum('dynamic', 'article', 'lottery', 'feedback', 'other', name='commenttypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('type', sa.Enum('DYNAMIC', 'ARTICLE', 'LOTTERY', 'FEEDBACK', 'OTHER', name='commenttypeenum'), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('root', sa.BIGINT(), nullable=False),
     sa.Column('parent', sa.BIGINT(), nullable=False),
@@ -258,7 +350,7 @@ def upgrade() -> None:
     sa.Column('hate_count', sa.Integer(), nullable=False),
     sa.Column('rcount', sa.Integer(), nullable=False),
     sa.Column('hot_score', sa.Float(), nullable=False),
-    sa.Column('state', sa.Enum('normal', 'auditing', 'rejected', 'hidden', 'deleted', name='commentstateenum', native_enum=False, length=16), nullable=False),
+    sa.Column('state', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='commentstateenum'), nullable=False),
     sa.Column('attr', sa.Integer(), nullable=False),
     sa.PrimaryKeyConstraint('rpid')
     )
@@ -277,6 +369,7 @@ def upgrade() -> None:
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('bizType', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('resourceType', sa.BIGINT(), nullable=True),
     sa.Column('accusedMid', sa.BIGINT(), nullable=False),
     sa.Column('reportMid', sa.BIGINT(), nullable=False),
     sa.Column('reasonType', sa.Integer(), nullable=False),
@@ -295,17 +388,18 @@ def upgrade() -> None:
     op.create_index(op.f('ix_msg_comment_report_bizId'), 'msg_comment_report', ['bizId'], unique=False)
     op.create_index(op.f('ix_msg_comment_report_bizType'), 'msg_comment_report', ['bizType'], unique=False)
     op.create_index(op.f('ix_msg_comment_report_reportMid'), 'msg_comment_report', ['reportMid'], unique=False)
+    op.create_index(op.f('ix_msg_comment_report_resourceType'), 'msg_comment_report', ['resourceType'], unique=False)
     op.create_table('msg_comment_subject',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('oid', sa.BIGINT(), nullable=False),
-    sa.Column('type', sa.Enum('dynamic', 'article', 'lottery', 'feedback', 'other', name='commenttypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('type', sa.Enum('DYNAMIC', 'ARTICLE', 'LOTTERY', 'FEEDBACK', 'OTHER', name='commenttypeenum'), nullable=False),
     sa.Column('up_mid', sa.BIGINT(), nullable=False),
     sa.Column('root_count', sa.Integer(), nullable=False),
     sa.Column('all_count', sa.Integer(), nullable=False),
     sa.Column('floor_seq', sa.Integer(), nullable=False),
-    sa.Column('state', sa.Enum('normal', 'closed', name='commentsubjectstateenum', native_enum=False, length=16), nullable=False),
+    sa.Column('state', sa.Enum('NORMAL', 'CLOSED', name='commentsubjectstateenum'), nullable=False),
     sa.Column('top_rpid', sa.BIGINT(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('oid', 'type', name='uq_comment_subject_oid_type')
@@ -322,7 +416,7 @@ def upgrade() -> None:
     sa.Column('session_key', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('sender_uid', sa.BIGINT(), nullable=False),
     sa.Column('receiver_uid', sa.BIGINT(), nullable=False),
-    sa.Column('msg_type', sa.Enum('text', 'image', 'system', name='dmmsgtypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('msg_type', sa.Enum('TEXT', 'IMAGE', 'SYSTEM', name='dmmsgtypeenum'), nullable=False),
     sa.Column('content', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('msg_ts', sa.BIGINT(), nullable=False),
     sa.Column('retry_count', sa.Integer(), nullable=False),
@@ -344,13 +438,14 @@ def upgrade() -> None:
     sa.Column('session_key', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('msgkey', sa.BIGINT(), nullable=False),
     sa.Column('sender_uid', sa.BIGINT(), nullable=False),
-    sa.Column('msg_type', sa.Enum('text', 'image', 'system', name='dmmsgtypeenum', native_enum=False, length=16), nullable=False),
-    sa.Column('msg_status', sa.Integer(), nullable=False),
+    sa.Column('msg_type', sa.Enum('TEXT', 'IMAGE', 'SYSTEM', name='dmmsgtypeenum'), nullable=False),
+    sa.Column('msg_status', sa.Enum('NORMAL', 'RECALLED', 'DELETED', name='dmmsgstatusenum'), nullable=False),
     sa.Column('msg_ts', sa.BIGINT(), nullable=False),
     sa.Column('content_preview', sqlmodel.sql.sqltypes.AutoString(length=256), nullable=True),
     sa.Column('content_ready', sa.Boolean(), nullable=False),
-    sa.Column('audit_state', sa.Enum('normal', 'auditing', 'rejected', 'hidden', name='dmauditstateenum', native_enum=False, length=16), nullable=False),
+    sa.Column('audit_state', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', name='dmauditstateenum'), nullable=False),
     sa.Column('recalled_at', sa.DateTime(), nullable=True),
+    sa.Column('recalled_by', sa.BIGINT(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('owner_mid', 'msgkey', name='uq_dm_index_owner_msgkey')
     )
@@ -370,7 +465,7 @@ def upgrade() -> None:
     sa.Column('owner_mid', sa.BIGINT(), nullable=False),
     sa.Column('talker_mid', sa.BIGINT(), nullable=False),
     sa.Column('session_key', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
-    sa.Column('session_type', sa.Integer(), nullable=False),
+    sa.Column('session_type', sa.Enum('SINGLE', name='dmsessiontypeenum'), nullable=False),
     sa.Column('talker_name', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('talker_avatar', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
     sa.Column('last_msgkey', sa.BIGINT(), nullable=True),
@@ -379,7 +474,7 @@ def upgrade() -> None:
     sa.Column('last_sender_uid', sa.BIGINT(), nullable=True),
     sa.Column('unread_count', sa.Integer(), nullable=False),
     sa.Column('ack_msgkey', sa.BIGINT(), nullable=True),
-    sa.Column('relation', sa.Enum('normal', 'stranger', name='dmrelationenum', native_enum=False, length=16), nullable=False),
+    sa.Column('relation', sa.Enum('NORMAL', 'STRANGER', name='dmrelationenum'), nullable=False),
     sa.Column('is_top', sa.Boolean(), nullable=False),
     sa.Column('is_muted', sa.Boolean(), nullable=False),
     sa.Column('is_deleted', sa.Boolean(), nullable=False),
@@ -399,11 +494,12 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('event_type', sa.Enum('like', 'reply', 'at', 'audit_reject', name='eventtypeenum', native_enum=False, length=16), nullable=False),
-    sa.Column('source_type', sa.Enum('video', 'dynamic', 'article', 'comment', 'lottery', 'other', name='sourcetypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('event_type', sa.Enum('LIKE', 'REPLY', 'AT', 'AUDIT_REJECT', 'HIDE', 'REPORT_REJECT', 'REPORT_RESOLVED', name='eventtypeenum'), nullable=False),
+    sa.Column('source_type', sa.Enum('VIDEO', 'DYNAMIC', 'ARTICLE', 'COMMENT', 'LOTTERY', 'OTHER', name='sourcetypeenum'), nullable=False),
     sa.Column('source_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('source_title', sqlmodel.sql.sqltypes.AutoString(length=256), nullable=True),
     sa.Column('source_cover', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
+    sa.Column('biz_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('actor_mid', sa.BIGINT(), nullable=False),
     sa.Column('actor_name', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('actor_avatar', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
@@ -430,7 +526,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('event_type', sa.Enum('like', 'reply', 'at', 'audit_reject', name='eventtypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('event_type', sa.Enum('LIKE', 'REPLY', 'AT', 'AUDIT_REJECT', 'HIDE', 'REPORT_REJECT', 'REPORT_RESOLVED', name='eventtypeenum'), nullable=False),
     sa.Column('last_read_id', sa.Integer(), nullable=False),
     sa.Column('last_read_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
@@ -445,10 +541,10 @@ def upgrade() -> None:
     sa.Column('title', sqlmodel.sql.sqltypes.AutoString(length=256), nullable=False),
     sa.Column('content', sa.Text(), nullable=True),
     sa.Column('jump_url', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
-    sa.Column('target_type', sa.Enum('all', 'role', 'level', 'vip', 'custom', name='notifytargettypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('target_type', sa.Enum('ALL', 'ROLE', 'LEVEL', 'VIP', 'CUSTOM', name='notifytargettypeenum'), nullable=False),
     sa.Column('target_value', sqlmodel.sql.sqltypes.AutoString(length=2048), nullable=True),
-    sa.Column('level', sa.Enum('normal', 'important', 'urgent', name='notifylevelenum', native_enum=False, length=16), nullable=False),
-    sa.Column('status', sa.Enum('draft', 'published', 'revoked', name='notifystatusenum', native_enum=False, length=16), nullable=False),
+    sa.Column('level', sa.Enum('NORMAL', 'IMPORTANT', 'URGENT', name='notifylevelenum'), nullable=False),
+    sa.Column('status', sa.Enum('DRAFT', 'PUBLISHED', 'REVOKED', name='notifystatusenum'), nullable=False),
     sa.Column('publish_at', sa.DateTime(), nullable=False),
     sa.Column('expire_at', sa.DateTime(), nullable=True),
     sa.Column('creator_mid', sa.BIGINT(), nullable=False),
@@ -512,11 +608,11 @@ def upgrade() -> None:
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('ban_services', sa.JSON(), nullable=True),
     sa.Column('reason', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=False),
-    sa.Column('duration_type', sa.Enum('temporary', 'permanent', name='bandurationtypeenum', native_enum=False, length=16), nullable=False),
+    sa.Column('duration_type', sa.Enum('TEMPORARY', 'PERMANENT', name='bandurationtypeenum'), nullable=False),
     sa.Column('duration_days', sa.Integer(), nullable=True),
     sa.Column('banned_until', sa.DateTime(), nullable=True),
     sa.Column('operator_mid', sa.BIGINT(), nullable=False),
-    sa.Column('status', sa.Enum('active', 'lifted', name='banstatusenum', native_enum=False, length=16), nullable=False),
+    sa.Column('status', sa.Enum('ACTIVE', 'LIFTED', name='banstatusenum'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_user_ban_mid_status', 'msg_user_ban', ['mid', 'status'], unique=False)
@@ -530,7 +626,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('target_mid', sa.BIGINT(), nullable=False),
-    sa.Column('status', sa.Enum('following', 'blocked', name='followstatusenum', native_enum=False, length=16), nullable=False),
+    sa.Column('status', sa.Enum('FOLLOWING', 'BLOCKED', name='followstatusenum'), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('mid', 'target_mid', name='uq_user_follow_mid_target')
     )
@@ -564,10 +660,10 @@ def upgrade() -> None:
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('dynId', sa.BIGINT(), nullable=False),
     sa.Column('operatorMid', sa.BIGINT(), nullable=False),
-    sa.Column('operatorRole', sa.Enum('author', 'admin', name='momentauditlogoperatorroleenum', native_enum=False, length=16), nullable=False),
-    sa.Column('fromStatus', sa.Enum('auditing', 'normal', 'rejected', 'hidden', name='momentauditstatusenum', native_enum=False, length=16), nullable=True),
-    sa.Column('toStatus', sa.Enum('auditing', 'normal', 'rejected', 'hidden', name='momentauditstatusenum', native_enum=False, length=16), nullable=False),
-    sa.Column('actionType', sa.Enum('create', 'edit', 'approve', 'reject', 'resubmit', 'delete', name='momentauditlogactionenum', native_enum=False, length=16), nullable=False),
+    sa.Column('operatorRole', sa.Enum('AUTHOR', 'ADMIN', name='momentauditlogoperatorroleenum'), nullable=False),
+    sa.Column('fromStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=True),
+    sa.Column('toStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=False),
+    sa.Column('actionType', sa.Enum('CREATE', 'EDIT', 'APPROVE', 'REJECT', 'RESUBMIT', 'DELETE', name='momentauditlogactionenum'), nullable=False),
     sa.Column('rejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('remark', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('clientIp', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
@@ -580,11 +676,28 @@ def upgrade() -> None:
     op.create_index('idx_audit_log_admin_created', 'TMomentAuditLog', ['operatorMid', sa.literal_column('created_at DESC')], unique=False)
     op.create_index('idx_audit_log_dynid_created', 'TMomentAuditLog', ['dynId', sa.literal_column('created_at DESC')], unique=False)
     op.create_index(op.f('ix_TMomentAuditLog_created_at'), 'TMomentAuditLog', ['created_at'], unique=False)
+    op.create_table('TMomentDislike',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('dynId', sa.BIGINT(), nullable=True),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentDislike_dynId_fkey', ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('pk', name='TMomentDislike_pkey'),
+    sa.UniqueConstraint('bizType', 'bizId', 'mid', name='TMomentDislike_bizType_bizId_mid_key'),
+    comment='点踩明细：一人一踩，唯一约束(bizType,bizId,mid)保证幂等双写'
+    )
+    op.create_index('idx_dislike_biz', 'TMomentDislike', ['bizType', 'bizId'], unique=False)
+    op.create_index('idx_dislike_mid_time', 'TMomentDislike', ['mid', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index(op.f('ix_TMomentDislike_created_at'), 'TMomentDislike', ['created_at'], unique=False)
+    op.create_index(op.f('ix_TMomentDislike_dynId'), 'TMomentDislike', ['dynId'], unique=False)
     op.create_table('TMomentLike',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Integer(), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('dynId', sa.BIGINT(), nullable=True),
     sa.Column('mid', sa.BIGINT(), nullable=False),
@@ -598,79 +711,57 @@ def upgrade() -> None:
     op.create_index('idx_like_mid_time', 'TMomentLike', ['mid', sa.literal_column('created_at DESC')], unique=False)
     op.create_index(op.f('ix_TMomentLike_created_at'), 'TMomentLike', ['created_at'], unique=False)
     op.create_index(op.f('ix_TMomentLike_dynId'), 'TMomentLike', ['dynId'], unique=False)
-    op.create_table('TMomentReport',
-    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('bizId', sa.BIGINT(), nullable=False),
-    sa.Column('accusedMid', sa.BIGINT(), nullable=False),
-    sa.Column('reportMid', sa.BIGINT(), nullable=False),
-    sa.Column('reasonType', sa.Integer(), nullable=False),
-    sa.Column('reasonDesc', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
-    sa.Column('pics', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('auditStatus', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('auditRemark', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
-    sa.Column('auditAdminMid', sa.BIGINT(), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.Column('updated_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['bizId'], ['TMoment.dynId'], name='TMomentReport_bizId_fkey', ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('pk'),
-    sa.UniqueConstraint('reportMid', 'bizType', 'bizId', name='TMomentReport_reportMid_bizType_bizId_key'),
-    comment='动态举报表：bizType=dynamic，bizId=dynId（继承 ReportBase）'
-    )
-    op.create_index('idx_tmoment_report_biz', 'TMomentReport', ['bizType', 'bizId'], unique=False)
-    op.create_index(op.f('ix_TMomentReport_bizId'), 'TMomentReport', ['bizId'], unique=False)
-    op.create_index(op.f('ix_TMomentReport_bizType'), 'TMomentReport', ['bizType'], unique=False)
-    op.create_index(op.f('ix_TMomentReport_reportMid'), 'TMomentReport', ['reportMid'], unique=False)
     op.create_table('TMomentStat',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('dynId', sa.BIGINT(), autoincrement=False, nullable=False),
-    sa.Column('likeCount', sa.BIGINT(), nullable=False),
-    sa.Column('commentCount', sa.BIGINT(), nullable=False),
-    sa.Column('repostCount', sa.BIGINT(), nullable=False),
-    sa.Column('viewCount', sa.BIGINT(), nullable=False),
-    sa.Column('shareCount', sa.BIGINT(), nullable=False),
-    sa.Column('coinCount', sa.BIGINT(), nullable=False),
-    sa.Column('favoriteCount', sa.BIGINT(), nullable=False),
+    sa.Column('likeCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('dislikeCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('commentCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('repostCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('viewCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('shareCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('coinCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
+    sa.Column('favoriteCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
     sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentStat_dynId_fkey', ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('dynId', name='TMomentStat_pkey'),
     comment='动态统计表：计数直接存数字字段，明细表做幂等，原子 UPDATE ±1'
     )
     op.create_index(op.f('ix_TMomentStat_created_at'), 'TMomentStat', ['created_at'], unique=False)
-    op.create_table('TMomentViewLog',
+    op.create_table('TMomentTopicRel',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('dynId', sa.BIGINT(), nullable=False),
-    sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('refDate', sqlmodel.sql.sqltypes.AutoString(length=10), nullable=False),
-    sa.Column('viewCount', sa.Integer(), nullable=False),
-    sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentViewLog_dynId_fkey', ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('pk', name='TMomentViewLog_pkey'),
-    sa.UniqueConstraint('dynId', 'mid', 'refDate', name='TMomentViewLog_dynId_mid_refDate_key'),
-    comment='动态浏览去重表：同用户同天同动态只计一次浏览量'
+    sa.Column('topicId', sa.BIGINT(), nullable=False),
+    sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentTopicRel_dynId_fkey', ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('pk', name='TMomentTopicRel_pkey'),
+    sa.UniqueConstraint('dynId', 'topicId', name='TMomentTopicRel_dynId_topicId_key'),
+    comment='动态-话题多对多关系：一条动态多话题（上限5），TMoment.topicId=主话题'
     )
-    op.create_index(op.f('ix_TMomentViewLog_created_at'), 'TMomentViewLog', ['created_at'], unique=False)
+    op.create_index('idx_topic_rel_topic', 'TMomentTopicRel', ['topicId', 'dynId'], unique=False)
+    op.create_index(op.f('ix_TMomentTopicRel_created_at'), 'TMomentTopicRel', ['created_at'], unique=False)
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_index(op.f('ix_TMomentViewLog_created_at'), table_name='TMomentViewLog')
-    op.drop_table('TMomentViewLog')
+    op.drop_index(op.f('ix_TMomentTopicRel_created_at'), table_name='TMomentTopicRel')
+    op.drop_index('idx_topic_rel_topic', table_name='TMomentTopicRel')
+    op.drop_table('TMomentTopicRel')
     op.drop_index(op.f('ix_TMomentStat_created_at'), table_name='TMomentStat')
     op.drop_table('TMomentStat')
-    op.drop_index(op.f('ix_TMomentReport_reportMid'), table_name='TMomentReport')
-    op.drop_index(op.f('ix_TMomentReport_bizType'), table_name='TMomentReport')
-    op.drop_index(op.f('ix_TMomentReport_bizId'), table_name='TMomentReport')
-    op.drop_index('idx_tmoment_report_biz', table_name='TMomentReport')
-    op.drop_table('TMomentReport')
     op.drop_index(op.f('ix_TMomentLike_dynId'), table_name='TMomentLike')
     op.drop_index(op.f('ix_TMomentLike_created_at'), table_name='TMomentLike')
     op.drop_index('idx_like_mid_time', table_name='TMomentLike')
     op.drop_index('idx_like_biz', table_name='TMomentLike')
     op.drop_table('TMomentLike')
+    op.drop_index(op.f('ix_TMomentDislike_dynId'), table_name='TMomentDislike')
+    op.drop_index(op.f('ix_TMomentDislike_created_at'), table_name='TMomentDislike')
+    op.drop_index('idx_dislike_mid_time', table_name='TMomentDislike')
+    op.drop_index('idx_dislike_biz', table_name='TMomentDislike')
+    op.drop_table('TMomentDislike')
     op.drop_index(op.f('ix_TMomentAuditLog_created_at'), table_name='TMomentAuditLog')
     op.drop_index('idx_audit_log_dynid_created', table_name='TMomentAuditLog')
     op.drop_index('idx_audit_log_admin_created', table_name='TMomentAuditLog')
@@ -752,6 +843,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_msg_comment_subject_oid'), table_name='msg_comment_subject')
     op.drop_index(op.f('ix_msg_comment_subject_created_at'), table_name='msg_comment_subject')
     op.drop_table('msg_comment_subject')
+    op.drop_index(op.f('ix_msg_comment_report_resourceType'), table_name='msg_comment_report')
     op.drop_index(op.f('ix_msg_comment_report_reportMid'), table_name='msg_comment_report')
     op.drop_index(op.f('ix_msg_comment_report_bizType'), table_name='msg_comment_report')
     op.drop_index(op.f('ix_msg_comment_report_bizId'), table_name='msg_comment_report')
@@ -784,6 +876,9 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_msg_admin_mid'), table_name='msg_admin')
     op.drop_index(op.f('ix_msg_admin_created_at'), table_name='msg_admin')
     op.drop_table('msg_admin')
+    op.drop_index(op.f('ix_moment_author_quality_created_at'), table_name='moment_author_quality')
+    op.drop_table('moment_author_quality')
+    op.drop_index(op.f('ix_TUserReport_resourceType'), table_name='TUserReport')
     op.drop_index(op.f('ix_TUserReport_reportMid'), table_name='TUserReport')
     op.drop_index(op.f('ix_TUserReport_bizType'), table_name='TUserReport')
     op.drop_index(op.f('ix_TUserReport_bizId'), table_name='TUserReport')
@@ -795,6 +890,16 @@ def downgrade() -> None:
     op.drop_index('idx_avatar_audit_status_created', table_name='TUserAvatarAudit')
     op.drop_index('idx_avatar_audit_mid_created', table_name='TUserAvatarAudit')
     op.drop_table('TUserAvatarAudit')
+    op.drop_index(op.f('ix_TResourceReport_resourceType'), table_name='TResourceReport')
+    op.drop_index(op.f('ix_TResourceReport_reportMid'), table_name='TResourceReport')
+    op.drop_index(op.f('ix_TResourceReport_bizType'), table_name='TResourceReport')
+    op.drop_index(op.f('ix_TResourceReport_bizId'), table_name='TResourceReport')
+    op.drop_index('idx_tresource_report_biz', table_name='TResourceReport')
+    op.drop_table('TResourceReport')
+    op.drop_index(op.f('ix_TResourceFeed_created_at'), table_name='TResourceFeed')
+    op.drop_index('idx_resfeed_status_pubtime', table_name='TResourceFeed')
+    op.drop_index('idx_resfeed_mid_pubtime', table_name='TResourceFeed')
+    op.drop_table('TResourceFeed')
     op.drop_index(op.f('ix_TMomentTopic_created_at'), table_name='TMomentTopic')
     op.drop_index('idx_topic_creator_created', table_name='TMomentTopic')
     op.drop_index('idx_topic_audit_created', table_name='TMomentTopic')
@@ -816,8 +921,14 @@ def downgrade() -> None:
     op.drop_index('idx_dynamic_biz', table_name='TMoment')
     op.drop_index('idx_dynamic_auditing_created', table_name='TMoment')
     op.drop_table('TMoment')
+    op.drop_index(op.f('ix_TInteractionViewLog_created_at'), table_name='TInteractionViewLog')
+    op.drop_table('TInteractionViewLog')
     op.drop_index(op.f('ix_TInteractionStat_created_at'), table_name='TInteractionStat')
     op.drop_table('TInteractionStat')
+    op.drop_index(op.f('ix_TFolderCoverAudit_created_at'), table_name='TFolderCoverAudit')
+    op.drop_index('idx_folder_cover_audit_status_created', table_name='TFolderCoverAudit')
+    op.drop_index('idx_folder_cover_audit_folder_status', table_name='TFolderCoverAudit')
+    op.drop_table('TFolderCoverAudit')
     op.drop_index(op.f('ix_TFavoriteFolder_mid'), table_name='TFavoriteFolder')
     op.drop_index(op.f('ix_TFavoriteFolder_created_at'), table_name='TFavoriteFolder')
     op.drop_index('idx_fav_folder_mid_created', table_name='TFavoriteFolder')

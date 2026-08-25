@@ -23,10 +23,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.sharding import generate_moment_id
 from app.models.db import (
     TFavoriteFolder,
+    TFolderCoverAudit,
     TMomentFavorite,
     TUserFavoriteSetting,
 )
-from app.models.enums import InteractionBizTypeEnum
+from app.models.enums import FolderCoverAuditStatusEnum, InteractionBizTypeEnum
+from app.services.avatar_check import verify_avatar_url
+from app.services.folder_cover_audit import FolderCoverAuditService
 from app.services.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
     InteractionResourceValidator,
@@ -61,7 +64,7 @@ class FavoriteService:
         if row is not None:
             return row.folder_id
         # 并发兜底：另一请求刚创建了默认夹
-        folder_id = generate_moment_id()
+        folder_id = await generate_moment_id()
         session.add(
             TFavoriteFolder(
                 folder_id=folder_id,
@@ -95,21 +98,38 @@ class FavoriteService:
         name: str,
         description: str | None = None,
         cover_url: str | None = None,
-    ) -> int:
-        """创建收藏夹，返回 folder_id。"""
-        folder_id = generate_moment_id()
+    ) -> tuple[int, str | None]:
+        """创建收藏夹，返回 (folder_id, cover_audit_status)。
+
+        `cover_url` 非空时（2.28.0 起）先下载校验（复用头像校验：http/https、1s 内下载、
+        ≤1MB、Content-Type image/*），校验失败抛 ValueError（路由层 422）；校验通过后
+        **不直接写入 `cover_url`**，而是插入 `TFolderCoverAudit` pending 记录（先审后发，
+        审核通过后才公开封面），`cover_audit_status` 返回 `"pending"`；未传封面时返回 None。
+        """
+        cover_audit_status: str | None = None
+        if cover_url:
+            ok, reason = await verify_avatar_url(cover_url, label="封面")
+            if not ok:
+                raise ValueError(reason)
+        folder_id = await generate_moment_id()
         session.add(
             TFavoriteFolder(
                 folder_id=folder_id,
                 mid=mid,
                 name=name.strip() or "未命名收藏夹",
                 description=description,
-                cover_url=cover_url,
                 is_default=0,
             )
         )
-        await session.commit()
-        return folder_id
+        if cover_url:
+            # submit 内部 commit（同事务提交收藏夹 + 审核记录）
+            await FolderCoverAuditService.submit(
+                session, uid=mid, folder_id=folder_id, new_cover=cover_url, old_cover=None
+            )
+            cover_audit_status = "pending"
+        else:
+            await session.commit()
+        return folder_id, cover_audit_status
 
     @staticmethod
     async def update_folder(
@@ -119,8 +139,15 @@ class FavoriteService:
         name: str | None = None,
         description: str | None = None,
         cover_url: str | None = None,
-    ) -> None:
-        """更新收藏夹（名称/描述/封面；仅本人可改）。"""
+    ) -> str | None:
+        """更新收藏夹（名称/描述/封面；仅本人可改）。返回 cover_audit_status。
+
+        `cover_url` 语义（2.28.0 起）：
+        - **非空 URL**：先下载校验（复用头像校验，失败 ValueError），再进入封面审核
+          （插入 `TFolderCoverAudit` pending，不直接写 `cover_url`），返回 `"pending"`；
+        - **空字符串**：清除封面（直接清 `cover_url`，不经审核，无内容风险）；
+        - **None（未传）**：不修改封面。
+        """
         row = (
             await session.exec(
                 select(TFavoriteFolder).where(
@@ -135,10 +162,29 @@ class FavoriteService:
             row.name = name.strip() or "未命名收藏夹"
         if description is not None:
             row.description = description or None
-        if cover_url is not None:
-            row.cover_url = cover_url or None
-        session.add(row)
-        await session.commit()
+        cover_audit_status: str | None = None
+        if cover_url:
+            ok, reason = await verify_avatar_url(cover_url, label="封面")
+            if not ok:
+                raise ValueError(reason)
+            # 进入封面审核（pending），不直接写公开封面
+            await FolderCoverAuditService.submit(
+                session,
+                uid=mid,
+                folder_id=folder_id,
+                new_cover=cover_url,
+                old_cover=row.cover_url,
+            )
+            cover_audit_status = "pending"
+        elif cover_url == "":
+            # 空串清除封面：直接清公开封面（不经审核）
+            row.cover_url = None
+            session.add(row)
+            await session.commit()
+        else:
+            session.add(row)
+            await session.commit()
+        return cover_audit_status
 
     @staticmethod
     async def delete_folder(
@@ -191,7 +237,7 @@ class FavoriteService:
 
     @staticmethod
     async def list_folders(session: AsyncSession, mid: int) -> list[dict]:
-        """列出我的收藏夹（含各夹收藏数，倒序）。"""
+        """列出我的收藏夹（含各夹收藏数，倒序；2.28.0 起每项含 coverAuditStatus）。"""
         rows = (
             await session.exec(
                 select(
@@ -207,6 +253,20 @@ class FavoriteService:
                 .order_by(col(TFavoriteFolder.is_default).desc(), col(TFavoriteFolder.folder_id).desc())
             )
         ).all()
+        # 批量回填该用户全部夹的 pending 封面审核标记（一次 IN，无 N+1）
+        folder_ids = [row[0].folder_id for row in rows]
+        pending_folder_ids: set[int] = set()
+        if folder_ids:
+            pending_rows = (
+                await session.exec(
+                    select(TFolderCoverAudit.folderId).where(
+                        col(TFolderCoverAudit.mid) == mid,
+                        col(TFolderCoverAudit.auditStatus) == FolderCoverAuditStatusEnum.PENDING,
+                        col(TFolderCoverAudit.folderId).in_(folder_ids),
+                    )
+                )
+            ).all()
+            pending_folder_ids = {int(x) for x in pending_rows}
         return [
             {
                 "folderId": str(row[0].folder_id),
@@ -215,6 +275,7 @@ class FavoriteService:
                 "coverUrl": row[0].cover_url,
                 "isDefault": bool(row[0].is_default),
                 "favoriteCount": int(row[1] or 0),
+                "coverAuditStatus": "pending" if row[0].folder_id in pending_folder_ids else None,
             }
             for row in rows
         ]

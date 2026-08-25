@@ -26,15 +26,16 @@ class TInteractionStat(InteractionStatBase, TimestampMixin, table=True):
 
 
 class TInteractionViewLog(InteractionViewLogBase, TimestampMixin, table=True):
-    """通用浏览去重表（2.23.0）：非动态资源（lottery / rpa_*）同用户同天同资源只计一次 Stat 浏览量。"""
+    """通用浏览去重表（2.23.0；2.42.0 每用户每资源一行）：非动态资源同用户同资源只一行，
+    ``lastViewAt`` 记录最后访问时间，跨自然日再次访问才给 Stat.viewCount +1。"""
 
     __tablename__ = "TInteractionViewLog"
     __table_args__ = (
         PrimaryKeyConstraint("pk", name="TInteractionViewLog_pkey"),
         UniqueConstraint(
-            "bizType", "bizId", "mid", "refDate", name="TInteractionViewLog_bizType_bizId_mid_refDate_key"
+            "bizType", "bizId", "mid", name="TInteractionViewLog_bizType_bizId_mid_key"
         ),
-        {"extend_existing": True, "comment": "通用浏览去重表：同用户同天同非动态资源只计一次浏览量"},
+        {"extend_existing": True, "comment": "通用浏览去重表：每用户每资源一行，lastViewAt 判自然日窗口"},
     )
 
 

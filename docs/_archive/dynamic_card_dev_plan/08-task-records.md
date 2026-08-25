@@ -11,7 +11,7 @@
 | 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
 |---|---|---|---|---|
 | P1-T1 | 新增Moment 相关枚举（MomentTypeEnum MVP 仅 WORD/FORWARD；AuditStatusEnum 等） | 完成 | 2026-08-10 | 在 enums.py 新增 8 个枚举：MomentTypeEnum / MomentAuditStatusEnum / MomentVisibleScopeEnum / MomentFoldTypeEnum / MomentReportReasonEnum / MomentReportAuditStatusEnum / MomentAuditLogActionEnum / MomentAuditLogOperatorRoleEnum，均追加 __all__ 导出 |
-| P1-T2 | 创建 dynamic_db.py ORM 模型（7 表：TMoment / TMomentStat / TMomentLike / TMomentTopic / TMomentViewLog / TMomentReport / TMomentAuditLog） | 完成 | 2026-08-10 | 落于 MySQL 主库：`app/models/db/moment.py`，对齐 app/models/db 规范（TimestampMixin 时间戳、JSON 正文、int_enum_type/str_enum_type 枚举列、mid 系仅存 BIGINT 不建跨库 FK、repostSrcDynId 自引用 SET NULL） |
+| P1-T2 | 创建 dynamic_db.py ORM 模型（7 表：TMoment / TMomentStat / TMomentLike / TMomentTopic / TMomentViewLog / TMomentReport / TMomentAuditLog） | 完成 | 2026-08-10 | 落于 MySQL 主库：`app/models/db/moment.py`，对齐 app/models/db 规范（TimestampMixin 时间戳、JSON 正文、IntEnum/StrEnum 枚举列、mid 系仅存 BIGINT 不建跨库 FK、repostSrcDynId 自引用 SET NULL） |
 | P1-T3 | 在 __init__.py 中导出新模型 | 完成 | 2026-08-10 | 在 app/models/db/__init__.py 导入并导出 7 个Moment模型 |
 | P1-T4 | 创建 Alembic 迁移脚本（建表 + 索引 + FK） | 完成 | 2026-08-10 | alembic/versions/20260810_0300-a1b2c3d4e5f6_add_dynamic_card_tables.py，down_revision=1444c17689f6（be-message MySQL 主库分支） |
 | P1-T5 | 验证迁移脚本执行 | 完成 | 2026-08-10 | alembic heads/history 确认链 1444c17689f6→a1b2c3d4e5f6(head) 完整；7 表注册 SQLModel.metadata、自引用 FK 存在、dynType=_IntEnumColumn / contentJson=JSON 类型正确；ruff lint 全绿 |
@@ -287,4 +287,61 @@
 | P23-T2 | 等级徽章 SVG 接入 | 完成 | 2026-08-18 | `space/user_level_0~6.svg`（B 站风格单色完整版，规范格式 `width="100%" height="100%" fill="currentColor"`）`?component` import；`LEVEL_BADGES` 数组（Lv0~Lv6） |
 | P23-T3 | 模板渲染 + computed | 完成 | 2026-08-18 | `levelBadge` computed：`targetUser.level`（0~6）动态选图，越界/未知返回 undefined；模板用户名右侧 `<component :is="levelBadge" class="w-6 h-6">` + `title="等级 Lv.N"`；数据复用后端 `space/info` 的 `SpaceInfoResp.level`（`TUserLevel.current_level`） |
 | P23-T4 | 验证与回归 | 完成 | 2026-08-18 | 浏览器实测（mock level=5）：徽章渲染 1 个 SVG、`title="等级 Lv.5"`；lint 0 诊断；7 个徽章 SVG vite 编译全部 200 |
+
+### Phase 24（2.28.0 收藏夹封面「大小控制 + 先审后发」：对齐头像审核模式）
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P24-T1 | 计划书更新 | 完成 | 2026-08-21 | README changelog 新增 2.28.0；07-decisions 新增决策 #31（收藏夹封面大小控制 + 先审后发）；04-database 新增 §4.8.1 `TFolderCoverAudit`；05-api 收藏夹接口语义更新 + 封面审核接口；03-phases 新增 Phase 24 |
+| P24-T2 | 数据模型 + 枚举 + 迁移 | 完成 | 2026-08-21 | 新增 `app/models/db/folder_cover_audit.py`（`TFolderCoverAudit`：folderId/mid/oldCover/newCover/auditStatus/auditOperatorMid/auditReason/auditedAt + `idx_folder_cover_audit_status_created`/`idx_folder_cover_audit_folder_status`）+ `FolderCoverAuditStatusEnum`（pending/approved/rejected）+ Alembic 迁移 `20260821_1400-a2b4c6d8e0f2_add_tfolder_cover_audit.py`（down=933be090d6a9，`alembic upgrade head` 已执行，表结构与索引验证无误） |
+| P24-T3 | 封面校验复用 + 收藏夹服务改造 | 完成 | 2026-08-21 | `avatar_check.verify_avatar_url` 新增 `label` 参数（默认"头像"）；`FavoriteService.create_folder`/`update_folder` 非空 `coverUrl` 先下载校验（失败 ValueError，路由层 422）再经 `FolderCoverAuditService.submit` 进 pending（不写 cover_url），返回 `coverAuditStatus`；空串清除封面直接清 cover_url；`list_folders` 批量一次 IN 回填各夹 `coverAuditStatus`（pending 标记）；`FavoriteFolderResp` 新增 `coverAuditStatus` 字段 |
+| P24-T4 | 审核服务 + 管理端接口 + 用户侧 mine | 完成 | 2026-08-21 | `app/services/folder_cover_audit.py`（`FolderCoverAuditService`：submit 同夹 pending 覆盖/pending_list/approve 同事务写 cover_url + 通知/reject 保持原封面 + 原因 + 通知/mine）+ `app/api/folder_cover_audit.py`（前缀 `/api/v1/favorite/folder/cover/audit`：`GET /list`/`POST /approve`/`POST /reject` RootUser + `GET /mine` CurrentUser），`main.py` 注册；`app/api/favorite.py` create/update 路由适配（ValueError→422，收藏夹不存在→400） |
+| P24-T5 | 清理 + 单测 | 完成 | 2026-08-21 | `cleanup_favorite` 注销清理同步删除 `TFolderCoverAudit`；新增 `tests/test_folder_cover_audit.py` 13 项全通过（创建/更新封面进 pending、封面不落库、旧 pending 覆盖、校验失败抛错且无残留、空串清除、approve 写 cover_url + 通知、reject 保持原封面 + 原因 + 通知、mine、pending 列表仅 pending、重复审核拒绝）；头像既有测试 17 项回归通过 |
+
+### Phase 24.1（2.28.1 PATCH 图片 URL 校验增加文件后缀名判断：防攻击）
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P24.1-T1 | 计划书更新 | 完成 | 2026-08-21 | README changelog 新增 2.28.1；版本号 PATCH 0→1；决策 #31 校验规则补充「文件后缀名白名单」 |
+| P24.1-T2 | 后缀名校验实现 | 完成 | 2026-08-21 | `avatar_check.verify_avatar_url` 在协议校验后、下载前新增后缀名校验：`urllib.parse.urlparse` 提取路径（忽略 query）取后缀小写，必须命中白名单 `{".jpg",".jpeg",".png",".gif",".webp",".bmp",".avif"}`，否则拒绝（不发起网络请求）；头像/收藏夹封面共用一处加固 |
+| P24.1-T3 | 单测补充 | 完成 | 2026-08-21 | `tests/test_avatar_check.py` 新增：非法后缀 `.php`/`.svg` 拒绝、无后缀 URL 拒绝、合法 `.jpg`/`.png`（含 query 参数）放行；既有用例全部回归通过 |
+
+### Phase 24.2（2.28.2 雪花 ID 生成器统一收敛：内部实现重构）
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P24.2-T1 | 计划书更新 | 完成 | 2026-08-21 | README changelog 新增 2.28.2（PATCH）；07-decisions 新增决策 #32（生成器统一收敛 + 锁外等待）；03-phases 新增 Phase 25 |
+| P24.2-T2 | bili-common 通用生成器 | 完成 | 2026-08-21 | `SnowflakeIdGenerator`（可配 timestamp_bits/worker_bits/sequence_bits/time_unit，序列耗尽锁外等待）；`MinuteSnowflakeIdGenerator` 改为兼容特化（签名与位布局不变） |
+| P24.2-T3 | sharding.py 收敛 msgkey | 完成 | 2026-08-21 | 毫秒级 msgkey 改用通用类（41+10+12 / millisecond），删除 `MsgKeyGenerator` 重复实现；`parse_timestamp_ms` 改用生成器 `timestamp_shift` |
+| P24.2-T4 | 回归验证 | 完成 | 2026-08-21 | 分钟级/毫秒级 ID 数值与位布局不变（首 ID 与旧公式一致、位布局精确匹配）、序列耗尽锁外等待不持锁（17 个 ID 跨分钟等待 60s 正常）、并发 8 线程 8000 ID 唯一、49 个既有单测全通过 |
+
+### Phase 26（2.29.0 全互动种子脚本：纯 HTTP 接口版，覆盖动态/评论/收藏/关注/事件/通知/私信/举报/封禁/审核流）
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P26-T1 | SeedClient 全互动动作封装 | 完成 | 2026-08-21 | 在既有 `SeedClient`（`seed_moment_via_api.py`）基础上补全：话题 create/approve、动态 report/top、评论 add(root=0)/楼中楼(root,parent)/action/report/top、收藏夹 folder create/add/setting/cover-approve、关注 do/block、事件 event/report（like/reply/at）、系统通知 notify/admin/create、私信 dm/send/admin-audit/ack、用户举报 /report(bizType=user)、封禁 admin/ban、头像 submit/approve、lottery 点赞（TInteractionStat 通用计数） |
+| P26-T2 | 四大模块编排 | 完成 | 2026-08-21 | `seed_moment`（动态体系）/ `seed_comment`（评论体系）/ `seed_interact`（用户级互动）/ `seed_message`（消息与管理）四大模块按依赖顺序编排；`_fallback_normal_ids` 兜底（跳过动态模块时从 Feed 拉已过审动态） |
+| P26-T3 | 参数与开关 | 完成 | 2026-08-21 | `--base-url`（默认 http://127.0.0.1:18739）/ `--admin-mid`（默认 11）/ `--count`（动态条数，默认 50000）/ `--users`（真实用户数，默认 5000）/ `--concurrency`（并发，默认 20）；分模块开关 `--skip-moment`/`--skip-comment`/`--skip-interact`/`--skip-message`/`--skip-follow`；`--dry-run` |
+| P26-T4 | 运行验证 | 进行中 | 2026-08-21 | 需本地启动 be-message-service 后运行 `uv run python scripts/seed_cli.py` 一个命令全量验证（依赖运行环境就绪） |
+| P26-T5 | 单文件合并（全互动 + 大数据灌数） | 完成 | 2026-08-22 | `seed_via_api.py`（全互动）与 `seed_moment_bulk.py`（大数据灌数）合并入单文件 `scripts/seed_cli.py`（`SeedClient`/`seed()`/`run_bulk()` 同文件、不跨模块引用），删除冗余脚本；分模块开关控制分开执行 |
+| P26-T6 | 统一大规模灌数改造 | 进行中 | 2026-08-22 | **取消「小规模联调 + 大数据灌数」两阶段**，合并为统一大规模灌数流程：动态/评论/互动/消息四模块全部大批量灌入（默认动态 5 万、其余按比例放大）；动态/话题取 biliopusdb 真实数据，用户统一取 pptr Postgres；大规模单条失败软降级跳过，私信撤回/删除全流程断言保留响亮报错 |
+
+### Phase 27（2.30.0 管理端审核列表按状态筛选：可驳回已过审动态）
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P27-T1 | 计划书更新 | 完成 | 2026-08-22 | README changelog 新增 2.30.0（MINOR）；05-api 5.5 节 `GET /list` 新增 `auditStatus` 参数说明 + `POST /reject` 补充「支持从任意状态驳回」；03-phases 新增 Phase 27 |
+| P27-T2 | 后端接口按状态筛选 | 完成 | 2026-08-22 | `app/api/moment_audit.py` `audit_list` 新增 `auditStatus` query 参数（`MomentAuditStatusEnum` 枚举类型，默认 auditing，非法值 FastAPI 自动 422）；`MomentAuditService.pending_list` 增加 `audit_status` 参数按状态过滤（默认 auditing，向后兼容）；`uv run python -c "import app.api.moment_audit"` 通过 |
+| P27-T3 | 单元测试 | 完成 | 2026-08-22 | `tests/test_moment_audit.py` 新增 2 用例：`test_pending_list_filters_by_status`（auditing/normal/rejected 三状态筛选互不串扰）、`test_reject_normal_word_moment_reverts`（normal 动态驳回撤回 → rejected + 原因 + 从 normal 列表消失进入 rejected 列表）；全文件 12 用例全部通过（41.28s） |
+| P27-T4 | 前端接入 | 完成 | 2026-08-22 | SDK 已由用户重新生成（`MomentAuditStatusEnum` + `audit/list` query 参数就绪）后接入：`moment-api.ts` `fetchAuditList` 透传 `auditStatus`（re-export `MomentAuditStatusEnum`）；`MomentAuditListView.vue` 新增状态 Tab（待审核/已过审/已驳回，`el-radio-group`，切换重置页码）+ 状态列按实际 `auditStatus` 渲染标签（auditing=待审核 warning / normal=已过审 success / rejected=已驳回 danger / hidden=已下架 info）+ 操作列按状态区分（auditing=通过+驳回 / normal=仅驳回 / rejected=仅通过）+ 空态文案按状态；vue-tsc 对本次改动文件 0 错误。**注**：type-check 暴露一批**既有**类型错误（moment-api.ts FolderCoverAudit* 类型未导入 import 块、`InteractionBizTypeEnum` SDK 不再导出、`MomentLikerListResp` 等 re-export 缺失，均属 P24 遗留 + SDK 更新，非本次引入） |
+
+### Phase 28（2.31.0 雪花 ID 序列号位宽可配：开发/测试灌数扩容）
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P28-T1 | 计划书/规则更新 | 完成 | 2026-08-22 | 规则 `snowflake-id.mdc` 第 3 条位布局改为「总位数恒 39 bits，sequence_bits 默认 4、环境变量可配（范围 4~15），变更位宽会与已发布 ID 重叠、仅限清库重建环境」；README changelog 新增 2.31.0（MINOR）；03-phases 新增 Phase 28；07-decisions 新增决策 #33 |
+| P28-T2 | bili-common 生成器支持 sequence_bits | 进行中 | 2026-08-22 | `MinuteSnowflakeIdGenerator` 增加可选 `sequence_bits` 参数（默认 4，校验 4~15），`timestamp_bits = 39 - 4 - sequence_bits` 总位数恒 39；`sharding.py` 三个生成器（uid/moment_id/topic_id）传入 `settings.*_sequence_bits` |
+| P28-T3 | config.py 新增位宽配置 | 进行中 | 2026-08-22 | 新增 `uid_sequence_bits` / `moment_id_sequence_bits` / `topic_id_sequence_bits`（默认 4，环境变量 `UID_SEQUENCE_BITS` / `MOMENT_ID_SEQUENCE_BITS` / `TOPIC_ID_SEQUENCE_BITS`） |
+| P28-T4 | seed_cli.py 超时环境变量化 | 完成 | 2026-08-22 | 新增 `SEED_HTTP_TIMEOUT`（默认 90s，httpx 客户端）与 `SEED_REQ_TIMEOUT`（默认 120s，`_req` 总超时），消除分钟边界 ReadTimeout 误报 |
+| P28-T5 | 回归验证 | 完成 | 2026-08-22 | 内联脚本验证：默认 `sequence_bits=4` 生成 16 个 ID 互不相同/正数/位宽 ≤39（与改造前一致）；`sequence_bits=7` 同一分钟 128 个互不相同/正数/位宽 30；`sequence_bits=3/16` 被 ValueError 拒绝；ruff lint 全绿 |
 

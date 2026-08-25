@@ -7,6 +7,8 @@
 
 from fastapi import APIRouter, Header, Query
 
+from app.models.str_int import StrInt
+
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser
 from app.models import StandardResponse
@@ -118,7 +120,7 @@ async def unblock_user(
 async def get_relation(
     session: SessionDep,
     user: CurrentUser,
-    target_mid: int = Query(..., description="目标用户 mid"),
+    target_mid: StrInt = Query(..., description="目标用户 mid"),
 ) -> StandardResponse[FollowRelationResp]:
     """查询当前用户与 target_mid 的双向关系。
 
@@ -148,7 +150,7 @@ async def get_counts(
 )
 async def get_stat(
     session: SessionDep,
-    vmid: int = Query(..., description="目标用户 mid（对标 B 站 vmid 参数）"),
+    vmid: StrInt = Query(..., description="目标用户 mid（对标 B 站 vmid 参数，StrInt 兼容前端 str 传参）"),
     x_bili_mid: str | None = Header(default=None),
 ) -> StandardResponse[FollowCountResp]:
     """获取任意用户的关注数、粉丝数、互相关注数（公开接口，无需登录）。

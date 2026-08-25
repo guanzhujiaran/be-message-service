@@ -3,7 +3,7 @@
 举报记录统一结构继承 bili-common 的 `ReportBase`（同构字段）：
 - `TUserReport`：用户空间举报（bizType=user，bizId=mid）
 
-与动态 `TMomentReport` / 评论 `CommentReport` 结构一致，通用逻辑由
+与资源 `TResourceReport` / 评论 `CommentReport` 结构一致，通用逻辑由
 `bili_common.services.report.ReportBaseService` 统一实现（幂等写 / 列表 / 审核）。
 
 > 说明：举报按业务归属各自系统（RPA 举报在 RPA 库、动态/评论/用户举报在 be-message），

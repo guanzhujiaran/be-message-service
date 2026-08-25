@@ -3,7 +3,7 @@
 清除指定 uid 用户在 be-message MySQL 的动态相关全部数据：
 
 - **发布的动态** `TMoment WHERE mid=uid`：`TMomentStat`/`TMomentLike`/
-  `TMomentViewLog`/`TMomentReport`/`TMomentAuditLog` 对 `dynId` 均
+  `TMomentViewLog`/`TMomentAuditLog` 对 `dynId` 均
   `ondelete=CASCADE`，删主表自动级联清子表；
 - **点赞 / 浏览他人动态的痕迹**（`TMomentLike`/`TMomentViewLog` 的 `mid`）：
   这些行的 `mid` 是该用户（操作者），非动态作者，需单独按 `mid` 删，
@@ -14,9 +14,16 @@
 
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, delete
+from sqlmodel import col, delete, select
 
-from app.models.db import TMoment, TMomentLike, TMomentViewLog
+from app.models.db import (
+    TMoment,
+    TMomentLike,
+    TInteractionStat,
+    TInteractionViewLog,
+    TResourceFeed,
+)
+from app.models.enums import InteractionBizTypeEnum
 
 
 class CleanupMomentService:
@@ -33,10 +40,24 @@ class CleanupMomentService:
         await session.exec(
             delete(TMomentLike).where(col(TMomentLike.mid) == uid)
         )
+        # 2.36.0：浏览去重统一 TInteractionViewLog（按操作者 mid 删痕迹）
         await session.exec(
-            delete(TMomentViewLog).where(col(TMomentViewLog.mid) == uid)
+            delete(TInteractionViewLog).where(col(TInteractionViewLog.mid) == uid)
         )
-        # 我发布的动态（dynId 子表自动 CASCADE）
+        # 我发布的动态：先删统一计数/Feed 元数据（无 FK 级联），再删主表（旧子表级联）
+        dyn_ids = select(TMoment.dynId).where(col(TMoment.mid) == uid)
+        await session.exec(
+            delete(TResourceFeed).where(
+                col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceFeed.bizId).in_(dyn_ids),
+            )
+        )
+        await session.exec(
+            delete(TInteractionStat).where(
+                col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TInteractionStat.bizId).in_(dyn_ids),
+            )
+        )
         await session.exec(delete(TMoment).where(col(TMoment.mid) == uid))
 
 

@@ -21,7 +21,7 @@
 
 | 方法 | 路径 | 说明 | 查询参数 |
 |---|---|---|---|
-| GET | `/feed/all` | 综合页 Feed（仅 normal+未软删） | `updateBaseline`, `historyOffset`, `page`, `refreshType(1=刷新,2=翻页)` |
+| GET | `/feed/all` | 综合页 Feed（仅 normal+未软删） | `sort`（`recommend`=EdgeRank 推荐，默认 / `time`=pubTime 倒序）, `updateBaseline`, `historyOffset`, `page`, `refreshType(1=刷新,2=翻页)` |
 | GET | `/feed/space/{mid}` | 个人空间 Feed | `hostMid`, `offset`, `page`, `isPreload`；**本人请求**返回 auditing/rejected 带状态标签；**访客请求**过滤为仅 normal |
 | GET | `/feed/topic/{topicId}` | 话题 Feed 流 | `topicId`, `offset`, `page`（仅 normal） |
 | GET | `/detail/{dynId}` | Moment 详情 | `dynId`；本人可看全部状态；访客仅 normal（或返回 404/审核中占位卡） |
@@ -57,10 +57,19 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/folder/create` | 创建收藏夹（`name`, `description?`, `coverUrl?`(仅存URL)） |
-| POST | `/folder/update` | 更新收藏夹（`folderId`, `name?`/`description?`/`coverUrl?`） |
+| POST | `/folder/create` | 创建收藏夹（`name`, `description?`, `coverUrl?`）。**2.28.0 起 `coverUrl` 先下载校验（复用头像校验：http/https、1s 内下载、≤1MB、image/*，失败 422）后进入封面审核（pending），不直接写入 `cover_url`**；响应新增 `coverAuditStatus`（有 pending 时 "pending"，否则 null） |
+| POST | `/folder/update` | 更新收藏夹（`folderId`, `name?`/`description?`/`coverUrl?`）。**2.28.0 起非空 `coverUrl` 同样先校验后进入封面审核（pending）**；空字符串表示清除封面（直接清 `cover_url`，不经审核） |
 | POST | `/folder/delete` | 删除收藏夹（`folderId`，连其下收藏，favoriteCount 按用户去重回退） |
-| GET | `/folder/list` | 我的收藏夹列表（含各夹收藏数） |
+| GET | `/folder/list` | 我的收藏夹列表（含各夹收藏数）。**2.28.0 起每项新增 `coverAuditStatus`**（该夹存在 pending 封面审核时 "pending"，否则 null） |
+
+**收藏夹封面审核接口（路由前缀 `/api/v1/favorite/folder/cover/audit`，2.28.0 新增，对齐头像审核范式）：**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/list` | 管理员待审核封面队列（`RootUser`；`page_num`, `page_size`；仅 `auditStatus=pending` 按创建倒序；项含 `pk/folderId/mid/authorName/oldCover/newCover/createdAt`） |
+| POST | `/approve` | 审核通过（`RootUser`；body `{ pk, remark? }`）：状态→approved + **同事务**写 `TFavoriteFolder.cover_url` 生效 + 系统通知用户（通过） |
+| POST | `/reject` | 审核驳回（`RootUser`；body `{ pk, reason, remark? }`）：状态→rejected + 保持原封面 + 系统通知用户（附驳回原因） |
+| GET | `/mine` | 我的某收藏夹封面审核状态（`CurrentUser`；query `folderId`）：返回该夹最近一条 `{ pk, folderId, newCover, oldCover, auditStatus, auditReason, createdAt, auditedAt }`，无记录 `data=null` |
 | POST | `/add` | 收藏资源到收藏夹（`bizId`, `bizType?`(默认 dynamic), `folderId`；幂等，favoriteCount 用户去重 +1） |
 | POST | `/remove` | 从收藏夹取消收藏（`bizId`, `bizType?`, `folderId`；用户无其它夹收藏时 favoriteCount -1） |
 | GET | `/list` | 我的某收藏夹下资源 id 列表（`folderId`, `bizType?`, `page`, `pageSize`；不带 bizType 返回全部类型） |
@@ -76,7 +85,8 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/thumb` | 点赞/取消点赞（`bizId`, `bizType?`(默认 dynamic), `up`；动态仅 normal 可赞；非动态资源经 `InteractionResourceValidator` 校验存在性） |
-| GET | `/interaction/status` | **2.17.0 新增**：批量查询某资源当前用户收藏/点赞态 + 计数（`bizType`, `bizIds[]`；返回每资源 `isLike`/`likeCount`/`isFavorite`/`favoriteCount`/`viewCount`）；**2.23.0 起兼作浏览统计触发点**——仅登录用户访问该接口时，对列表内每个资源组装 `InteractionViewPayload` 投递 MQ（`interaction.view` 队列）**异步累计**，主链路不阻塞、MQ 抖动不拖慢 status；消费者按 `bizType+bizId+mid+refDate` 去重（dynamic 走 `TMomentViewLog`+`TMomentStat.viewCount`，非 dynamic 走 `TInteractionViewLog`+`TInteractionStat.viewCount`），失败 requeue 由 MQ 独立重试，确保计数来自真实前端页面访问而非直接调 API |
+| GET | `/interaction/status` | **2.17.0 新增**：批量查询某资源当前用户收藏/点赞态 + 计数（`bizType`, `bizIds[]`；返回每资源 `isLike`/`likeCount`/`isFavorite`/`favoriteCount`/`viewCount`）；**列表专用，不累计浏览**；**2.23.1 防乱调**——返回前对 `bizIds` 逐个校验资源存在性：dynamic 本地查 `TMoment`（deletedAt 非空 / 非 normal 视为不存在）、lottery 批量 RPC 校验（RPC 失败弱依赖降级放行）、其余类型放行；**存在缺失的资源则整体返回 400 并列出不存在的 bizId**（不返回部分结果），杜绝伪造资源 id 乱刷互动态 |
+| GET | `/interaction/status/{bizId}` | **2.23.1 新增**：单资源互动状态（**detail 页专用**，兼作浏览统计触发点）——同字段返回单个 `InteractionStatusItem`；校验资源存在（缺失 400）；**查询后投递 `InteractionViewPayload` 到 `interaction.view` 队列异步累计浏览**（动态走 `TMomentViewLog`+`TMomentStat.viewCount`，非动态走 `TInteractionViewLog`+`TInteractionStat.viewCount`），仅真实 detail 页访问才 +1，批量列表调用不累计 |
 
 **跨服务资源详情（2.18.0 RPC 方案）：**
 
@@ -99,8 +109,8 @@
 |---|---|---|
 | GET | `/at/list` | @用户推荐列表（最近联系/关注/粉丝分组） |
 | GET | `/at/search` | @用户搜索（keyword 模糊匹配昵称） |
-| GET | `/topic/square` | 话题广场列表（**仅 `auditStatus='normal'`**，按 sortWeight/pubTime 排序） |
-| GET | `/topic/hot-search` | 热门话题搜索（**仅 `auditStatus='normal'`**） |
+| GET | `/topic/square` | 话题广场列表（**仅 `auditStatus='normal'`**，2.27.0 起按话题 EdgeRank 排序：`Σ(w·log(count+1))·decay(pubTime)`，含 isHot/sortWeight/dynCount/viewCount 加权；权重配置 `settings.edgerank_topic_square_*`） |
+| GET | `/topic/hot-search` | 热门话题搜索（**仅 `auditStatus='normal'`**，2.27.0 起同话题广场 EdgeRank 排序，`hot_only=True` 过滤 isHot=1） |
 | GET | `/topic/mine` | 我创建的话题（含全部审核状态，`CurrentUser`；每话题返回 auditStatus/auditRejectReason/pubTime） |
 | POST | `/topic/create` | 创建话题（`CurrentUser`）：`topicName`(必填,1-30), `topicCover`?(http/https URL), `topicDesc`?(≤200)；名称**唯一**校验；创建即 `auditStatus='auditing'`，不公开展示 |
 | GET | `/poi/nearby` | 附近地点（lat, lng, page） |
@@ -120,10 +130,10 @@
 
 | 方法 | 路径 | 说明 | 请求体/参数 |
 |---|---|---|---|
-| GET | `/list` | 管理员待审核列表 | `page`, `pageSize`；默认 WHERE `auditStatus='auditing'`，按 `createdAt DESC` |
+| GET | `/list` | 管理员审核列表（**2.30.0 起支持按状态筛选**） | `page`, `pageSize`；`auditStatus?`（可选，`auditing`（默认）/`normal`/`rejected`/`hidden`，非法值 422；默认 WHERE `auditStatus='auditing'` 保持向后兼容），按 `createdAt DESC`。`auditStatus='normal'` 用于拉取已过审动态并执行「驳回」（失误过审撤回） |
 | GET | `/list/history` | 审核历史流水 | `dynId?`, `operatorMid?`, `actionType?`, `fromDate`, `toDate`, `page` |
 | POST | `/approve` | 审核通过 | `dynId`, `remark?` → 写 `TMomentAuditLog(action=approve)`；**不发通知**；dynType=FORWARD 时 srcDyn.repostCount +1 |
-| POST | `/reject` | 审核驳回 | `dynId`, `rejectReason` → 写 `auditRejectReason` + 审核日志 + **发驳回事件通知给作者**；FORWARD 且 before=normal 时 srcDyn.repostCount -1 |
+| POST | `/reject` | 审核驳回 | `dynId`, `rejectReason` → 写 `auditRejectReason` + 审核日志 + **发驳回事件通知给作者**；FORWARD 且 before=normal 时 srcDyn.repostCount -1。**支持从任意状态驳回（含 normal 已过审动态）** |
 | GET | `/{dynId}` | 单条Moment 审核详情（含全部状态 + 历史流转） | `dynId` |
 
 ### 5.6 关注流接口

@@ -1,14 +1,16 @@
 """Phase E1 — 枚举值存取往返测试。
 
-验证「枚举列落库存 value、读回还原成枚举成员」这条约定在真实 MySQL 上成立：
+验证「枚举列经 `sqlalchemy.Enum` 落库、读回还原成枚举成员」这条约定在真实 MySQL 上成立：
 
-- `StrEnum` 列（`str_enum_type`）→ `VARCHAR`，库里存 **值**（`like` / `published` / `stranger`），
-  不是成员名（`LIKE` / `PUBLISHED` / `STRANGER`），也不是 MySQL 原生 ENUM。
-- `IntEnum` 列（`int_enum_type`）→ `INTEGER`，库里存 **整数值**（0 / 1 / 2）。
+- 所有业务枚举列统一用 `sqlalchemy.Enum(...)`（见各 `app/models/db/*.py` 的
+  `sa_type=SAEnum(SomeEnum)`），落库为 **MySQL 原生 ENUM**，库里存 **成员名**
+  （如 `LEVEL` / `PUBLISHED` / `SINGLE`），不是整数字面量。
 - ORM 读回后必须是枚举成员本身，业务代码里的 `is` 比较才成立。
+- 对外接口层（AutoStrMixin / pydantic）序列化时返回枚举的 `.value`（整数 / 字符串），
+  与库里存成员名无关。
 
-之所以要专门测：SQLModel 默认会把 `StrEnum` 落成原生 ENUM 且存成员名，
-一旦回退，库里字面量会与接口层 / 原生 SQL 里的小写值对不上，查询会静默全错。
+之所以要专门测：确认落库字面量是成员名（原生 ENUM 的固有行为），新增枚举值需要 DDL，
+且 ORM 读回与接口层对得上，查询才不会静默全错。
 """
 
 import pytest
@@ -73,8 +75,8 @@ async def _cleanup() -> None:
         await s.commit()
 
 
-async def test_str_enum_round_trip() -> None:
-    """StrEnum 列：库里是小写 value，ORM 读回是枚举成员。"""
+async def test_enum_round_trip() -> None:
+    """枚举列：库里是成员名，ORM 读回是枚举成员。"""
     await _cleanup()
     async with new_session() as s:
         row = NotifyMessage(
@@ -91,7 +93,7 @@ async def test_str_enum_round_trip() -> None:
         await s.refresh(row)
         nid = row.id
 
-        # 1) 原生 SQL 看库里的字面量：必须是 value（小写），不是成员名
+        # 1) 原生 SQL 看库里的字面量：必须是成员名，不是整数字面量
         raw = (
             await s.exec(
                 text(
@@ -100,9 +102,9 @@ async def test_str_enum_round_trip() -> None:
                 )
             )
         ).one()
-        assert raw[0] == "level", f"target_type 应存 value，实际 {raw[0]!r}"
-        assert raw[1] == "urgent", f"level 应存 value，实际 {raw[1]!r}"
-        assert raw[2] == "published", f"status 应存 value，实际 {raw[2]!r}"
+        assert raw[0] == NotifyTargetTypeEnum.LEVEL.name, f"target_type 应存成员名，实际 {raw[0]!r}"
+        assert raw[1] == NotifyLevelEnum.URGENT.name, f"level 应存成员名，实际 {raw[1]!r}"
+        assert raw[2] == NotifyStatusEnum.PUBLISHED.name, f"status 应存成员名，实际 {raw[2]!r}"
 
         # 2) ORM 读回：还原成枚举成员，可用 is 比较
         s.expunge_all()
@@ -113,7 +115,7 @@ async def test_str_enum_round_trip() -> None:
         assert got.level is NotifyLevelEnum.URGENT
         assert got.status is NotifyStatusEnum.PUBLISHED
 
-        # 3) 用枚举成员做 WHERE 过滤能命中（绑定参数同样按 value 下发）
+        # 3) 用枚举成员做 WHERE 过滤能命中（绑定参数同样按成员名下发）
         hit = (
             await s.exec(
                 select(NotifyMessage).where(
@@ -126,8 +128,8 @@ async def test_str_enum_round_trip() -> None:
     await _cleanup()
 
 
-async def test_str_enum_column_is_varchar_not_native_enum() -> None:
-    """枚举列的物理类型必须是 VARCHAR，不能回退成 MySQL 原生 ENUM。"""
+async def test_enum_columns_are_native_enum() -> None:
+    """枚举列的物理类型必须是 MySQL 原生 ENUM（不再是 SMALLINT / VARCHAR）。"""
     async with new_session() as s:
         rows = (
             await s.exec(
@@ -140,9 +142,9 @@ async def test_str_enum_column_is_varchar_not_native_enum() -> None:
         ).all()
         assert len(rows) == 3
         for name, dtype in rows:
-            assert dtype.lower() == "varchar", f"{name} 应为 varchar，实际 {dtype}"
+            assert dtype.lower() == "enum", f"{name} 应为 enum，实际 {dtype}"
 
-        # IntEnum 列必须是整型
+        # IntEnum 列（msg_dm_index.msg_status）同样为原生 ENUM
         int_rows = (
             await s.exec(
                 text(
@@ -152,11 +154,11 @@ async def test_str_enum_column_is_varchar_not_native_enum() -> None:
                 )
             )
         ).all()
-        assert int_rows and int_rows[0][1].lower() in ("int", "integer", "bigint")
+        assert int_rows and int_rows[0][1].lower() == "enum"
 
 
 async def test_int_enum_round_trip() -> None:
-    """IntEnum 列：库里是整数 value，ORM 读回是枚举成员。"""
+    """IntEnum 列：库里是成员名，ORM 读回是枚举成员。"""
     await _cleanup()
     async with new_session() as s:
         session_row = DmSession(
@@ -183,7 +185,7 @@ async def test_int_enum_round_trip() -> None:
         await s.refresh(session_row)
         await s.refresh(index_row)
 
-        # 原生 SQL：IntEnum 存整数，同表的 StrEnum 存小写 value
+        # 原生 SQL：库里存成员名
         raw_sess = (
             await s.exec(
                 text(
@@ -192,8 +194,8 @@ async def test_int_enum_round_trip() -> None:
                 )
             )
         ).one()
-        assert raw_sess[0] == DmSessionTypeEnum.SINGLE.value == 1
-        assert raw_sess[1] == "stranger"
+        assert raw_sess[0] == DmSessionTypeEnum.SINGLE.name
+        assert raw_sess[1] == DmRelationEnum.STRANGER.name
 
         raw_idx = (
             await s.exec(
@@ -203,8 +205,8 @@ async def test_int_enum_round_trip() -> None:
                 )
             )
         ).one()
-        assert raw_idx[0] == "image"
-        assert raw_idx[1] == DmMsgStatusEnum.RECALLED.value == 1
+        assert raw_idx[0] == DmMsgTypeEnum.IMAGE.name
+        assert raw_idx[1] == DmMsgStatusEnum.RECALLED.name
 
         # ORM 读回还原成枚举成员
         s.expunge_all()
@@ -267,7 +269,7 @@ async def test_event_enum_round_trip_all_members() -> None:
             assert got.event_type is et, f"event_type 往返不一致: {got.event_type} != {et}"
             assert got.source_type is st, f"source_type 往返不一致: {got.source_type} != {st}"
 
-        # 库里字面量全部为小写 value
+        # 库里字面量全部为成员名
         raws = (
             await s.exec(
                 text(
@@ -276,68 +278,33 @@ async def test_event_enum_round_trip_all_members() -> None:
                 )
             )
         ).all()
-        valid_et = {e.value for e in EventTypeEnum}
-        valid_st = {e.value for e in SourceTypeEnum}
+        valid_et = {e.name for e in EventTypeEnum}
+        valid_st = {e.name for e in SourceTypeEnum}
         for et_raw, st_raw in raws:
             assert et_raw in valid_et, f"库中 event_type 字面量异常: {et_raw!r}"
             assert st_raw in valid_st, f"库中 source_type 字面量异常: {st_raw!r}"
     await _cleanup()
 
 
-async def test_comment_enum_columns_varchar_and_int() -> None:
-    """评论系统枚举列物理类型回归：StrEnum → VARCHAR，IntEnum → 整数。
+async def test_comment_enum_columns_are_native_enum() -> None:
+    """评论系统枚举列物理类型回归：统一为 MySQL 原生 ENUM（存成员名）。
 
-    与全局约定一致（见 test_str_enum_column_is_varchar_not_native_enum）：
-    一旦有人把 `str_enum_type` 误改回默认行为，这些列会退化成 MySQL 原生 ENUM，
-    新增枚举值就要改表结构，且与接口层小写 value 对不上。这里锁死物理类型。
+    所有枚举列（msg_comment_index / msg_comment_subject / msg_comment_at /
+    msg_comment_action）均经 `sqlalchemy.Enum` 落库为原生 ENUM。这里锁死物理类型，
+    一旦有人误改成其它映射可及时发现。
     """
     async with new_session() as s:
-        # StrEnum 列应为 VARCHAR
-        varchar_cols = (
+        enum_cols = (
             await s.exec(
                 text(
                     "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
                     "WHERE TABLE_SCHEMA = DATABASE() "
-                    "AND TABLE_NAME = 'msg_comment_index' "
-                    "AND COLUMN_NAME IN ('type','state')"
+                    "AND TABLE_NAME IN "
+                    "('msg_comment_index','msg_comment_subject','msg_comment_at','msg_comment_action') "
+                    "AND COLUMN_NAME IN ('type','state','action')"
                 )
             )
         ).all()
-        assert len(varchar_cols) == 2, "msg_comment_index 缺少 type/state 列"
-        for name, dtype in varchar_cols:
-            assert dtype.lower() == "varchar", f"{name} 应为 varchar，实际 {dtype}"
-
-        sub_cols = (
-            await s.exec(
-                text(
-                    "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
-                    "WHERE TABLE_SCHEMA = DATABASE() "
-                    "AND TABLE_NAME = 'msg_comment_subject' "
-                    "AND COLUMN_NAME IN ('type','state')"
-                )
-            )
-        ).all()
-        assert all(d.lower() == "varchar" for _, d in sub_cols)
-
-        at_cols = (
-            await s.exec(
-                text(
-                    "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
-                    "WHERE TABLE_SCHEMA = DATABASE() "
-                    "AND TABLE_NAME = 'msg_comment_at' AND COLUMN_NAME = 'type'"
-                )
-            )
-        ).all()
-        assert at_cols and at_cols[0][1].lower() == "varchar"
-
-        # IntEnum 列应为整数
-        int_cols = (
-            await s.exec(
-                text(
-                    "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
-                    "WHERE TABLE_SCHEMA = DATABASE() "
-                    "AND TABLE_NAME = 'msg_comment_action' AND COLUMN_NAME = 'action'"
-                )
-            )
-        ).all()
-        assert int_cols and int_cols[0][1].lower() in ("int", "integer", "bigint")
+        assert enum_cols, "未查到评论系统枚举列"
+        for name, dtype in enum_cols:
+            assert dtype.lower() == "enum", f"{name} 应为 enum，实际 {dtype}"

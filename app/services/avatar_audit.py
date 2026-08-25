@@ -42,7 +42,7 @@ def _to_item(row: TUserAvatarAudit, brief) -> AvatarAuditItem:
         authorName=brief.uname if brief else None,
         oldAvatar=row.oldAvatar,
         newAvatar=row.newAvatar,
-        auditStatus=row.auditStatus.value,
+        auditStatus=row.auditStatus.name,
         createdAt=_iso(row.created_at),
     )
 
@@ -125,7 +125,7 @@ class AvatarAuditService:
             pk=row.pk,
             newAvatar=row.newAvatar,
             oldAvatar=row.oldAvatar,
-            auditStatus=row.auditStatus.value,
+            auditStatus=row.auditStatus.name,
             auditReason=row.auditReason,
             createdAt=_iso(row.created_at),
             auditedAt=_iso(row.auditedAt),

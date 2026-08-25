@@ -9,7 +9,8 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
-class AvatarAuditItem(SQLModel):
+from app.models.schemas.base import AutoStrMixin
+class AvatarAuditItem(SQLModel, AutoStrMixin):
     """管理端待审核队列中的单条头像申请（含作者昵称 / 头像，来自 pptr 回查）。"""
 
     pk: int = Field(description="审核记录主键")
@@ -21,7 +22,7 @@ class AvatarAuditItem(SQLModel):
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
 
 
-class AvatarAuditListResp(SQLModel):
+class AvatarAuditListResp(SQLModel, AutoStrMixin):
     """管理端待审核列表响应。"""
 
     items: list[AvatarAuditItem] = Field(default_factory=list)
@@ -30,14 +31,14 @@ class AvatarAuditListResp(SQLModel):
     page_size: int = Field(default=20)
 
 
-class AvatarAuditApproveReq(SQLModel):
+class AvatarAuditApproveReq(SQLModel, AutoStrMixin):
     """审核通过请求。"""
 
     pk: int = Field(description="审核记录主键")
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class AvatarAuditRejectReq(SQLModel):
+class AvatarAuditRejectReq(SQLModel, AutoStrMixin):
     """审核驳回请求。"""
 
     pk: int = Field(description="审核记录主键")
@@ -45,7 +46,7 @@ class AvatarAuditRejectReq(SQLModel):
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class AvatarAuditMineResp(SQLModel):
+class AvatarAuditMineResp(SQLModel, AutoStrMixin):
     """用户侧「我的头像审核状态」响应（无记录时接口返回 data=null）。"""
 
     pk: int = Field(description="审核记录主键")

@@ -72,8 +72,8 @@
 
 | 类型 | 列类型 | 存储内容 | 工具 |
 | --- | --- | --- | --- |
-| `StrEnum` | `VARCHAR(n)` | **value**（`like` / `published` / `stranger`） | `str_enum_type()` |
-| `IntEnum` | `INTEGER` | **value**（0 / 1 / 2） | `int_enum_type()` |
+| `StrEnum` | `VARCHAR(n)` | **value**（`like` / `published` / `stranger`） | `StrEnum()` |
+| `IntEnum` | `INTEGER` | **value**（0 / 1 / 2） | `IntEnum()` |
 
 一律**不使用 MySQL 原生 ENUM**：新增枚举值不需要 DDL 改表，且库内字面量与接口层完全一致。
 SQLModel 的默认行为会落成原生 ENUM 且存**成员名**（`LIKE`），一旦回退会导致查询静默全错，

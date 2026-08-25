@@ -28,7 +28,8 @@ from sqlalchemy import BIGINT, JSON, Text
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 from bili_common.models.report import ReportBase
 
-from app.models.db.base import TimestampMixin, int_enum_type, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
@@ -51,7 +52,7 @@ class CommentSubject(TimestampMixin, table=True):
 
     oid: int = Field(sa_type=BIGINT, index=True, description="业务实体id")
     type: CommentTypeEnum = Field(
-        sa_type=str_enum_type(CommentTypeEnum),
+        sa_type=SAEnum(CommentTypeEnum),
         description="业务实体类型，与 oid 共同唯一定位评论区",
     )
 
@@ -73,7 +74,7 @@ class CommentSubject(TimestampMixin, table=True):
 
     state: CommentSubjectStateEnum = Field(
         default=CommentSubjectStateEnum.NORMAL,
-        sa_type=str_enum_type(CommentSubjectStateEnum),
+        sa_type=SAEnum(CommentSubjectStateEnum),
         index=True,
         description="评论区状态：normal 可评论 / closed 只读",
     )
@@ -111,7 +112,7 @@ class CommentIndex(TimestampMixin, table=True):
 
     oid: int = Field(sa_type=BIGINT, index=True, description="所属评论区的业务实体id")
     type: CommentTypeEnum = Field(
-        sa_type=str_enum_type(CommentTypeEnum), description="所属评论区类型"
+        sa_type=SAEnum(CommentTypeEnum), description="所属评论区类型"
     )
     mid: int = Field(sa_type=BIGINT, index=True, description="评论发布者mid")
 
@@ -145,7 +146,7 @@ class CommentIndex(TimestampMixin, table=True):
 
     state: CommentStateEnum = Field(
         default=CommentStateEnum.NORMAL,
-        sa_type=str_enum_type(CommentStateEnum),
+        sa_type=SAEnum(CommentStateEnum),
         index=True,
         description="评论状态，决定可见性",
     )
@@ -223,7 +224,7 @@ class CommentAction(TimestampMixin, table=True):
     mid: int = Field(sa_type=BIGINT, index=True, description="操作者mid")
     action: CommentActionEnum = Field(
         default=CommentActionEnum.NONE,
-        sa_type=int_enum_type(CommentActionEnum),
+        sa_type=SAEnum(CommentActionEnum),
         index=True,
         description="0无 / 1已点赞 / 2已点踩",
     )
@@ -250,7 +251,7 @@ class CommentAt(TimestampMixin, table=True):
     rpid: int = Field(sa_type=BIGINT, index=True, description="评论id")
     oid: int = Field(sa_type=BIGINT, description="所属评论区的业务实体id")
     type: CommentTypeEnum = Field(
-        sa_type=str_enum_type(CommentTypeEnum), description="所属评论区类型"
+        sa_type=SAEnum(CommentTypeEnum), description="所属评论区类型"
     )
     from_mid: int = Field(sa_type=BIGINT, description="发起@的用户mid")
     at_mid: int = Field(sa_type=BIGINT, index=True, description="被@的用户mid")

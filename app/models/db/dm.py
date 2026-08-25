@@ -22,7 +22,8 @@ from datetime import datetime
 from sqlalchemy import BIGINT
 from sqlmodel import Field, Index, SQLModel, UniqueConstraint
 
-from app.models.db.base import TimestampMixin, int_enum_type, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
     DmAuditStateEnum,
     DmMsgStatusEnum,
@@ -52,7 +53,7 @@ class DmSession(TimestampMixin, table=True):
     )
     session_type: DmSessionTypeEnum = Field(
         default=DmSessionTypeEnum.SINGLE,
-        sa_type=int_enum_type(DmSessionTypeEnum),
+        sa_type=SAEnum(DmSessionTypeEnum),
         description="会话类型",
     )
 
@@ -81,7 +82,7 @@ class DmSession(TimestampMixin, table=True):
 
     relation: DmRelationEnum = Field(
         default=DmRelationEnum.NORMAL,
-        sa_type=str_enum_type(DmRelationEnum),
+        sa_type=SAEnum(DmRelationEnum),
         index=True,
         description="会话关系：normal / stranger",
     )
@@ -112,11 +113,11 @@ class DmMessageIndex(TimestampMixin, table=True):
     )
     sender_uid: int = Field(sa_type=BIGINT, description="发送者mid")
     msg_type: DmMsgTypeEnum = Field(
-        default=DmMsgTypeEnum.TEXT, sa_type=str_enum_type(DmMsgTypeEnum)
+        default=DmMsgTypeEnum.TEXT, sa_type=SAEnum(DmMsgTypeEnum)
     )
     msg_status: DmMsgStatusEnum = Field(
         default=DmMsgStatusEnum.NORMAL,
-        sa_type=int_enum_type(DmMsgStatusEnum),
+        sa_type=SAEnum(DmMsgStatusEnum),
         index=True,
         description="该视角下的消息状态",
     )
@@ -133,12 +134,17 @@ class DmMessageIndex(TimestampMixin, table=True):
     # ---- 管理端审核状态（与评论审核对齐）----
     audit_state: DmAuditStateEnum = Field(
         default=DmAuditStateEnum.NORMAL,
-        sa_type=str_enum_type(DmAuditStateEnum),
+        sa_type=SAEnum(DmAuditStateEnum),
         index=True,
         description="管理端审核状态：normal/auditing/rejected/hidden",
     )
 
     recalled_at: datetime | None = Field(default=None, description="撤回时间")
+    recalled_by: int | None = Field(
+        default=None,
+        sa_type=BIGINT,
+        description="撤回操作者mid（写扩散双方行记录同一操作者，用于展示「XX 撤回了一条消息」）",
+    )
 
 
 class DmContentDeadLetter(TimestampMixin, table=True):
@@ -160,7 +166,7 @@ class DmContentDeadLetter(TimestampMixin, table=True):
     sender_uid: int = Field(sa_type=BIGINT)
     receiver_uid: int = Field(sa_type=BIGINT)
     msg_type: DmMsgTypeEnum = Field(
-        default=DmMsgTypeEnum.TEXT, sa_type=str_enum_type(DmMsgTypeEnum)
+        default=DmMsgTypeEnum.TEXT, sa_type=SAEnum(DmMsgTypeEnum)
     )
     content: str | None = Field(default=None, description="待补写的正文")
     msg_ts: int = Field(sa_type=BIGINT)

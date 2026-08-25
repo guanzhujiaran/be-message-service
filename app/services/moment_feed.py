@@ -16,16 +16,27 @@
 （严禁请求热路径做 COUNT 聚合）。
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func
-from sqlmodel import col, select
+from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import TMoment, TMomentLike, TMomentStat, TMomentTopic, TMomentTopicRel
+from app.core.config import settings
+from app.models.db import (
+    MomentAuthorQuality,
+    TMoment,
+    TMomentLike,
+    TMomentTopic,
+    TMomentTopicRel,
+    TInteractionStat,
+    TResourceFeed,
+    TResourceReport,
+)
 from app.models.db.comment import CommentSubject
 from app.models.enums import (
+    CommentTypeEnum,
     InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTopicAuditStatusEnum,
@@ -44,6 +55,12 @@ from app.models.schemas.moment import (
     MomentTopicFeedResp,
     MomentTopicRef,
 )
+from app.services.edgerank import (
+    TOPIC_FEED_PROFILE,
+    build_moment_counts,
+    compute_moment_score,
+)
+from app.services.feed_engine import FeedCandidate, rank_feed
 from app.services.follow import FollowService
 from app.services.pptr_user import PptrUserService
 
@@ -57,38 +74,27 @@ _FEED_PAGE_SIZE = 20
 _DETAIL_BATCH_LIMIT = 20
 # 转发嵌套最大深度（防转发链成环导致的无限递归）
 _MAX_FORWARD_DEPTH = 3
+# 丰富内容节点类型（2.35.0 EdgeRank 内容丰富度）
+_RICH_NODE_TYPES = {"LINK", "RESOURCE", "IMAGE"}
+
+
+def _is_rich_content(content_json: Any) -> bool:
+    """内容丰富度：contentJson 含图片/视频/外链/资源卡节点视为富内容。"""
+    if not isinstance(content_json, list):
+        return False
+    for node in content_json:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") in _RICH_NODE_TYPES:
+            return True
+        if node.get("picMeta") or node.get("picUrl"):
+            return True
+    return False
 
 
 def _iso(dt: datetime | None) -> str | None:
     """datetime → ISO 字符串（无 tz，与现有服务一致）。"""
     return dt.isoformat() if dt else None
-
-
-def _build_stat_modules(
-    stat: TMomentStat | None, comment_count_override: int | None = None
-) -> dict[str, Any]:
-    """从 TMomentStat 读计数快照（直接读字段，不做 COUNT 聚合）。
-
-    ``comment_count_override``：评论系统实时计数（``msg_comment_subject.root_count``）。
-    评论数若存在 subject 记录，一律以评论系统计数为准（TMomentStat.commentCount
-    是跨模块回写，存量数据可能为 0 / 回写链路偶发遗漏）。
-    """
-    if stat is None:
-        return {
-            "likeCount": 0,
-            "commentCount": comment_count_override if comment_count_override is not None else 0,
-            "repostCount": 0,
-            "viewCount": 0,
-        }
-    comment_count = stat.commentCount
-    if comment_count_override is not None:
-        comment_count = comment_count_override
-    return {
-        "likeCount": stat.likeCount,
-        "commentCount": comment_count,
-        "repostCount": stat.repostCount,
-        "viewCount": stat.viewCount,
-    }
 
 
 def _collect_lottery_ids(dyns: list[TMoment]) -> list[int]:
@@ -173,17 +179,15 @@ def _enrich_resource_nodes(
 
 async def _build_feed_item(
     dyn: TMoment,
-    stat: TMomentStat | None,
     *,
     session: AsyncSession | None = None,
     author: Any | None = None,
     is_like: bool | None = None,
-    comment_count_override: int | None = None,
     lottery_detail_map: dict[int, dict[str, str | None]] | None = None,
     topic_rel_map: dict[int, list[int]] | None = None,
     _depth: int = 0,
 ) -> MomentFeedItem:
-    """把 TMoment + TMomentStat 装配成对外卡片。
+    """把 TMoment 装配成对外卡片。
 
     author 由调用方批量取回后传入（``PptrUserService.get_many`` 结果），
     避免逐条回查造成 N+1。
@@ -191,8 +195,8 @@ async def _build_feed_item(
     FORWARD 类型且传入 session 时，会递归加载源动态并嵌套到
     ``forward.srcMoment``（最多嵌套 ``_MAX_FORWARD_DEPTH`` 层，防环）。
 
-    ``comment_count_override``：评论系统实时计数（``msg_comment_subject.root_count``），
-    有值则覆盖 TMomentStat.commentCount（评论系统自身计数为准）。
+    2.41.0：卡片不再装配统计（``module_stat`` 已移除），计数统一由
+    ``GET /interaction/status`` 提供。
     """
     modules: list[MomentModule] = []
 
@@ -261,11 +265,6 @@ async def _build_feed_item(
                 )
             ).one_or_none()
             if src_dyn is not None:
-                src_stat = (
-                    await session.exec(
-                        select(TMomentStat).where(col(TMomentStat.dynId) == src_dyn.dynId)
-                    )
-                ).one_or_none()
                 # 2.22.0：嵌套源动态的话题关系若未在外层 map，单条补齐（仅 FORWARD 嵌套场景，量小）
                 nested_rel_map = topic_rel_map or {}
                 if src_dyn.dynId not in nested_rel_map:
@@ -274,7 +273,6 @@ async def _build_feed_item(
                         nested_rel_map = {**nested_rel_map, **extra}
                 src_moment = await _build_feed_item(
                     src_dyn,
-                    src_stat,
                     session=session,
                     topic_rel_map=nested_rel_map,
                     _depth=_depth + 1,
@@ -303,18 +301,6 @@ async def _build_feed_item(
             )
         )
 
-    # stat 模块
-    stat_snapshot = _build_stat_modules(stat, comment_count_override=comment_count_override)
-    modules.append(
-        MomentModule(
-            moduleType="stat",
-            likeCount=stat_snapshot["likeCount"],
-            commentCount=stat_snapshot["commentCount"],
-            repostCount=stat_snapshot["repostCount"],
-            viewCount=stat_snapshot["viewCount"],
-        )
-    )
-
     # interaction 模块（当前用户点赞态）
     modules.append(MomentModule(moduleType="interaction", isLike=is_like))
 
@@ -323,16 +309,16 @@ async def _build_feed_item(
         dynIdStr=str(dyn.dynId),
         dynType=dyn.dynType.name,
         mid=dyn.mid,
-        auditStatus=dyn.auditStatus.value,
+        auditStatus=dyn.auditStatus.name,
         isTop=dyn.isTop,
         pubTime=_iso(dyn.pubTime),
         createdTime=_iso(dyn.created_at),
         auditRejectReason=dyn.auditRejectReason,
         # IP 属地：数据库无值（旧数据/未解析）时兜底为「未知」，不返回 None
         ipLocation=dyn.ipLocation or "未知",
+
         ipIsp=dyn.ipIsp,
         modules=modules,
-        stat=stat_snapshot,
     )
 
 
@@ -440,14 +426,19 @@ async def _load_topic_rel_map(
 
 async def _load_stats(
     session: AsyncSession, moment_ids: list[int]
-) -> dict[int, TMomentStat]:
-    """批量读 TMomentStat（直接读字段，禁 COUNT 聚合）。"""
+) -> dict[int, TInteractionStat]:
+    """批量读动态计数（2.36.0 统一 TInteractionStat，bizType=dynamic；直接读字段，禁 COUNT 聚合）。"""
     if not moment_ids:
         return {}
     rows = (
-        await session.exec(select(TMomentStat).where(col(TMomentStat.dynId).in_(moment_ids)))
+        await session.exec(
+            select(TInteractionStat).where(
+                col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TInteractionStat.bizId).in_(moment_ids),
+            )
+        )
     ).all()
-    return {r.dynId: r for r in rows}
+    return {r.bizId: r for r in rows}
 
 
 async def _load_comment_counts(
@@ -464,7 +455,7 @@ async def _load_comment_counts(
         await session.exec(
             select(CommentSubject.oid, CommentSubject.root_count).where(
                 col(CommentSubject.oid).in_(moment_ids),
-                col(CommentSubject.type) == "dynamic",
+                col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
             )
         )
     ).all()
@@ -487,6 +478,43 @@ async def _load_like_states(
     return {int(d): True for d in rows}
 
 
+async def _assemble_page(
+    session: AsyncSession,
+    page_rows: list[TMoment],
+    *,
+    viewer_mid: int | None,
+) -> tuple[list[MomentFeedItem], int | None, int | None]:
+    """把一页 TMoment 装配成对外卡片（批量 stat/评论/点赞态/lottery/话题，无 N+1）。
+
+    返回 ``(items, baseline_dynId, history_dynId)``；空页返回 ``([], None, None)``。
+    与各 Feed 方法原装配块等价，抽出来供综合 Feed 的 time / recommend 分支共用。
+    """
+    moment_ids = [r.dynId for r in page_rows]
+    if not moment_ids:
+        return [], None, None
+    like_states = await _load_like_states(session, moment_ids, viewer_mid)
+    # 2.20.1：本页 lottery 详情批量一次 RPC 回查，按动态分发填充 RESOURCE=lottery 节点
+    lottery_detail_map = await _build_lottery_detail_map(page_rows)
+    # 2.22.0：本页动态-话题多对多关系批量一次加载（无 N+1）
+    topic_rel_map = await _load_topic_rel_map(session, moment_ids)
+
+    items = [
+        await _build_feed_item(
+            r,
+            session=session,
+            is_like=like_states.get(r.dynId),
+            lottery_detail_map=lottery_detail_map,
+            topic_rel_map=topic_rel_map,
+        )
+        for r in page_rows
+    ]
+    await _attach_authors(session, items)
+    await _attach_topics(session, items)
+    baseline = items[0].dynId if items else None
+    history = items[-1].dynId if items else None
+    return items, baseline, history
+
+
 class MomentFeedService:
     """动态 Feed / 详情服务（静态方法集合，无状态）。"""
 
@@ -502,77 +530,202 @@ class MomentFeedService:
         history_offset: int | None = None,
         refresh_type: int = 1,
         viewer_mid: int | None = None,
+        sort: str = "recommend",
+        last_showlist: list[int] | None = None,
+        last_clicklist: list[int] | None = None,
+        uniq_id: str | None = None,
     ) -> MomentFeedResp:
-        """综合页 Feed：仅 normal + 未软删，pubTime 倒序，游标分页。"""
+        """综合页 Feed。
+
+        - ``sort="recommend"``（默认，2.32.0 起对齐 B 站 rcmd 推荐流）：
+          EdgeRank 推荐排序——候选集 = 最近 ``edgerank_candidate_window_hours``
+          小时内 normal + 未软删的动态（上限 ``edgerank_candidate_limit`` 条），
+          批量装配统计后按 ``FEED_PROFILE`` 打分倒序；**无 page/offset 分页语义**，
+          以 ``last_showlist``（客户端已展示 dynId 列表）为去重依据，排除后取前
+          ``page_size`` 条；``hasMore`` = 排除后候选是否仍有剩余；
+          ``updateBaseline``/``historyOffset``/``updateNum`` 置空（无游标语义）。
+          ``last_clicklist``（已互动）预留反馈通道，当前不参与排序。
+          2.33.0 起登录用户叠加**个性化因子**（关注作者 / 点赞过作者 / 互动话题
+          加权，``settings.edgerank_personalized_*``），未登录或开关关闭时退化为
+          纯全局排序。
+        - ``sort="time"``：pubTime 倒序 + dynId 游标（history_offset 语义不变）。
+        """
         page = max(1, page)
         page_size = min(max(1, page_size), 50)
 
-        stmt = (
-            select(TMoment)
-            .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
-            .where(col(TMoment.deletedAt).is_(None))
-            .where(col(TMoment.pubTime).isnot(None))
-        )
-
-        if history_offset is not None:
-            # 上拉加载：取比 history_offset 更旧的
-            stmt = stmt.where(col(TMoment.dynId) < history_offset)
-        if update_baseline is not None and refresh_type == 2:
-            # 翻页场景也可基于基线
-            stmt = stmt.where(col(TMoment.dynId) < update_baseline)
-
-        stmt = stmt.order_by(col(TMoment.pubTime).desc()).limit(page_size + 1)
-        rows = (await session.exec(stmt)).all()
-
-        has_more = len(rows) > page_size
-        page_rows = rows[:page_size]
-
-        moment_ids = [r.dynId for r in page_rows]
-        stats = await _load_stats(session, moment_ids)
-        comment_counts = await _load_comment_counts(session, moment_ids)
-        like_states = await _load_like_states(session, moment_ids, viewer_mid)
-        # 2.20.1：本页 lottery 详情批量一次 RPC 回查，按动态分发填充 RESOURCE=lottery 节点
-        lottery_detail_map = await _build_lottery_detail_map(page_rows)
-        # 2.22.0：本页动态-话题多对多关系批量一次加载（无 N+1）
-        topic_rel_map = await _load_topic_rel_map(session, moment_ids)
-
-        items = [
-            await _build_feed_item(
-                r,
-                stats.get(r.dynId),
-                session=session,
-                is_like=like_states.get(r.dynId),
-                comment_count_override=comment_counts.get(r.dynId),
-                lottery_detail_map=lottery_detail_map,
-                topic_rel_map=topic_rel_map,
-            )
-            for r in page_rows
+        base_where = [
+            col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+            col(TMoment.deletedAt).is_(None),
+            col(TMoment.pubTime).isnot(None),
         ]
-        await _attach_authors(session, items)
-        await _attach_topics(session, items)
 
-        baseline = items[0].dynId if items else None
-        history = items[-1].dynId if items else None
-        update_num = 0
-        if refresh_type == 1 and update_baseline is not None:
-            # 刷新：统计基线上方（dynId > baseline）的 normal 条数
-            cnt = (
+        if sort == "time":
+            # 时间倒序：保留既有 dynId 游标语义（history_offset / update_baseline）
+            stmt = select(TMoment).where(*base_where)
+            if history_offset is not None:
+                # 上拉加载：取比 history_offset 更旧的
+                stmt = stmt.where(col(TMoment.dynId) < history_offset)
+            if update_baseline is not None and refresh_type == 2:
+                # 翻页场景也可基于基线
+                stmt = stmt.where(col(TMoment.dynId) < update_baseline)
+
+            stmt = stmt.order_by(col(TMoment.pubTime).desc()).limit(page_size + 1)
+            rows = (await session.exec(stmt)).all()
+
+            has_more = len(rows) > page_size
+            page_rows = rows[:page_size]
+            items, baseline, history = await _assemble_page(
+                session, page_rows, viewer_mid=viewer_mid
+            )
+
+            update_num = 0
+            if refresh_type == 1 and update_baseline is not None:
+                # 刷新：统计基线上方（dynId > baseline）的 normal 条数
+                cnt = (
+                    await session.exec(
+                        select(TMoment.dynId)
+                        .where(*base_where)
+                        .where(col(TMoment.dynId) > update_baseline)
+                    )
+                ).all()
+                update_num = len(cnt)
+
+            return MomentFeedResp(
+                items=items,
+                hasMore=has_more,
+                updateBaseline=baseline,
+                historyOffset=history,
+                updateNum=update_num,
+            )
+
+        # ---- EdgeRank 推荐流（默认，2.27.0；2.36.0 候选统一 TResourceFeed）----
+        # 时间基准用 datetime.now()（本地 CST），与业务写入/灌数数据一致，
+        # 避免 UTC 字面值比 CST 小 8 小时导致候选窗口/decay 失真
+        window_dt = datetime.now() - timedelta(
+            hours=settings.edgerank_candidate_window_hours
+        )
+        res_rows = (
+            await session.exec(
+                select(TResourceFeed)
+                .where(
+                    col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TResourceFeed.auditStatus) == MomentAuditStatusEnum.NORMAL.value,
+                    col(TResourceFeed.deletedAt).is_(None),
+                    col(TResourceFeed.pubTime).isnot(None),
+                    col(TResourceFeed.pubTime) >= window_dt,
+                )
+                .order_by(col(TResourceFeed.pubTime).desc())
+                .limit(settings.edgerank_candidate_limit)
+            )
+        ).all()
+        if not res_rows:
+            return MomentFeedResp(
+                items=[],
+                hasMore=False,
+                updateBaseline=None,
+                historyOffset=None,
+                updateNum=0,
+            )
+
+        cand_ids = [r.bizId for r in res_rows]
+        # 渲染所需动态主表（内容）批量一次拉取
+        moment_rows = (
+            await session.exec(
+                select(TMoment).where(col(TMoment.dynId).in_(cand_ids))
+            )
+        ).all()
+        moment_map = {r.dynId: r for r in moment_rows}
+        cand_stats = await _load_stats(session, cand_ids)
+        cand_comments = await _load_comment_counts(session, cand_ids)
+
+        # 2.35.0 作者质量：候选作者批量读 moment_author_quality（avgEngagement/recentPublish）
+        author_q: dict[int, tuple[float, int]] = {}
+        cand_mids = {r.mid for r in res_rows}
+        if cand_mids:
+            aq_rows = (
                 await session.exec(
-                    select(TMoment.dynId)
-                    .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
-                    .where(col(TMoment.deletedAt).is_(None))
-                    .where(col(TMoment.pubTime).isnot(None))
-                    .where(col(TMoment.dynId) > update_baseline)
+                    select(MomentAuthorQuality).where(
+                        col(MomentAuthorQuality.mid).in_(cand_mids)
+                    )
                 )
             ).all()
-            update_num = len(cnt)
+            author_q = {
+                r.mid: (
+                    float(r.avgEngagement or 0.0),
+                    int(r.recentPublishCount or 0),
+                    int(r.fansCount or 0),
+                    int(r.currentLevel or 0),
+                )
+                for r in aq_rows
+            }
 
+        # 2.37.0：pending 举报数（resourceType=dynamic 按 bizId 统计，通用降权）
+        report_counts: dict[int, int] = {}
+        if cand_ids:
+            rp_rows = (
+                await session.exec(
+                    select(TResourceReport.bizId, func.count())
+                    .where(
+                        col(TResourceReport.resourceType)
+                        == int(InteractionBizTypeEnum.DYNAMIC),
+                        col(TResourceReport.bizId).in_(cand_ids),
+                        col(TResourceReport.auditStatus) == "pending",
+                    )
+                    .group_by(col(TResourceReport.bizId))
+                )
+            ).all()
+            report_counts = {int(b): int(c) for b, c in rp_rows}
+
+        # 统一计数键（含 dislike）+ 候选特征 → 通用引擎
+        cand_counts: dict[int, dict[str, int]] = {}
+        for cid in cand_ids:
+            st = cand_stats.get(cid)
+            base = build_moment_counts(st, cand_comments.get(cid))
+            base["dislike"] = int(st.dislikeCount or 0) if st else 0
+            cand_counts[cid] = base
+
+        candidates: list[FeedCandidate] = []
+        for r in res_rows:
+            dyn = moment_map.get(r.bizId)
+            candidates.append(
+                FeedCandidate(
+                    biz_type="dynamic",
+                    biz_id=r.bizId,
+                    mid=r.mid,
+                    pub_time=r.pubTime,
+                    tags=list(r.tags or []),
+                    is_forward=(
+                        dyn.dynType is MomentTypeEnum.FORWARD if dyn else False
+                    ),
+                    rich=_is_rich_content(dyn.contentJson) if dyn else False,
+                )
+            )
+
+        ranked_ids, has_more = await rank_feed(
+            session,
+            candidates,
+            cand_counts,
+            viewer_mid=viewer_mid,
+            last_showlist=last_showlist,
+            uniq_id=uniq_id,
+            page_size=page_size,
+            clicklist=last_clicklist,
+            comment_override=cand_comments,
+            author_quality=author_q,
+            report_counts=report_counts,
+            now=datetime.now(),
+        )
+
+        # 2.32.0：推荐流无 page/offset 语义；updateBaseline/historyOffset/updateNum 置空。
+        # 按排序结果回查动态主表渲染（候选行对应的 TMoment 应全部存在）
+        page_rows = [moment_map[bid] for bid in ranked_ids if bid in moment_map]
+        items, _, _ = await _assemble_page(session, page_rows, viewer_mid=viewer_mid)
         return MomentFeedResp(
             items=items,
             hasMore=has_more,
-            updateBaseline=baseline,
-            historyOffset=history,
-            updateNum=update_num,
+            updateBaseline=None,
+            historyOffset=None,
+            updateNum=0,
         )
 
     # ==================== 关注流 Feed（仅关注的人的动态）====================
@@ -623,8 +776,6 @@ class MomentFeedService:
         page_rows = rows[:page_size]
 
         moment_ids = [r.dynId for r in page_rows]
-        stats = await _load_stats(session, moment_ids)
-        comment_counts = await _load_comment_counts(session, moment_ids)
         like_states = await _load_like_states(session, moment_ids, viewer_mid)
         # 2.20.1：本页 lottery 详情批量一次 RPC 回查，按动态分发填充 RESOURCE=lottery 节点
         lottery_detail_map = await _build_lottery_detail_map(page_rows)
@@ -634,10 +785,8 @@ class MomentFeedService:
         items = [
             await _build_feed_item(
                 r,
-                stats.get(r.dynId),
                 session=session,
                 is_like=like_states.get(r.dynId),
-                comment_count_override=comment_counts.get(r.dynId),
                 lottery_detail_map=lottery_detail_map,
                 topic_rel_map=topic_rel_map,
             )
@@ -708,7 +857,7 @@ class MomentFeedService:
         if history_offset is not None:
             stmt = stmt.where(col(TMoment.dynId) < history_offset)
 
-        # hot 排序需先回捞 stats，取 3 倍候选再按互动数倒序，避免漏掉高互动旧动态
+        # hot 排序需先回捞 stats，取 3 倍候选再打分倒序，避免漏掉高互动旧动态
         if sort == "time":
             stmt = stmt.order_by(col(TMoment.pubTime).desc()).limit(page_size + 1)
             rows = (await session.exec(stmt)).all()
@@ -720,12 +869,18 @@ class MomentFeedService:
             candidates = rows[: page_size * 3]
             stats = await _load_stats(session, [r.dynId for r in candidates])
             comments = await _load_comment_counts(session, [r.dynId for r in candidates])
+            # 2.27.0：hot 排序由「like+comment+repost 求和」升级为话题专用 EdgeRank
+            #（TOPIC_FEED_PROFILE：评论/转发权重更高、半衰期 6h，突出话题热点时效）
+            now = datetime.now()
             ranked = sorted(
                 candidates,
-                key=lambda r: (
-                    (stats.get(r.dynId).likeCount if stats.get(r.dynId) else 0)
-                    + (comments.get(r.dynId) or 0)
-                    + (stats.get(r.dynId).repostCount if stats.get(r.dynId) else 0)
+                key=lambda r: compute_moment_score(
+                    build_moment_counts(
+                        stats.get(r.dynId), comments.get(r.dynId)
+                    ),
+                    r.pubTime,
+                    TOPIC_FEED_PROFILE,
+                    now=now,
                 ),
                 reverse=True,
             )
@@ -741,8 +896,6 @@ class MomentFeedService:
             has_more = len(candidates) > len(page_rows) or len(rows) > page_size * 3
 
         moment_ids = [r.dynId for r in page_rows]
-        stats = await _load_stats(session, moment_ids)
-        comment_counts = await _load_comment_counts(session, moment_ids)
         like_states = await _load_like_states(session, moment_ids, viewer_mid)
         # 2.20.1：本页 lottery 详情批量一次 RPC 回查，按动态分发填充 RESOURCE=lottery 节点
         lottery_detail_map = await _build_lottery_detail_map(page_rows)
@@ -752,10 +905,8 @@ class MomentFeedService:
         items = [
             await _build_feed_item(
                 r,
-                stats.get(r.dynId),
                 session=session,
                 is_like=like_states.get(r.dynId),
-                comment_count_override=comment_counts.get(r.dynId),
                 lottery_detail_map=lottery_detail_map,
                 topic_rel_map=topic_rel_map,
             )
@@ -819,8 +970,6 @@ class MomentFeedService:
         page_rows = rows[:page_size]
 
         moment_ids = [r.dynId for r in page_rows]
-        stats = await _load_stats(session, moment_ids)
-        comment_counts = await _load_comment_counts(session, moment_ids)
         like_states = await _load_like_states(session, moment_ids, viewer_mid)
         # 2.20.1：本页 lottery 详情批量一次 RPC 回查，按动态分发填充 RESOURCE=lottery 节点
         lottery_detail_map = await _build_lottery_detail_map(page_rows)
@@ -830,10 +979,8 @@ class MomentFeedService:
         items = [
             await _build_feed_item(
                 r,
-                stats.get(r.dynId),
                 session=session,
                 is_like=like_states.get(r.dynId),
-                comment_count_override=comment_counts.get(r.dynId),
                 lottery_detail_map=lottery_detail_map,
                 topic_rel_map=topic_rel_map,
             )
@@ -873,21 +1020,15 @@ class MomentFeedService:
         if dyn.auditStatus != MomentAuditStatusEnum.NORMAL and dyn.mid != viewer_mid:
             return None
 
-        stat = (
-            await session.exec(select(TMomentStat).where(col(TMomentStat.dynId) == moment_id))
-        ).one_or_none()
-        comment_counts = await _load_comment_counts(session, [moment_id])
-        like_states = await _load_like_states(session, [moment_id], viewer_mid)
+        # 2.41.0：卡片不再装配统计（module_stat 已移除），互动状态/计数统一走 /interaction/status
         # 2.20.1：单条详情 lottery 详情批量回查（弱依赖降级）
         lottery_detail_map = await _build_lottery_detail_map([dyn])
         # 2.22.0：单条详情话题关系加载（无 N+1）
         topic_rel_map = await _load_topic_rel_map(session, [moment_id])
         item = await _build_feed_item(
             dyn,
-            stat,
             session=session,
-            is_like=like_states.get(moment_id),
-            comment_count_override=comment_counts.get(moment_id),
+            is_like=None,
             lottery_detail_map=lottery_detail_map,
             topic_rel_map=topic_rel_map,
         )
@@ -930,10 +1071,8 @@ class MomentFeedService:
         if not visible:
             return []
 
+        # 2.41.0：卡片不再装配统计（module_stat 已移除），互动状态/计数统一走 /interaction/status
         stat_ids = [r.dynId for r in visible]
-        stats = await _load_stats(session, stat_ids)
-        comment_counts = await _load_comment_counts(session, stat_ids)
-        like_states = await _load_like_states(session, stat_ids, viewer_mid)
         # 2.20.1：批量详情 lottery 详情一次 RPC 回查（弱依赖降级）
         lottery_detail_map = await _build_lottery_detail_map(visible)
         # 2.22.0：批量详情话题关系一次加载（无 N+1）
@@ -942,10 +1081,8 @@ class MomentFeedService:
         items = [
             await _build_feed_item(
                 r,
-                stats.get(r.dynId),
                 session=session,
-                is_like=like_states.get(r.dynId),
-                comment_count_override=comment_counts.get(r.dynId),
+                is_like=None,
                 lottery_detail_map=lottery_detail_map,
                 topic_rel_map=topic_rel_map,
             )
@@ -985,8 +1122,9 @@ class MomentFeedService:
 
         like_count = (
             await session.exec(
-                select(func.coalesce(func.sum(TMomentStat.likeCount), 0)).where(
-                    col(TMomentStat.dynId) == TMoment.dynId,
+                select(func.coalesce(func.sum(TInteractionStat.likeCount), 0)).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == TMoment.dynId,
                     *visible,
                 )
             )
@@ -1020,7 +1158,10 @@ class MomentFeedService:
         total: int = 0
         like_count = (
             await session.exec(
-                select(TMomentStat.likeCount).where(col(TMomentStat.dynId) == dyn_id)
+                select(TInteractionStat.likeCount).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == dyn_id,
+                )
             )
         ).one_or_none()
         if like_count is not None:

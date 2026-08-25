@@ -12,11 +12,15 @@
   基于已发 Moment 的 ``lbsPoi`` 去重聚合返回（含经纬度、使用该 POI 的 Moment 数）。
 """
 
+from datetime import datetime
+
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.config import settings
 from app.models.db import TMoment, TMomentTopic
 from app.models.enums import MomentTopicAuditStatusEnum
+from app.services.edgerank import TOPIC_SQUARE_PROFILE, compute_topic_score
 from app.models.schemas.moment import (
     MomentAtListResp,
     MomentAtSearchResp,
@@ -106,7 +110,13 @@ class MomentTopicService:
         page_size: int = 20,
         hot_only: bool = False,
     ) -> MomentTopicSquareResp:
-        """话题广场列表（按 isHot / sortWeight / dynCount 倒序）。
+        """话题广场列表（2.27.0 起按话题 EdgeRank 排序）。
+
+        EdgeRank 分 = ``Σ(w·log(count+1))·decay(pubTime)``——dynCount / viewCount 用 log
+        压缩长尾、isHot / sortWeight 直接加权（运营可干预）、pubTime 时间衰减（12h 半衰期）。
+        候选集为全部 normal 话题（上限 ``edgerank_candidate_limit``，按 pubTime 倒序取），
+        在应用层打分后 offset 分页；``settings.edgerank_enabled=False`` 时回退为原
+        isHot / sortWeight / dynCount 静态排序。
 
         ``hot_only=True`` 时仅返回热门话题（isHot=1），供 /topic/hot-search 复用。
         """
@@ -119,15 +129,39 @@ class MomentTopicService:
         )
         if hot_only:
             stmt = stmt.where(col(TMomentTopic.isHot) == 1)
-        stmt = stmt.order_by(
-            col(TMomentTopic.isHot).desc(),
-            col(TMomentTopic.sortWeight).desc(),
-            col(TMomentTopic.dynCount).desc(),
-            col(TMomentTopic.topicId).desc(),
-        ).limit(page_size + 1).offset((page - 1) * page_size)
 
-        rows = (await session.exec(stmt)).all()
-        has_more = len(rows) > page_size
+        rows = (
+            await session.exec(
+                stmt.order_by(
+                    col(TMomentTopic.pubTime).desc(),
+                    col(TMomentTopic.topicId).desc(),
+                ).limit(settings.edgerank_candidate_limit)
+            )
+        ).all()
+
+        if settings.edgerank_enabled:
+            # 时间基准 datetime.now()（本地 CST），与业务写入/数据库 NOW() 一致
+            now = datetime.now()
+            ranked = sorted(
+                rows,
+                key=lambda t: compute_topic_score(t, TOPIC_SQUARE_PROFILE, now=now),
+                reverse=True,
+            )
+        else:
+            # 降级：保持既有静态排序（isHot / sortWeight / dynCount 倒序）
+            ranked = sorted(
+                rows,
+                key=lambda t: (
+                    int(t.isHot or 0),
+                    int(t.sortWeight or 0),
+                    int(t.dynCount or 0),
+                    int(t.topicId or 0),
+                ),
+                reverse=True,
+            )
+
+        has_more = len(ranked) > page * page_size
+        page_rows = ranked[(page - 1) * page_size : page * page_size]
         items = [
             MomentTopicInfo(
                 topicId=t.topicId,
@@ -139,7 +173,7 @@ class MomentTopicService:
                 viewCount=t.viewCount,
                 isHot=t.isHot,
             )
-            for t in rows[:page_size]
+            for t in page_rows
         ]
         return MomentTopicSquareResp(items=items, hasMore=has_more)
 
@@ -231,7 +265,7 @@ class MomentTopicService:
             raise ValueError("话题已存在")
 
         topic = TMomentTopic(
-            topicId=generate_topic_id(),
+            topicId=await generate_topic_id(),
             topicName=topic_name,
             topicCover=req.topicCover,
             topicDesc=req.topicDesc,
@@ -245,7 +279,7 @@ class MomentTopicService:
         return MomentTopicCreateResp(
             topicId=topic.topicId,
             topicName=topic.topicName,
-            auditStatus=topic.auditStatus.value,
+            auditStatus=topic.auditStatus.name,
         )
 
     # ==================== 我创建的话题（2.19.0）====================
@@ -277,7 +311,7 @@ class MomentTopicService:
                 topicName=t.topicName,
                 topicCover=t.topicCover,
                 topicDesc=t.topicDesc,
-                auditStatus=t.auditStatus.value,
+                auditStatus=t.auditStatus.name,
                 auditRejectReason=t.auditRejectReason,
                 pubTime=t.pubTime.isoformat() if t.pubTime else None,
                 createdAt=t.created_at.isoformat() if t.created_at else None,

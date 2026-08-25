@@ -11,6 +11,7 @@ from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
 from app.models.db import TMomentStat
+from app.models.str_int import StrInt
 from app.models.enums import InteractionBizTypeEnum
 from app.models.schemas.favorite import (
     FavoriteAddReq,
@@ -82,17 +83,23 @@ async def create_folder(
     user: RequiredUser,
     req: FavoriteFolderCreateReq,
 ) -> StandardResponse[FavoriteFolderResp]:
-    folder_id = await FavoriteService.create_folder(
-        session, user.mid, req.name, req.description, req.coverUrl
-    )
+    try:
+        folder_id, cover_audit_status = await FavoriteService.create_folder(
+            session, user.mid, req.name, req.description, req.coverUrl
+        )
+    except ValueError as e:
+        # 封面 URL 下载校验失败等（复用头像校验：http/https、1s 内下载、≤1MB、image/*）
+        return StandardResponse(code=422, msg=str(e))
     return StandardResponse(
         data=FavoriteFolderResp(
             folderId=str(folder_id),
             name=req.name.strip() or "未命名收藏夹",
             description=req.description,
-            coverUrl=req.coverUrl,
+            # 封面先审后发：未审核通过不对外展示（coverAuditStatus=pending 时前端展示「封面待审核」）
+            coverUrl=None,
             isDefault=False,
             favoriteCount=0,
+            coverAuditStatus=cover_audit_status,
         )
     )
 
@@ -116,7 +123,10 @@ async def update_folder(
             req.coverUrl,
         )
     except ValueError as e:
-        return StandardResponse(code=400, msg=str(e))
+        if str(e) == "收藏夹不存在":
+            return StandardResponse(code=400, msg=str(e))
+        # 封面 URL 下载校验失败（422）
+        return StandardResponse(code=422, msg=str(e))
     return StandardResponse(data=None)
 
 
@@ -236,7 +246,7 @@ async def list_favorites(
         session, user.mid, folder_id, page, pageSize, biz_type=bt
     )
     # 兼容字段：仅当过滤为 dynamic 或不过滤时，把 dynamic 项的 bizId 填到 dynIds
-    dyn_ids = [it["bizId"] for it in items if it["bizType"] == "dynamic"]
+    dyn_ids = [it["bizId"] for it in items if it["bizType"] == InteractionBizTypeEnum.DYNAMIC]
     return StandardResponse(
         data=FavoriteListResp(
             folderId=folderId,
@@ -332,7 +342,7 @@ async def set_setting(
 @router.get("/user/folders", response_model=StandardResponse[list[FavoriteFolderResp] | None], summary="某用户主页公开的收藏夹列表")
 async def public_folders(
     session: SessionDep,
-    mid: int = Query(description="目标用户mid"),
+    mid: StrInt = Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）"),
 ) -> StandardResponse[list[FavoriteFolderResp] | None]:
     folders = await FavoriteService.list_public_folders(session, mid)
     if folders is None:
@@ -343,7 +353,7 @@ async def public_folders(
 @router.get("/user/dynamics", response_model=StandardResponse[FavoriteListResp | None], summary="某用户某收藏夹下的公开资源")
 async def public_dynamics(
     session: SessionDep,
-    mid: int = Query(description="目标用户mid"),
+    mid: StrInt = Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）"),
     folderId: str = Query(description="收藏夹id（字符串）"),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=20, ge=1, le=50),
@@ -357,7 +367,7 @@ async def public_dynamics(
     if result is None:
         return StandardResponse(code=403, msg="该收藏夹不公开或不存在")
     total, items = result
-    dyn_ids = [it["bizId"] for it in items if it["bizType"] == "dynamic"]
+    dyn_ids = [it["bizId"] for it in items if it["bizType"] == InteractionBizTypeEnum.DYNAMIC]
     return StandardResponse(
         data=FavoriteListResp(
             folderId=folderId,

@@ -35,6 +35,7 @@ from app.models.schemas import (
     DmSessionDeleteReq,
     DmSessionListResp,
 )
+from app.models.str_int import StrInt
 from app.services.activity import ActivityService
 from app.services.ban_service import BanService
 from app.services.dm import DmService
@@ -121,7 +122,7 @@ async def delete_session(
 async def list_messages(
     session: SessionDep,
     user: RequiredUser,
-    talker_mid: int = Query(description="对话方mid"),
+    talker_mid: StrInt = Query(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）"),
     cursor: str | None = Query(
         default=None, description="上一页返回的 cursor（本页最小 msgkey），首屏不传"
     ),

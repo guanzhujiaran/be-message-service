@@ -1,90 +1,97 @@
 """消息系统统一枚举定义。
 
-所有字符串枚举一律使用 `StrEnum`，落库时按字符串存储（VARCHAR），
-既保留可读性，也避免 MySQL ENUM 类型变更需要 DDL 的问题。
+所有业务枚举统一使用标准库 `enum.IntEnum` 整数枚举；落库经 `sqlalchemy.Enum(...)`
+映射为 **MySQL 原生 ENUM**，库里存**成员名**（如 `'LOTTERY'`），而非整数字面量
+（新增枚举值需要 DDL，这是原生 ENUM 的固有代价）。对外接口层（AutoStrMixin / pydantic）
+序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
 
-from enum import IntEnum, StrEnum
+from enum import IntEnum
 
 
-class MessageModuleEnum(StrEnum):
+class MessageModuleEnum(IntEnum):
     """消息系统四大模块（对应 routing_key 的第二段）。"""
 
-    PUSH = "push"
-    NOTIFY = "notify"
-    EVENT = "event"
-    DM = "dm"
+    PUSH = 1
+    NOTIFY = 2
+    EVENT = 3
+    DM = 4
 
 
 # ==================== 系统通知 ====================
 
 
-class NotifyTargetTypeEnum(StrEnum):
+class NotifyTargetTypeEnum(IntEnum):
     """系统通知的目标用户类型（按用户类型推送）。"""
 
     # 全体用户
-    ALL = "all"
+    ALL = 1
     # 按角色：target_value 为 root / normal
-    ROLE = "role"
+    ROLE = 2
     # 按等级：target_value 为最低等级，用户 level >= 该值即命中
-    LEVEL = "level"
+    LEVEL = 3
     # 仅大会员：命中 vip_status 非空且不为 "0"
-    VIP = "vip"
+    VIP = 4
     # 指定用户：target_value 为逗号分隔的 mid 列表
-    CUSTOM = "custom"
+    CUSTOM = 5
 
 
-class NotifyStatusEnum(StrEnum):
+class NotifyStatusEnum(IntEnum):
     """系统通知的生命周期状态。"""
 
     # 草稿：管理员已创建但未发布，不会被任何用户拉取到
-    DRAFT = "draft"
+    DRAFT = 1
     # 已发布：到达 publish_at 后可被拉取
-    PUBLISHED = "published"
+    PUBLISHED = 2
     # 已撤回：管理员撤回，用户侧立即不可见
-    REVOKED = "revoked"
+    REVOKED = 3
 
 
-class NotifyLevelEnum(StrEnum):
+class NotifyLevelEnum(IntEnum):
     """通知重要级别，决定推送策略的激进程度。"""
 
-    NORMAL = "normal"
-    IMPORTANT = "important"
-    URGENT = "urgent"
+    NORMAL = 1
+    IMPORTANT = 2
+    URGENT = 3
 
 
 # ==================== 事件提醒 ====================
 
 
-class EventTypeEnum(StrEnum):
-    """用户行为事件类型（点赞 / 回复 / @提及 / 审核驳回）。"""
+class EventTypeEnum(IntEnum):
+    """用户行为事件类型（点赞 / 回复 / @提及 / 审核驳回 / 举报下架）。"""
 
-    LIKE = "like"
-    REPLY = "reply"
-    AT = "at"
-    AUDIT_REJECT = "audit_reject"
+    LIKE = 1
+    REPLY = 2
+    AT = 3
+    AUDIT_REJECT = 4
+    # 2.38.0：内容因举报被管理员下架（通知资源作者，资源无作者时不发）
+    HIDE = 5
+    # 2.40.0：举报未通过审核 / 举报成立已处理（通知举报人）
+    REPORT_REJECT = 6
+    REPORT_RESOLVED = 7
 
 
-class SourceTypeEnum(StrEnum):
+class SourceTypeEnum(IntEnum):
     """事件来源实体类型，与 source_id 共同构成聚合分组键。"""
 
-    VIDEO = "video"
-    DYNAMIC = "dynamic"
-    ARTICLE = "article"
-    COMMENT = "comment"
-    LOTTERY = "lottery"
-    OTHER = "other"
+    VIDEO = 1
+    DYNAMIC = 2
+    ARTICLE = 3
+    COMMENT = 4
+    LOTTERY = 5
+    OTHER = 6
 
 
 # ==================== 私信 ====================
 
 
-class DmMsgTypeEnum(StrEnum):
+class DmMsgTypeEnum(IntEnum):
     """私信消息类型。"""
 
-    TEXT = "text"
-    IMAGE = "image"
-    SYSTEM = "system"
+    TEXT = 1
+    IMAGE = 2
+    SYSTEM = 3
 
 
 class DmMsgStatusEnum(IntEnum):
@@ -104,75 +111,75 @@ class DmSessionTypeEnum(IntEnum):
     SINGLE = 1
 
 
-class DmRelationEnum(StrEnum):
+class DmRelationEnum(IntEnum):
     """会话双方关系，用于陌生人私信过滤。"""
 
     # 普通会话：对方主动发起过或已被接收方回复
-    NORMAL = "normal"
+    NORMAL = 1
     # 陌生人会话：接收方从未回复过，落入「陌生人消息」分组
-    STRANGER = "stranger"
+    STRANGER = 2
 
 
-class DmAuditStateEnum(StrEnum):
+class DmAuditStateEnum(IntEnum):
     """私信管理端审核状态（与评论审核对齐）。
 
     可见性规则：
-    - `normal`   ：正常可见；
-    - `auditing` ：待审核（先发后审，作者无感知）；
-    - `rejected` / `hidden`：对用户不可见（聊天窗过滤，列表不返回）。
+    - `NORMAL`(1)   ：正常可见；
+    - `AUDITING`(2) ：待审核（先发后审，作者无感知）；
+    - `REJECTED`(3) / `HIDDEN`(4)：对用户不可见（聊天窗过滤，列表不返回）。
     """
 
-    NORMAL = "normal"
-    AUDITING = "auditing"
-    REJECTED = "rejected"
-    HIDDEN = "hidden"
+    NORMAL = 1
+    AUDITING = 2
+    REJECTED = 3
+    HIDDEN = 4
 
 
 # ==================== 评论系统 ====================
 
 
-class CommentTypeEnum(StrEnum):
+class CommentTypeEnum(IntEnum):
     """评论区所属的业务实体类型，与 oid 共同唯一定位一个评论区。"""
 
     # 用户动态
-    DYNAMIC = "dynamic"
+    DYNAMIC = 1
     # 专栏 / 图文
-    ARTICLE = "article"
+    ARTICLE = 2
     # 抽奖活动
-    LOTTERY = "lottery"
+    LOTTERY = 3
     # 站内反馈（承接原 Node 端 feedback 场景）
-    FEEDBACK = "feedback"
-    OTHER = "other"
+    FEEDBACK = 4
+    OTHER = 5
 
 
-class CommentSubjectStateEnum(StrEnum):
+class CommentSubjectStateEnum(IntEnum):
     """评论区状态。"""
 
     # 正常，可读可写
-    NORMAL = "normal"
+    NORMAL = 1
     # 已关闭：只读，不接受新评论
-    CLOSED = "closed"
+    CLOSED = 2
 
 
-class CommentStateEnum(StrEnum):
+class CommentStateEnum(IntEnum):
     """单条评论的生命周期状态。
 
     可见性规则（Phase 5 审核落地后完整生效）：
 
-    - `normal`   ：所有人可见
-    - `auditing` ：仅作者本人可见（对齐 B 站「先发后审」，作者无感知）
-    - `rejected` / `hidden` / `deleted`：列表不返回
+    - `NORMAL`(1)   ：所有人可见
+    - `AUDITING`(2) ：仅作者本人可见（对齐 B 站「先发后审」，作者无感知）
+    - `REJECTED`(3) / `HIDDEN`(4) / `DELETED`(5)：列表不返回
     """
 
-    NORMAL = "normal"
+    NORMAL = 1
     # 待审核：命中疑似敏感词，等待人工 / AI 复审
-    AUDITING = "auditing"
+    AUDITING = 2
     # 审核驳回
-    REJECTED = "rejected"
+    REJECTED = 3
     # 管理员下架
-    HIDDEN = "hidden"
+    HIDDEN = 4
     # 用户 / 管理员删除（软删）
-    DELETED = "deleted"
+    DELETED = 5
 
 
 class CommentActionEnum(IntEnum):
@@ -188,13 +195,13 @@ class CommentActionEnum(IntEnum):
     HATE = 2
 
 
-class CommentSortEnum(StrEnum):
+class CommentSortEnum(IntEnum):
     """评论列表排序方式。"""
 
     # 热度排序：读冗余列 hot_score，走 idx_comment_hot
-    HOT = "hot"
+    HOT = 1
     # 时间排序：rpid 单调递增，等价于按发布时间
-    TIME = "time"
+    TIME = 2
 
 
 class CommentAttrBit(IntEnum):
@@ -215,36 +222,36 @@ class CommentAttrBit(IntEnum):
 # ==================== 用户封禁（审核联动）====================
 
 
-class BanServiceEnum(StrEnum):
+class BanServiceEnum(IntEnum):
     """可被封禁的服务范围，与评论 / 私信审核一一对应。
 
     封禁记录按服务维度隔离：封评论只影响评论区，不影响私信。
     """
 
-    COMMENT = "comment"
-    DM = "dm"
+    COMMENT = 1
+    DM = 2
 
 
-class BanDurationTypeEnum(StrEnum):
+class BanDurationTypeEnum(IntEnum):
     """封禁时长类型。
 
-    - `temporary`：限时封禁，配合 `duration_days` 计算解封时间；
-    - `permanent`：永久封禁，无到期时间。
+    - `TEMPORARY`(1)：限时封禁，配合 `duration_days` 计算解封时间；
+    - `PERMANENT`(2)：永久封禁，无到期时间。
     """
 
-    TEMPORARY = "temporary"
-    PERMANENT = "permanent"
+    TEMPORARY = 1
+    PERMANENT = 2
 
 
-class BanStatusEnum(StrEnum):
+class BanStatusEnum(IntEnum):
     """封禁记录的生命周期状态。
 
-    - `active`：生效中（限时封禁到期自动由读取层判定为失效，无需定时任务翻转）；
-    - `lifted`：已被管理员手动解封。
+    - `ACTIVE`(1)：生效中（限时封禁到期自动由读取层判定为失效，无需定时任务翻转）；
+    - `LIFTED`(2)：已被管理员手动解封。
     """
 
-    ACTIVE = "active"
-    LIFTED = "lifted"
+    ACTIVE = 1
+    LIFTED = 2
 
 
 # ==================== 用户经验 ====================
@@ -271,32 +278,32 @@ class MomentTypeEnum(IntEnum):
     WORD = 6
 
 
-class MomentAuditStatusEnum(StrEnum):
+class MomentAuditStatusEnum(IntEnum):
     """Moment 审核生命周期状态。
 
-    - `auditing`：审核中（先发后审，作者本人空间可见，普通用户不可见）；
-    - `normal`  ：审核通过，进入 Feed 流全量可见；
-    - `rejected`：审核驳回，作者可编辑后重新提交或删除；
-    - `hidden`  ：管理员下架。
+    - `AUDITING`(1)：审核中（先发后审，作者本人空间可见，普通用户不可见）；
+    - `NORMAL`(2)  ：审核通过，进入 Feed 流全量可见；
+    - `REJECTED`(3)：审核驳回，作者可编辑后重新提交或删除；
+    - `HIDDEN`(4)  ：管理员下架。
     """
 
-    AUDITING = "auditing"
-    NORMAL = "normal"
-    REJECTED = "rejected"
-    HIDDEN = "hidden"
+    AUDITING = 1
+    NORMAL = 2
+    REJECTED = 3
+    HIDDEN = 4
 
 
-class MomentTopicAuditStatusEnum(StrEnum):
+class MomentTopicAuditStatusEnum(IntEnum):
     """话题审核生命周期状态（TMomentTopic.auditStatus，对齐动态审核）。
 
-    - `auditing`：待审核（用户创建，不公开展示）；
-    - `normal`  ：审核通过，进入话题广场 / Feed / 热搜；
-    - `rejected`：审核驳回，仅创建者「我的话题」可见（含驳回原因）。
+    - `AUDITING`(1)：待审核（用户创建，不公开展示）；
+    - `NORMAL`(2)  ：审核通过，进入话题广场 / Feed / 热搜；
+    - `REJECTED`(3)：审核驳回，仅创建者「我的话题」可见（含驳回原因）。
     """
 
-    AUDITING = "auditing"
-    NORMAL = "normal"
-    REJECTED = "rejected"
+    AUDITING = 1
+    NORMAL = 2
+    REJECTED = 3
 
 
 class MomentVisibleScopeEnum(IntEnum):
@@ -337,30 +344,30 @@ class MomentReportReasonEnum(IntEnum):
     OTHER = 6
 
 
-class MomentReportAuditStatusEnum(StrEnum):
+class MomentReportAuditStatusEnum(IntEnum):
     """Moment 举报处理状态。"""
 
-    PENDING = "pending"
-    RESOLVED = "resolved"
-    REJECTED = "rejected"
+    PENDING = 1
+    RESOLVED = 2
+    REJECTED = 3
 
 
-class MomentAuditLogActionEnum(StrEnum):
+class MomentAuditLogActionEnum(IntEnum):
     """Moment 审核流转动作类型（写 TMomentAuditLog.actionType）。"""
 
-    CREATE = "create"
-    EDIT = "edit"
-    APPROVE = "approve"
-    REJECT = "reject"
-    RESUBMIT = "resubmit"
-    DELETE = "delete"
+    CREATE = 1
+    EDIT = 2
+    APPROVE = 3
+    REJECT = 4
+    RESUBMIT = 5
+    DELETE = 6
 
 
-class MomentAuditLogOperatorRoleEnum(StrEnum):
+class MomentAuditLogOperatorRoleEnum(IntEnum):
     """Moment 审核流转操作人角色。"""
 
-    AUTHOR = "author"
-    ADMIN = "admin"
+    AUTHOR = 1
+    ADMIN = 2
 
 
 # 互动资源类型枚举统一收口到 bili-common（2.18.0 去重），此处 re-export 保持兼容
@@ -370,36 +377,50 @@ from bili_common.models.interaction import InteractionBizTypeEnum  # noqa: E402
 # ==================== 用户关注关系 ====================
 
 
-class FollowStatusEnum(StrEnum):
+class FollowStatusEnum(IntEnum):
     """用户间关系状态（关注 / 拉黑），按方向独立记录。
 
-    - `following`：mid 主动关注 target_mid；
-    - `blocked` ：mid 拉黑 target_mid，target_mid 不能关注 / 私信 mid。
+    - `FOLLOWING`(1)：mid 主动关注 target_mid；
+    - `BLOCKED`(2) ：mid 拉黑 target_mid，target_mid 不能关注 / 私信 mid。
 
     一条记录只代表「mid → target_mid」单一方向的关系，互相关注需要
     两条 `following` 记录（双向各一）。`uq(mid, target_mid)` 保证
     同一方向只有一条生效记录。
     """
 
-    FOLLOWING = "following"
-    BLOCKED = "blocked"
+    FOLLOWING = 1
+    BLOCKED = 2
 
 
-class AvatarAuditStatusEnum(StrEnum):
+class AvatarAuditStatusEnum(IntEnum):
     """头像更换审核状态（TUserAvatarAudit.auditStatus）。
 
-    - `pending`：待审核，未对外展示；
-    - `approved`：审核通过，newAvatar 已写入 TUserDetail.avatar 公开显示；
-    - `rejected`：审核驳回，保持原头像。
+    - `PENDING`(1)：待审核，未对外展示；
+    - `APPROVED`(2)：审核通过，newAvatar 已写入 TUserDetail.avatar 公开显示；
+    - `REJECTED`(3)：审核驳回，保持原头像。
     """
 
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
+    PENDING = 1
+    APPROVED = 2
+    REJECTED = 3
+
+
+class FolderCoverAuditStatusEnum(IntEnum):
+    """收藏夹封面审核状态（TFolderCoverAudit.auditStatus）。
+
+    - `PENDING`(1)：待审核，新封面未对外展示（TFavoriteFolder.cover_url 保持原封面）；
+    - `APPROVED`(2)：审核通过，newCover 已写入 TFavoriteFolder.cover_url 公开显示；
+    - `REJECTED`(3)：审核驳回，保持原封面。
+    """
+
+    PENDING = 1
+    APPROVED = 2
+    REJECTED = 3
 
 
 __all__ = [
     "AvatarAuditStatusEnum",
+    "FolderCoverAuditStatusEnum",
     "BanDurationTypeEnum",
     "BanServiceEnum",
     "BanStatusEnum",

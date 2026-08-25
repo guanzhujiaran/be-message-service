@@ -106,6 +106,21 @@ class LotteryRpcClient:
             "jumpUrl": result.jumpUrl or None,
         }
 
+    async def get_existing_lottery_ids(self, lottery_ids: list[int]) -> set[int] | None:
+        """批量校验 lottery 是否存在（2.23.1，`/interaction/status` 防乱调）。
+
+        Returns:
+            ``set[存在的 lottery_id]``：RPC 成功（缺失的不在集合内）；
+            ``None``：RPC 失败 / 未连接（弱依赖，**校验不可用**——调用方应降级放行，
+            不可将失败误判为"全部不存在"）。
+        """
+        if not lottery_ids:
+            return set()
+        result = await self._check(lottery_ids)
+        if result is None or not result.items:
+            return None
+        return {item.lottery_id for item in result.items if item.exists}
+
     async def get_lottery_details(self, lottery_ids: list[int]) -> dict[int, dict[str, str | None]]:
         """批量实时获取 lottery attach 卡片详情（2.20.1，Feed 页一次 RPC）。
 

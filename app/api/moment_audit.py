@@ -1,4 +1,4 @@
-"""动态审核管理端 HTTP 接口（/api/v1/moment/audit）。
+"""动态审核管理端 HTTP 接口（/api/v1/community/audit）。
 
 Phase 6 的审核能力（P6-T1 / P6-T3 / P6-T4 / P6-T5）：
 
@@ -16,33 +16,56 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import RootUser
 from app.models import StandardResponse
+from app.models.enums import MomentAuditStatusEnum
+from app.models.str_int import StrInt
 from app.models.schemas.moment import (
     MomentAuditActionReq,
     MomentAuditDetailResp,
     MomentAuditListResp,
     MomentAuditLogListResp,
     MomentAuditRejectReq,
+    MomentAuditStatisticsResp,
 )
 from app.services.moment_audit import MomentAuditService
 
-router = APIRouter(prefix="/api/v1/moment/audit", tags=["moment-audit"])
+router = APIRouter(prefix="/api/v1/community/audit", tags=["moment-audit"])
 
 
 @router.get(
     "/list",
     response_model=StandardResponse[MomentAuditListResp],
-    summary="管理员待审核列表",
+    summary="管理员审核列表（可按状态筛选）",
 )
 async def audit_list(
     session: SessionDep,
     user: RootUser,
+    auditStatus: MomentAuditStatusEnum = Query(
+        default=MomentAuditStatusEnum.AUDITING,
+        description="审核状态筛选：auditing（默认，待审核）/normal（已过审）/rejected（已驳回）/hidden（已下架）",
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[MomentAuditListResp]:
     data = await MomentAuditService.pending_list(
-        session, page_num=page_num, page_size=page_size
+        session,
+        audit_status=auditStatus,
+        page_num=page_num,
+        page_size=page_size,
     )
     return StandardResponse(data=data)
+
+
+@router.get(
+    "/statistics",
+    response_model=StandardResponse[MomentAuditStatisticsResp],
+    summary="动态审核总统计（按类型 + 按状态）",
+)
+async def audit_statistics(
+    session: SessionDep,
+    user: RootUser,
+) -> StandardResponse[MomentAuditStatisticsResp]:
+    data = await MomentAuditService.statistics(session)
+    return StandardResponse(data=MomentAuditStatisticsResp(**data))
 
 
 @router.get(
@@ -53,8 +76,8 @@ async def audit_list(
 async def audit_history(
     session: SessionDep,
     user: RootUser,
-    dynId: int | None = Query(default=None, description="按动态 ID 过滤"),
-    operatorMid: int | None = Query(default=None, description="按操作员 MID 过滤"),
+    dynId: StrInt | None = Query(default=None, description="按动态 ID 过滤（雪花 ID，StrInt 兼容前端 str 传参）"),
+    operatorMid: StrInt | None = Query(default=None, description="按操作员 MID 过滤（雪花 ID，StrInt 兼容前端 str 传参）"),
     fromDate: str | None = Query(default=None, description="起始时间 YYYY-MM-DD HH:MM:SS"),
     toDate: str | None = Query(default=None, description="结束时间 YYYY-MM-DD HH:MM:SS"),
     page_num: int = Query(default=1, ge=1),
@@ -126,7 +149,7 @@ async def audit_reject(
 async def audit_detail(
     session: SessionDep,
     user: RootUser,
-    dynId: int,
+    dynId: StrInt,
 ) -> StandardResponse[MomentAuditDetailResp]:
     data = await MomentAuditService.detail(session, dynId)
     if data.item is None:

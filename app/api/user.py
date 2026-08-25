@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import MsgAdminUser
 from app.models import StandardResponse
+from app.models.str_int import StrInt
 from app.models.schemas import CommentUserBrief
 from app.services.pptr_user import PptrUserService
 
@@ -43,7 +44,7 @@ def parse_user_search_params(
 )
 async def batch_user_info(
     user: MsgAdminUser,
-    mids: Annotated[list[int], Query(description="要查询的用户 mid 列表，可重复")] = [],
+    mids: Annotated[list[StrInt], Query(description="要查询的用户 mid 列表，可重复（StrInt 兼容前端 str 传参）")] = [],
 ) -> StandardResponse[list[CommentUserBrief]]:
     """按 mid 批量回查用户展示信息（昵称 / 头像 / 等级 / 大会员 / 性别 / 签名）。
 

@@ -74,10 +74,10 @@ class UserDeactivatePayload(SQLModel):
 
 
 class InteractionViewPayload(SQLModel):
-    """浏览统计载体（2.23.0）。
+    """浏览统计载体（2.23.0；2.42.0 移除 refDate）。
 
     `/interaction/status` 接口对列表内每个资源组装本消息投递 `interaction.view` 队列，
-    由消费者异步按 `bizType+bizId+mid+refDate` 去重累计浏览数——
+    由消费者异步按 `bizType+bizId+mid`（每用户每资源一行）去重累计浏览数——
     主链路（互动态查询）不再同步写浏览，MQ 抖动 / 消费失败不影响 status 响应。
     浏览上报幂等：即使重试重复消费，ViewLog 唯一约束保证 Stat.viewCount 只首次 +1。
     """
@@ -85,7 +85,6 @@ class InteractionViewPayload(SQLModel):
     bizType: str = Field(description="资源类型（对外文字：dynamic/lottery/...）")
     bizId: str = Field(description="资源 id（字符串雪花 id）")
     mid: int = Field(description="浏览用户 mid")
-    refDate: str = Field(description="统计日期 YYYY-MM-DD")
 
 
 __all__ = [

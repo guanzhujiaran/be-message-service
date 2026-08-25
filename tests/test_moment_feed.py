@@ -29,14 +29,17 @@ D_MID = 920001
 D_MID2 = 920002
 
 
-def _new_moment_id() -> int:
-    return generate_moment_id()
+async def _new_moment_id() -> int:
+    return await generate_moment_id()
 
 
-_BASE = datetime.datetime(2026, 8, 1, 12, 0, 0)  # noqa: DTZ001
+# 时间基准用当前本地时间（CST）：避免 seed 固定在久远过去而被库中已存在的大量
+# normal 动态（如灌数数据）挤出综合 Feed 第一页，导致「库空」假设的断言失效。
+# 与业务写入（datetime.now()）同一基准。
+_BASE = datetime.datetime.now()  # noqa: DTZ005
 
 
-def _seed(
+async def _seed(
     session,
     mid: int,
     *,
@@ -48,7 +51,7 @@ def _seed(
     minutes_ago: int = 0,
     repost_src: int | None = None,
 ) -> int:
-    did = _new_moment_id()
+    did = await _new_moment_id()
     now = _BASE - datetime.timedelta(minutes=minutes_ago)
     content_text = real.content_text if real else "feed seed"
     dyn = TMoment(
@@ -70,7 +73,7 @@ def _seed(
 
 
 async def _commit_seed(session, mid, **kw) -> int:
-    did = _seed(session, mid, **kw)
+    did = await _seed(session, mid, **kw)
     await session.flush()
     session.add(TMomentStat(dynId=did))
     await session.commit()
@@ -142,15 +145,22 @@ async def test_comprehensive_only_normal():
     reals = await _real_dyns(4)
     async with new_session() as s:
         dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=MomentAuditStatusEnum.NORMAL, minutes_ago=10))
-        await _commit_seed(s, D_MID, real=reals[1], audit=MomentAuditStatusEnum.AUDITING, minutes_ago=9)
-        await _commit_seed(s, D_MID, real=reals[2], audit=MomentAuditStatusEnum.REJECTED, minutes_ago=8)
-        await _commit_seed(s, D_MID, real=reals[3], audit=MomentAuditStatusEnum.NORMAL, minutes_ago=7, deleted=True)
+        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=MomentAuditStatusEnum.AUDITING, minutes_ago=9))
+        dids.append(await _commit_seed(s, D_MID, real=reals[2], audit=MomentAuditStatusEnum.REJECTED, minutes_ago=8))
+        dids.append(await _commit_seed(s, D_MID, real=reals[3], audit=MomentAuditStatusEnum.NORMAL, minutes_ago=7, deleted=True))
     try:
         async with new_session() as s:
-            resp = await MomentFeedService.comprehensive_feed(s, page=1, page_size=20)
+            # 2.27.0：/feed/all 默认 recommend（EdgeRank，72h 候选窗口），
+            # 本测试关心 normal 过滤，显式 sort="time" 保持原语义。
+            # 库中可能存在其它 normal 数据（灌数），故断言「seed 的 normal 动态
+            # 在返回中、auditing/rejected/已软删不在、返回项全部 normal」。
+            resp = await MomentFeedService.comprehensive_feed(
+                s, page=1, page_size=50, sort="time"
+            )
             ids = {it.dynId for it in resp.items}
-            assert ids == {dids[0]}
-            assert all(it.auditStatus == "normal" for it in resp.items)
+            assert dids[0] in ids  # normal 动态可见
+            assert not ({dids[1], dids[2], dids[3]} & ids)  # auditing/rejected/软删不可见
+            assert all(it.auditStatus == MomentAuditStatusEnum.NORMAL for it in resp.items)
     finally:
         await _cleanup_all(dids)
 
@@ -164,7 +174,10 @@ async def test_comprehensive_order_by_pubtime():
         dids.append(await _commit_seed(s, D_MID, real=reals[2], audit=MomentAuditStatusEnum.NORMAL, minutes_ago=10))
     try:
         async with new_session() as s:
-            resp = await MomentFeedService.comprehensive_feed(s, page=1, page_size=20)
+            # 2.27.0：本测试验证 pubTime 倒序，显式 sort="time"（默认已变 recommend）
+            resp = await MomentFeedService.comprehensive_feed(
+                s, page=1, page_size=20, sort="time"
+            )
             times = [it.pubTime for it in resp.items]
             assert times == sorted(times, reverse=True)
     finally:
@@ -196,7 +209,7 @@ async def test_space_visitor_only_normal():
     try:
         async with new_session() as s:
             resp = await MomentFeedService.space_feed(s, host_mid=D_MID, viewer_mid=D_MID2)
-            assert all(it.auditStatus == "normal" for it in resp.items)
+            assert all(it.auditStatus == MomentAuditStatusEnum.NORMAL for it in resp.items)
     finally:
         await _cleanup_all(dids)
 
@@ -225,7 +238,7 @@ async def test_detail_visitor_cannot_see_auditing():
             d = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID2)
             assert d is None
             d2 = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID)
-            assert d2 is not None and d2.auditStatus == "auditing"
+            assert d2 is not None and d2.auditStatus == MomentAuditStatusEnum.AUDITING
     finally:
         await _cleanup_all(dids)
 
@@ -238,7 +251,7 @@ async def test_detail_normal_visible_to_all():
     try:
         async with new_session() as s:
             d = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID2)
-            assert d is not None and d.auditStatus == "normal"
+            assert d is not None and d.auditStatus == MomentAuditStatusEnum.NORMAL
     finally:
         await _cleanup_all(dids)
 

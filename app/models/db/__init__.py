@@ -19,19 +19,22 @@ from app.models.db.comment import (
 from app.models.db.dm import DmContentDeadLetter, DmMessageIndex, DmSession
 from app.models.db.event import EventMessage, EventReadCursor
 from app.models.db.favorite import TFavoriteFolder, TMomentFavorite, TUserFavoriteSetting
+from app.models.db.folder_cover_audit import TFolderCoverAudit
 from app.models.db.follow import UserFollow
 from app.models.db.interaction import TInteractionStat, TInteractionViewLog
 from app.models.db.moment import (
+    MomentAuthorQuality,
     TMoment,
     TMomentAuditLog,
+    TMomentDislike,
     TMomentLike,
-    TMomentReport,
+    TResourceReport,
     TMomentStat,
     TMomentTopic,
     TMomentTopicRel,
-    TMomentViewLog,
 )
 from app.models.db.notify import NotifyCursor, NotifyMessage, NotifyState
+from app.models.db.resource_feed import TResourceFeed
 from app.models.db.report import TUserReport
 from app.models.db.setting import UserActivity, UserMessageSetting
 
@@ -46,19 +49,22 @@ __all__ = [  # noqa: RUF022
     "TMoment",
     "TMomentStat",
     "TMomentLike",
+    "TMomentDislike",
+    "MomentAuthorQuality",
     "TMomentTopic",
     "TMomentTopicRel",
-    "TMomentViewLog",
-    "TMomentReport",
+    "TResourceReport",
     "TMomentAuditLog",
     # 收藏
     "TFavoriteFolder",
     "TMomentFavorite",
     "TUserFavoriteSetting",
-    # 通用交互计数（2.17.0）
+    # 通用交互计数（2.17.0；2.36.0 起动态并入）
     "TInteractionStat",
     # 通用浏览去重（2.23.0）
     "TInteractionViewLog",
+    # 通用资源 Feed 元数据（2.36.0）
+    "TResourceFeed",
     "DmContentDeadLetter",
     "DmMessageIndex",
     # 私信
@@ -75,6 +81,8 @@ __all__ = [  # noqa: RUF022
     "TimestampMixin",
     # 头像更换审核
     "TUserAvatarAudit",
+    # 收藏夹封面审核（2.28.0）
+    "TFolderCoverAudit",
     # 统一举报（2.14.0）
     "TUserReport",
     "UserActivity",

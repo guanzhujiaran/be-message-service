@@ -26,7 +26,8 @@ Postgres，渲染关注列表时由 `PptrUserService` 直连只读批量回查�
 from sqlalchemy import BIGINT, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models.db.base import TimestampMixin, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import FollowStatusEnum
 
 
@@ -56,7 +57,7 @@ class UserFollow(TimestampMixin, table=True):
     # 关系状态：following 关注 / blocked 拉黑
     status: FollowStatusEnum = Field(
         default=FollowStatusEnum.FOLLOWING,
-        sa_type=str_enum_type(FollowStatusEnum),
+        sa_type=SAEnum(FollowStatusEnum),
         index=True,
         description="关系状态：following 关注 / blocked 拉黑",
     )

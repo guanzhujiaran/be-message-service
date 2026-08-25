@@ -10,7 +10,10 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from app.models.str_int import StrInt
+
 from app.models.enums import FollowStatusEnum
+from app.models.schemas.base import AutoStrMixin
 
 # ==================== 请求体 ====================
 
@@ -18,19 +21,19 @@ from app.models.enums import FollowStatusEnum
 class FollowReq(SQLModel):
     """关注 / 取关 请求。"""
 
-    target_mid: int = Field(description="被关注的用户 mid")
+    target_mid: StrInt = Field(description="被关注的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
 
 
 class BlockReq(SQLModel):
     """拉黑 / 解除拉黑 请求。"""
 
-    target_mid: int = Field(description="被拉黑的用户 mid")
+    target_mid: StrInt = Field(description="被拉黑的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
 
 
 # ==================== 响应体 ====================
 
 
-class FollowOpResp(SQLModel):
+class FollowOpResp(SQLModel, AutoStrMixin):
     """关注 / 取关 / 拉黑 / 解除拉黑 等写操作的统一回执。"""
 
     mid: int = Field(description="操作发起者 mid")
@@ -43,7 +46,7 @@ class FollowOpResp(SQLModel):
     blocked: bool = Field(default=False, description="操作后是否处于拉黑状态")
 
 
-class FollowRelationResp(SQLModel):
+class FollowRelationResp(SQLModel, AutoStrMixin):
     """我与某人的关系查询回执。
 
     方向说明：
@@ -63,7 +66,7 @@ class FollowRelationResp(SQLModel):
     blocked_by: bool = Field(default=False, description="对方是否拉黑了我")
 
 
-class FollowCountResp(SQLModel):
+class FollowCountResp(SQLModel, AutoStrMixin):
     """关注 / 粉丝计数。"""
 
     mid: int
@@ -85,7 +88,7 @@ class FollowListResp(SQLModel):
     page_size: int = 20
 
 
-class FollowListItem(SQLModel):
+class FollowListItem(SQLModel, AutoStrMixin):
     """关注 / 粉丝列表单条记录。"""
 
     mid: int = Field(description="对方用户 mid")

@@ -18,9 +18,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core import database as db_mod
 from app.core.config import settings
-from app.core.database import new_session
+from app.core.database import new_pptr_session, new_session
 from app.models.db import NotifyMessage, TUserAvatarAudit
-from app.models.enums import AvatarAuditStatusEnum
+from app.models.enums import AvatarAuditStatusEnum, NotifyTargetTypeEnum
+from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.services.avatar_audit import AvatarAuditService
 
 # 独立区间，避免与既有用例冲突
@@ -78,6 +79,9 @@ async def _bind_engine_per_test():
             text(f"DELETE FROM msg_notify WHERE target_value IN ('{A_MID}', '{A_MID2}')")
         )
         await s.commit()
+    # 预置 pptr 用户主数据，供审核通过写入公开头像（否则 TUserDetail 插入触发 FK 违约）
+    await _seed_pptr_user(A_MID)
+    await _seed_pptr_user(A_MID2)
     yield
     async with new_session() as s:
         await s.exec(
@@ -87,10 +91,58 @@ async def _bind_engine_per_test():
             text(f"DELETE FROM msg_notify WHERE target_value IN ('{A_MID}', '{A_MID2}')")
         )
         await s.commit()
+    # 清理 pptr 种子数据
+    await _cleanup_pptr_user(A_MID)
+    await _cleanup_pptr_user(A_MID2)
     await engine.dispose()
     await pptr_engine.dispose()
     db_mod_pptr.pptr_engine = orig_pptr_engine
     db_mod_pptr.pptr_session_maker = orig_pptr_session_maker
+
+
+async def _seed_pptr_user(mid: int) -> None:
+    """在 pptr Postgres 预置用户主数据（TUserInfo + TUserDetail，初始头像 OLD_AVATAR）。
+
+    审核通过会写 `TUserDetail.avatar`，而 `TUserDetail.mid` 外键强约束父表
+    `TUserInfo.uid`：必须先建 TUserInfo，否则 approve 落入 ForeignKeyViolationError。
+    无 relationship 声明，UoW 无法推断依赖顺序，须先 flush 父表再写子表
+    （对齐 `pptr_user.create_user` / `test_comment_crud` 的种子写法）。
+    """
+    async with new_pptr_session() as s:
+        await s.exec(
+            text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": mid}
+        )
+        await s.exec(
+            text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": mid}
+        )
+        s.add(
+            PptrUserInfo(
+                uid=mid, user_name=f"avatar_audit_{mid}", role="level0"
+            )
+        )
+        await s.flush()
+        s.add(
+            PptrUserDetail(
+                mid=mid,
+                uname=f"avatar_audit_{mid}",
+                avatar=OLD_AVATAR,
+                sign="",
+                sex="保密",
+            )
+        )
+        await s.commit()
+
+
+async def _cleanup_pptr_user(mid: int) -> None:
+    """清理 pptr 种子数据（硬删，避免污染其它用例）。"""
+    async with new_pptr_session() as s:
+        await s.exec(
+            text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": mid}
+        )
+        await s.exec(
+            text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": mid}
+        )
+        await s.commit()
 
 
 async def _latest_for(s, mid: int) -> TUserAvatarAudit | None:
@@ -177,6 +229,15 @@ async def test_approve_sets_approved():
         row = await s.get(TUserAvatarAudit, pk)
         assert row.auditStatus is AvatarAuditStatusEnum.APPROVED
         assert row.auditOperatorMid == ADMIN_MID
+    # 公开头像（pptr TUserDetail.avatar）应已写入新头像（FK 外键需父表 TUserInfo 存在）
+    from sqlmodel import select
+
+    async with new_pptr_session() as s:
+        detail = (
+            await s.exec(select(PptrUserDetail).where(PptrUserDetail.mid == A_MID))
+        ).first()
+        assert detail is not None
+        assert detail.avatar == NEW_AVATAR
 
 
 async def test_approve_notifies_user():
@@ -191,7 +252,7 @@ async def test_approve_notifies_user():
         rows = (
             await s2.exec(
                 select(NotifyMessage).where(
-                    NotifyMessage.target_type == "custom",
+                    NotifyMessage.target_type == NotifyTargetTypeEnum.CUSTOM,
                     NotifyMessage.target_value == str(A_MID),
                 )
             )
@@ -241,7 +302,7 @@ async def test_reject_notifies_user():
         rows = (
             await s2.exec(
                 select(NotifyMessage).where(
-                    NotifyMessage.target_type == "custom",
+                    NotifyMessage.target_type == NotifyTargetTypeEnum.CUSTOM,
                     NotifyMessage.target_value == str(A_MID),
                 )
             )

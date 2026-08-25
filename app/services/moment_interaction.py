@@ -11,7 +11,7 @@
   取消意图（up=2）且明细不存在 → 返回成功（本来就没赞）。避免重试叠加计数。
 - **事务双写**：明细 INSERT/DELETE 与 `likeCount` 原子 ±1 在**同一事务**内提交。
 - **仅 normal 可点赞**：非 normal / 已软删动态拒绝点赞。
-- **举报**：写 `TMomentReport`（reasonType 必须为合法枚举值），**不改变**
+- **举报**：写 `TResourceReport`（reasonType 必须为合法枚举值），**不改变**
   动态 auditStatus。
 """
 
@@ -20,7 +20,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import new_session
-from app.models.db import TMoment, TMomentLike, TMomentReport, TMomentStat
+from app.models.db import TMoment, TMomentDislike, TMomentLike, TResourceReport, TInteractionStat
 from app.models.enums import (
     EventTypeEnum,
     InteractionBizTypeEnum,
@@ -105,8 +105,9 @@ class MomentInteractionService:
             if is_dynamic:
                 stat = (
                     await session.exec(
-                        select(TMomentStat.likeCount).where(
-                            col(TMomentStat.dynId) == target_id
+                        select(TInteractionStat.likeCount).where(
+                            col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                            col(TInteractionStat.bizId) == target_id,
                         )
                     )
                 ).first()
@@ -162,6 +163,111 @@ class MomentInteractionService:
             await InteractionStatService.decr(session, biz_type, target_id, "likeCount")
         await session.commit()
         return False, await _like_count()
+
+    # ==================== 点踩 / 取消点踩（2.35.0）====================
+
+    @staticmethod
+    async def dislike(
+        session: AsyncSession,
+        mid: int,
+        biz_type: InteractionBizTypeEnum | str,
+        biz_id: int,
+        up: int,
+        moment_id: int | None = None,
+    ) -> tuple[bool, int]:
+        """点踩 / 取消点踩（幂等，同一事务双写，2.35.0）。
+
+        MVP 仅支持动态资源（``bizType=dynamic``）：明细 ``TMomentDislike`` 唯一
+        约束 ``(bizType,bizId,mid)`` 幂等，计数 ``TMomentStat.dislikeCount`` 同事务
+        原子 ±1，供 EdgeRank ``dislike_ratio`` 降权使用。
+
+        Args:
+            up: 1=点踩, 2=取消点踩。
+
+        Returns:
+            (is_dislike, dislike_count)：操作后当前用户是否已点踩、当前点踩数。
+
+        Raises:
+            ValueError: 动态不存在 / 非 normal / 已软删，或 bizType 非动态。
+        """
+        biz_type = InteractionBizTypeEnum.from_text(biz_type)
+        if biz_type is not InteractionBizTypeEnum.DYNAMIC:
+            raise ValueError("点踩当前仅支持动态资源")
+        target_id = biz_id if moment_id is None else moment_id
+        dyn = await _get_visible_normal_dyn(session, target_id)
+        if dyn is None:
+            raise ValueError("动态不存在或暂不可互动")
+
+        existing = (
+            await session.exec(
+                select(TMomentDislike.pk).where(
+                    col(TMomentDislike.bizType) == biz_type,
+                    col(TMomentDislike.bizId) == target_id,
+                    col(TMomentDislike.mid) == mid,
+                )
+            )
+        ).first()
+
+        async def _dislike_count() -> int:
+            stat = (
+                await session.exec(
+                    select(TInteractionStat.dislikeCount).where(
+                        col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                        col(TInteractionStat.bizId) == target_id,
+                    )
+                )
+            ).first()
+            return stat or 0
+
+        if up == 1:
+            if existing is not None:
+                return True, await _dislike_count()
+            session.add(
+                TMomentDislike(
+                    bizType=biz_type,
+                    bizId=target_id,
+                    dynId=target_id,
+                    mid=mid,
+                )
+            )
+            await session.flush()
+            await MomentStatService.incr_stat(session, target_id, "dislikeCount", 1)
+            await session.commit()
+            return True, await _dislike_count()
+
+        if existing is None:
+            return False, await _dislike_count()
+        await session.exec(  # type: ignore[call-overload]
+            TMomentDislike.__table__.delete().where(col(TMomentDislike.pk) == existing)
+        )
+        await MomentStatService.decr_stat(
+            session, target_id, "dislikeCount", floor_zero=True
+        )
+        await session.commit()
+        return False, await _dislike_count()
+
+    # ==================== 分享上报（2.35.0）====================
+
+    @staticmethod
+    async def share(session: AsyncSession, dyn_id: int) -> int:
+        """分享上报（2.35.0）：normal 动态 ``shareCount`` 原子 +1。
+
+        分享为行为上报（非幂等，可多次分享）；计数供 EdgeRank share 权重使用。
+        """
+        dyn = await _get_visible_normal_dyn(session, dyn_id)
+        if dyn is None:
+            raise ValueError("动态不存在或暂不可互动")
+        await MomentStatService.incr_stat(session, dyn_id, "shareCount", 1)
+        await session.commit()
+        stat = (
+            await session.exec(
+                select(TInteractionStat.shareCount).where(
+                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TInteractionStat.bizId) == dyn_id,
+                )
+            )
+        ).first()
+        return stat or 0
 
     # ==================== 举报（P4-T5）====================
 

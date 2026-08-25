@@ -7,18 +7,25 @@
 
 from sqlmodel import Field, SQLModel
 
+from app.models.str_int import StrInt
 
-class ReportCreateReq(SQLModel):
+
+from app.models.schemas.base import AutoStrMixin
+class ReportCreateReq(SQLModel, AutoStrMixin):
     """统一举报请求（评论 / 动态 / 用户空间 / RPA 资源）。"""
 
     bizType: str = Field(description="举报来源类型：dynamic/comment/user（ReportBizTypeEnum 值）")
-    bizId: int = Field(description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid")
+    bizId: StrInt = Field(description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    resourceType: int | None = Field(
+        default=None,
+        description="被举报对象所属资源类型（InteractionBizTypeEnum 值，2.37.0）：dynamic 举报可不传（默认 1）；lottery/rpa_* 等资源举报必传",
+    )
     reasonType: int = Field(description="统一举报原因（ReportReasonEnum 值）")
     reasonDesc: str | None = Field(default=None, max_length=500, description="补充描述（选填）")
     pics: list[str] | None = Field(default=None, description="证据图片 URL 列表（http(s)，最多 3 张）")
 
 
-class ReportItem(SQLModel):
+class ReportItem(SQLModel, AutoStrMixin):
     """统一举报记录展示项。"""
 
     pk: int
@@ -33,9 +40,12 @@ class ReportItem(SQLModel):
     auditRemark: str | None = None
     auditAdminMid: int | None = None
     createdAt: str | None = None
+    # 2.40.0：被举报数量双口径（跨来源/跨状态，管理端展示）
+    reportCount: int = Field(default=0, description="被举报次数（累计，COUNT(*)）")
+    reportPeopleCount: int = Field(default=0, description="举报人数（去重，COUNT(DISTINCT reportMid)）")
 
 
-class ReportListResp(SQLModel):
+class ReportListResp(SQLModel, AutoStrMixin):
     """统一举报管理端列表响应。"""
 
     items: list[ReportItem]
@@ -44,11 +54,15 @@ class ReportListResp(SQLModel):
     pageSize: int
 
 
-class ReportReviewReq(SQLModel):
+class ReportReviewReq(SQLModel, AutoStrMixin):
     """统一举报管理端审核请求。"""
 
     reportPk: int = Field(description="举报记录主键")
     decision: str = Field(description="处置动作：resolve（属实已处理）/ reject（驳回）")
+    resourceAction: str | None = Field(
+        default=None,
+        description="资源处置动作（2.38.0，resolve 时可选）：hide=下架/隐藏被举报资源（动态→hidden，评论→hidden，用户预留）；None=仅标记不处置",
+    )
     remark: str | None = Field(default=None, max_length=500, description="审核备注")
 
 

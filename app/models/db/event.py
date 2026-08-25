@@ -17,7 +17,8 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 
-from app.models.db.base import TimestampMixin, str_enum_type
+from app.models.db.base import TimestampMixin
+from sqlalchemy import Enum as SAEnum
 from app.models.enums import EventTypeEnum, SourceTypeEnum
 
 
@@ -38,13 +39,13 @@ class EventMessage(TimestampMixin, table=True):
 
     mid: int = Field(sa_type=BIGINT, index=True, description="接收者mid")
     event_type: EventTypeEnum = Field(
-        sa_type=str_enum_type(EventTypeEnum), description="事件类型"
+        sa_type=SAEnum(EventTypeEnum), description="事件类型"
     )
 
     # ---- 聚合分组键 ----
     source_type: SourceTypeEnum = Field(
         default=SourceTypeEnum.OTHER,
-        sa_type=str_enum_type(SourceTypeEnum),
+        sa_type=SAEnum(SourceTypeEnum),
         description="来源实体类型",
     )
     source_id: str = Field(max_length=64, description="来源实体id")
@@ -53,6 +54,11 @@ class EventMessage(TimestampMixin, table=True):
     )
     source_cover: str | None = Field(
         default=None, max_length=512, description="来源实体封面"
+    )
+    biz_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="业务资源id（如评论rpid / 动态dynId），与 source_type 共同唯一定位原资源，供前端跳转；为空时同人对同实体的同类行为只记一条",
     )
 
     # ---- 触发者 ----
@@ -93,7 +99,7 @@ class EventReadCursor(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     mid: int = Field(sa_type=BIGINT, index=True, description="用户mid")
     event_type: EventTypeEnum = Field(
-        sa_type=str_enum_type(EventTypeEnum), description="事件类型"
+        sa_type=SAEnum(EventTypeEnum), description="事件类型"
     )
     last_read_id: int = Field(default=0, description="已读到的最大事件id")
     last_read_at: datetime | None = Field(default=None, description="上次一键已读时间")

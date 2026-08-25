@@ -42,7 +42,6 @@ from app.models.schemas import (
 )
 from app.services.comment import VISIBLE_STATES, CommentService
 from app.services.pptr_user import PptrUserService
-from app.utils.ip_mask import mask_ip_pair
 
 # 正文里 #话题# 的匹配（对齐 B 站：话题名由两个 # 包裹，中间不含 #）
 _TOPIC_PATTERN = re.compile(r"#([^#\n]+)#")
@@ -495,10 +494,6 @@ class CommentReadService:
             topics_meta[topic_name] = {
                 "uri": f"bilibili://search?from=app_comment_topic_search&direct_return=true&keyword={topic_name}"
             }
-        ip_v4_masked, ip_v6_masked = mask_ip_pair(
-            content.ip_v4 if content else None,
-            content.ip_v6 if content else None,
-        )
         return CommentItem(
             rpid=str(row.rpid),
             oid=str(row.oid),
@@ -525,8 +520,6 @@ class CommentReadService:
             is_top=bool(row.attr & CommentAttrBit.TOP.value),
             is_essence=bool(row.attr & CommentAttrBit.ESSENCE.value),
             is_up_liked=bool(row.attr & CommentAttrBit.UP_LIKED.value),
-            ip_v4_masked=ip_v4_masked,
-            ip_v6_masked=ip_v6_masked,
             # IP 属地：数据库无值（旧数据/未解析）时兜底为「未知」，不返回 None
             ip_location=(content.ip_location if content and content.ip_location else "未知"),
             ip_isp=content.ip_isp if content else None,

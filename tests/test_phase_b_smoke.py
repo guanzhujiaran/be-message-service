@@ -56,6 +56,7 @@ from app.services.activity import ActivityService
 from app.services.dm import DmService
 from app.services.event import EventService
 from app.services.notify import NotifyService
+from app.services.pptr_user import PptrUserService
 from app.services.setting import SettingService
 
 
@@ -486,4 +487,54 @@ async def test_msg_feed_unread_aggregation() -> None:
         assert resp.notify == 1, "未读通知应为 1"
         assert resp.like == 1, "未读 like 应为 1"
         assert resp.total >= 2
+    await _cleanup()
+
+
+async def test_event_biz_id_roundtrip(monkeypatch) -> None:
+    """事件通知 biz_id 全链路往返：上报→落库→list/aggregate/msgfeed 出参。
+
+    对应计划书 Phase J：互动通知以 biz_type(source_type) + biz_id 唯一定位原资源，
+    供前端点击跳转（如评论 rpid 定位到具体评论）。
+    """
+    await _cleanup()
+    mid = M["event_user"]
+
+    # list_msgfeed 内部会回源 pptr 用户信息，测试环境打桩为空
+    async def _no_users(*a, **k):
+        return {}
+
+    monkeypatch.setattr(PptrUserService, "get_many", _no_users)
+
+    async with new_session() as s:
+        # 评论回复场景：source_type=COMMENT(bizType), source_id=oid, biz_id=rpid
+        await EventService.report(
+            s,
+            EventReportReq(
+                mid=mid,
+                event_type=EventTypeEnum.REPLY,
+                source_type=SourceTypeEnum.COMMENT,
+                source_id="900100",
+                actor_mid=800001,
+                actor_name="actor",
+                content="回复内容",
+                biz_id="10000001",
+            ),
+        )
+
+        # 明细出参带 biz_id
+        items, _total = await EventService.list_detail(
+            s, mid, event_type=EventTypeEnum.REPLY
+        )
+        assert items and items[0].biz_id == "10000001", "list_detail 应透传 biz_id"
+
+        # 聚合出参带 biz_id（取组内最新一条）
+        groups, _t = await EventService.aggregate(s, mid, EventTypeEnum.REPLY)
+        assert groups and groups[0].biz_id == "10000001", "aggregate 应透传 biz_id"
+
+        # msgfeed 出参带 biz_id
+        feed = await EventService.list_msgfeed(s, mid, event_type=EventTypeEnum.REPLY)
+        assert feed.total.items, "msgfeed 应有聚合条目"
+        assert (
+            feed.total.items[0].item.biz_id == "10000001"
+        ), "msgfeed item 应透传 biz_id"
     await _cleanup()

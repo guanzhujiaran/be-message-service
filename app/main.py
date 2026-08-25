@@ -19,6 +19,8 @@ FastStream(RabbitMQ) 作为「FastAPI 插件」通过 lifespan 接入——
 → 连接 broker 开始消费 → 启动后台定时任务。
 """
 
+import os
+import sys
 from contextlib import asynccontextmanager
 
 import httpx
@@ -33,6 +35,7 @@ from app.api.comment import router as comment_router
 from app.api.comment_admin import router as comment_admin_router
 from app.api.dm import router as dm_router
 from app.api.favorite import router as favorite_router
+from app.api.folder_cover_audit import router as folder_cover_audit_router
 from app.api.dm_admin import router as dm_admin_router
 from app.api.event import router as event_router
 from app.api.follow import router as follow_router
@@ -60,6 +63,22 @@ from app.mq.consumers import comment, deactivate, dm, push  # noqa: F401
 from app.mq.router import router as mq_router
 from app.services.rpa_rpc import rpa_rpc_client
 
+# 业务日志统一输出到 stderr（容器日志由 docker logs 收集持久化）；
+# 输出等级由 LOG_LEVEL 控制（生产默认 WARNING 只打印告警 / 开发设 DEBUG），与 FastStream 框架日志（FASTSTREAM_LOG_LEVEL）解耦。
+logger.remove()
+logger.add(sys.stderr, level=settings.log_level)
+# 开发环境（APP_ENV=development）额外把 WARNING 及以上日志写入文件，便于排查；
+# 生产（默认 production）不写任何日志文件，日志全部交给 docker。
+if settings.app_env == "development":
+    os.makedirs(settings.log_file_dir, exist_ok=True)
+    logger.add(
+        os.path.join(settings.log_file_dir, "message-service.log"),
+        level="WARNING",
+        rotation="10 MB",
+        retention="7 days",
+        encoding="utf-8",
+    )
+
 
 async def test_service_connectivity():
     """检查 message-service 依赖的关键服务连通性，失败则拒绝启动。
@@ -76,7 +95,10 @@ async def test_service_connectivity():
 
     # ---- RabbitMQ（关键）----
     try:
-        test_broker = RabbitBroker(settings.rabbitmq_url)
+        test_broker = RabbitBroker(
+            settings.rabbitmq_url,
+            log_level=settings.faststream_log_level_int,
+        )
         await test_broker.connect()
         # 兼容不同 faststream 版本的断开方法（旧版为 close，新版为 disconnect）
         for _meth in ("disconnect", "close"):
@@ -237,6 +259,7 @@ app.include_router(push_router)
 app.include_router(report_router)
 app.include_router(pptr_user_gateway_router)
 app.include_router(avatar_audit_router)
+app.include_router(folder_cover_audit_router)
 
 if __name__ == "__main__":
     import uvicorn

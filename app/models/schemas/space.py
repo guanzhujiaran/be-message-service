@@ -12,7 +12,8 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
-class SpaceOfficial(SQLModel):
+from app.models.schemas.base import AutoStrMixin
+class SpaceOfficial(SQLModel, AutoStrMixin):
     """官方认证信息（pptr 无数据源，固定返回空结构）。"""
 
     role: int = 0
@@ -21,7 +22,7 @@ class SpaceOfficial(SQLModel):
     type: int = -1
 
 
-class SpaceVip(SQLModel):
+class SpaceVip(SQLModel, AutoStrMixin):
     """大会员信息（映射 pptr TUserVip）。"""
 
     type: int = 0
@@ -29,13 +30,13 @@ class SpaceVip(SQLModel):
     due_date: int = 0
 
 
-class SpaceVipLabel(SQLModel):
+class SpaceVipLabel(SQLModel, AutoStrMixin):
     """大会员角标文案（pptr 无数据源，固定为空）。"""
 
     text: str = ""
 
 
-class SpaceVipWrap(SQLModel):
+class SpaceVipWrap(SQLModel, AutoStrMixin):
     """大会员完整信息（对标 B 站 acc/info 的 vip 结构）。"""
 
     type: int = 0
@@ -44,7 +45,7 @@ class SpaceVipWrap(SQLModel):
     label: SpaceVipLabel = Field(default_factory=SpaceVipLabel)
 
 
-class SpaceInfoResp(SQLModel):
+class SpaceInfoResp(SQLModel, AutoStrMixin):
     """用户空间完整资料（对标 B 站 `/x/space/wbi/acc/info` 的 data）。"""
 
     mid: int

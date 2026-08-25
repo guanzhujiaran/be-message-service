@@ -15,6 +15,8 @@ from bili_common.rpc.client import RpcClient
 from bili_common.rpc.rpa import (
     GetResourceDetailParams,
     GetResourceDetailResult,
+    HideResourceParams,
+    HideResourceResult,
     RpaRpcMethodName,
 )
 from loguru import logger
@@ -65,6 +67,54 @@ class RpaRpcClient:
         if resp.code != 0 or resp.data is None:
             return None
         return GetResourceDetailResult.model_validate(resp.data)
+
+
+    async def hide_resource(
+        self,
+        *,
+        biz_type: str,
+        biz_id: int,
+        operator_mid: int,
+        reason: str = "",
+    ) -> bool:
+        """举报处置：通知归属服务下架资源（2.39.0，弱依赖）。
+
+        归属服务（RPA-Browser）按 ``biz_type`` 内部路由（lottery→crawler、
+        rpa_*→本地）。RPC 超时 / 未连接 / 失败返回 False（仅告警，不抛错）——
+        被举报资源已由本地 ``TResourceFeed`` 退出 Feed，RPC 仅为资源层实际下架。
+        """
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.HIDE_RESOURCE)
+        payload = HideResourceParams(
+            bizType=biz_type,
+            bizId=biz_id,
+            operatorMid=operator_mid,
+            reason=reason,
+        ).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 hide_resource")
+                return False
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning(f"[RpaRpcClient] hide_resource 超时: {biz_type}/{biz_id}")
+            return False
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] hide_resource 调用失败: {e}")
+            return False
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] hide_resource 响应解析失败: {e}")
+            return False
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] hide_resource 业务失败: {resp.msg}")
+            return False
+        result = HideResourceResult.model_validate(resp.data)
+        if not result.success:
+            logger.warning(
+                f"[RpaRpcClient] hide_resource 处置失败: {result.message}"
+            )
+        return result.success
 
 
 # 全局单例

@@ -76,6 +76,13 @@ from app.models.schemas.favorite import (
     FavoriteSettingReq,
     FavoriteSettingResp,
 )
+from app.models.schemas.folder_cover_audit import (
+    FolderCoverAuditApproveReq,
+    FolderCoverAuditItem,
+    FolderCoverAuditListResp,
+    FolderCoverAuditMineResp,
+    FolderCoverAuditRejectReq,
+)
 from app.models.schemas.interaction import InteractionStatusItem, InteractionStatusResp
 from app.models.schemas.event import (
     EventActorBrief,
@@ -229,6 +236,12 @@ __all__ = [
     "FavoriteRemoveReq",
     "FavoriteSettingReq",
     "FavoriteSettingResp",
+    # 收藏夹封面审核（2.28.0）
+    "FolderCoverAuditApproveReq",
+    "FolderCoverAuditItem",
+    "FolderCoverAuditListResp",
+    "FolderCoverAuditMineResp",
+    "FolderCoverAuditRejectReq",
     # 多业务资源交互（2.17.0）
     "InteractionStatusItem",
     "InteractionStatusResp",

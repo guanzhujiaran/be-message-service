@@ -22,14 +22,23 @@
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
-from sqlalchemy import case, func
-from sqlmodel import select
+from sqlalchemy import and_, case, func, text
+from sqlmodel import col, select
 
 from app.core.config import settings
-from app.core.database import new_session
+from app.core.database import new_pptr_session, new_session
 from app.core.sharding import ensure_current_month_shards
-from app.models.db import CommentAction, CommentIndex, CommentSubject
-from app.models.enums import CommentActionEnum
+from app.models.db import (
+    CommentAction,
+    CommentIndex,
+    CommentSubject,
+    MomentAuthorQuality,
+    TMoment,
+    TInteractionStat,
+    UserFollow,
+)
+from app.models.enums import CommentActionEnum, FollowStatusEnum, InteractionBizTypeEnum
+from app.models.pptr_db import PptrUserLevel
 from app.services.comment import VISIBLE_STATES
 from app.services.comment_action import compute_hot_score
 from app.services.dm import DmService
@@ -197,6 +206,118 @@ async def comment_reconcile_job() -> None:
         logger.info("评论计数对账完成")
     except Exception as e:  # noqa: BLE001
         logger.error(f"评论计数对账失败: {e}")
+
+
+# ==================== 作者质量聚合（2.35.0 EdgeRank）====================
+
+
+async def author_quality_job() -> None:
+    """全量重算作者质量聚合（2.35.0）：``moment_author_quality``。
+
+    - ``avgEngagement`` = AVG((like+comment+repost)/max(view,1))（normal + 未软删动态）；
+    - ``recentPublishCount`` = 近 7 天发布量（刷屏降权依据）；
+    - ``violationCount`` = 被驳回/下架（rejected/hidden）次数（违规降权依据）。
+
+    MVP 每 1 小时全量重建一次（数据量小，删除 + 批量插入保证幂等）。
+    """
+    try:
+        async with new_session() as session:
+            rows = (
+                await session.exec(
+                    select(
+                        TMoment.mid,
+                        func.avg(
+                            (
+                                TInteractionStat.likeCount
+                                + TInteractionStat.commentCount
+                                + TInteractionStat.repostCount
+                            )
+                            / case(
+                                (TInteractionStat.viewCount < 1, 1),
+                                else_=TInteractionStat.viewCount,
+                            )
+                        ).label("avg_eng"),
+                        func.sum(
+                            case(
+                                (
+                                    TMoment.pubTime
+                                    >= func.date_sub(
+                                        func.now(), text("INTERVAL 7 DAY")
+                                    ),
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("recent"),
+                        func.sum(
+                            case(
+                                (
+                                    TMoment.auditStatus.in_(["rejected", "hidden"]),
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("violation"),
+                    )
+                    .join(
+                        TInteractionStat,
+                        and_(
+                            TInteractionStat.bizType == InteractionBizTypeEnum.DYNAMIC,
+                            TInteractionStat.bizId == TMoment.dynId,
+                        ),
+                    )
+                    .where(TMoment.deletedAt.is_(None))
+                    .group_by(TMoment.mid)
+                )
+            ).all()
+            if not rows:
+                return
+            mids = [int(m) for m, *_ in rows]
+            # 2.37.0：粉丝数 ≈ 被关注数（msg_user_follow 按 target_mid COUNT，排除拉黑）
+            fans_map: dict[int, int] = {}
+            frows = (
+                await session.exec(
+                    select(UserFollow.target_mid, func.count())
+                    .where(
+                        col(UserFollow.target_mid).in_(mids),
+                        col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
+                    )
+                    .group_by(col(UserFollow.target_mid))
+                )
+            ).all()
+            fans_map = {int(t): int(c) for t, c in frows}
+            # 2.37.0：作者等级（pptr TUserLevel 回查，失败按 0）
+            level_map: dict[int, int] = {}
+            try:
+                async with new_pptr_session() as ps:
+                    lrows = (
+                        await ps.exec(
+                            select(PptrUserLevel.mid, PptrUserLevel.current_level).where(
+                                col(PptrUserLevel.mid).in_(mids)
+                            )
+                        )
+                    ).all()
+                    level_map = {int(m): int(lv or 0) for m, lv in lrows}
+            except Exception:  # noqa: BLE001
+                logger.warning("作者等级回查失败，按 0 处理")
+            # 全量重建：删除 + 批量插入（聚合表可安全重建）
+            await session.exec(text("DELETE FROM moment_author_quality"))
+            for mid, avg_eng, recent, violation in rows:
+                mid = int(mid)
+                session.add(
+                    MomentAuthorQuality(
+                        mid=mid,
+                        avgEngagement=float(avg_eng or 0.0),
+                        recentPublishCount=int(recent or 0),
+                        violationCount=int(violation or 0),
+                        fansCount=fans_map.get(mid, 0),
+                        currentLevel=level_map.get(mid, 0),
+                    )
+                )
+            await session.commit()
+            logger.info(f"作者质量聚合完成：{len(rows)} 位作者")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"作者质量聚合失败: {e}")
 
 
 # ==================== 调度器生命周期 ====================

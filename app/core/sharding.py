@@ -20,81 +20,33 @@ msgkey 位布局（共 63 位，保证正数）::
 """
 
 import asyncio
-import threading
-import time
 from datetime import UTC, datetime
 
+from bili_common.core.snowflake import MinuteSnowflakeIdGenerator, SnowflakeIdGenerator
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.core.config import settings
 from app.core.database import engine
-from bili_common.core.snowflake import MinuteSnowflakeIdGenerator
 
-# ==================== msgkey 位布局 ====================
-_SEQUENCE_BITS = 12
-_WORKER_BITS = 10
+# ==================== msgkey（毫秒级大容量雪花 ID）====================
+# 位布局：| 41 bits 毫秒时间戳(相对 epoch) | 10 bits worker_id | 12 bits 序列号 | = 63 bits
+# 由 bili-common 通用 SnowflakeIdGenerator 参数化实例化（time_unit="millisecond"）。
 
-_MAX_SEQUENCE = (1 << _SEQUENCE_BITS) - 1  # 4095
-_MAX_WORKER_ID = (1 << _WORKER_BITS) - 1  # 1023
-
-_WORKER_SHIFT = _SEQUENCE_BITS  # 12
-_TIMESTAMP_SHIFT = _SEQUENCE_BITS + _WORKER_BITS  # 22
-
-
-class MsgKeyGenerator:
-    """msgkey 生成器（线程安全的雪花算法实现）。
-
-    生成的 msgkey 全局唯一、单调递增，且可反解出毫秒时间戳，
-    这是私信内容能够「按时间分库」的前提。
-    """
-
-    def __init__(self, worker_id: int, epoch_ms: int) -> None:
-        if not 0 <= worker_id <= _MAX_WORKER_ID:
-            raise ValueError(f"worker_id 必须在 0~{_MAX_WORKER_ID} 之间，当前为 {worker_id}")
-        self._worker_id = worker_id
-        self._epoch_ms = epoch_ms
-        self._sequence = 0
-        self._last_ts = -1
-        self._lock = threading.Lock()
-
-    @staticmethod
-    def _now_ms() -> int:
-        return int(time.time() * 1000)
-
-    def next_key(self) -> int:
-        """生成下一个 msgkey。"""
-        with self._lock:
-            ts = self._now_ms()
-            if ts < self._last_ts:
-                # 时钟回拨：等待追平，避免生成重复 ID
-                ts = self._last_ts
-            if ts == self._last_ts:
-                self._sequence = (self._sequence + 1) & _MAX_SEQUENCE
-                if self._sequence == 0:
-                    # 当前毫秒序列号耗尽，自旋到下一毫秒
-                    while ts <= self._last_ts:
-                        ts = self._now_ms()
-            else:
-                self._sequence = 0
-            self._last_ts = ts
-            return (
-                ((ts - self._epoch_ms) << _TIMESTAMP_SHIFT)
-                | (self._worker_id << _WORKER_SHIFT)
-                | self._sequence
-            )
-
-
-_generator = MsgKeyGenerator(
+_msgkey_generator = SnowflakeIdGenerator(
     worker_id=settings.msgkey_worker_id,
-    epoch_ms=settings.msgkey_epoch_ms,
+    epoch=settings.msgkey_epoch_ms,
+    timestamp_bits=41,
+    worker_bits=10,
+    sequence_bits=12,
+    time_unit="millisecond",
 )
 
 
-def generate_msgkey() -> int:
+async def generate_msgkey() -> int:
     """生成一个新的 msgkey。"""
-    return _generator.next_key()
+    return await _msgkey_generator.next()
 
 
 # ==================== uid / moment_id / topic_id 雪花 ID 生成器 ====================
@@ -105,39 +57,42 @@ def generate_msgkey() -> int:
 _uid_generator = MinuteSnowflakeIdGenerator(
     worker_id=settings.uid_worker_id,
     epoch_sec=settings.uid_epoch_sec,
+    sequence_bits=settings.uid_sequence_bits,
 )
 
 
-def generate_uid() -> int:
+async def generate_uid() -> int:
     """生成一个新的用户 uid（短雪花 ID，分钟步进）。"""
-    return _uid_generator.next()
+    return await _uid_generator.next()
 
 
 _uid_generator_dyn = MinuteSnowflakeIdGenerator(
     worker_id=settings.moment_id_worker_id,
     epoch_sec=settings.moment_id_epoch_sec,
+    sequence_bits=settings.moment_id_sequence_bits,
 )
 
 
-def generate_moment_id() -> int:
+async def generate_moment_id() -> int:
     """生成一个新的动态 ID（短雪花 ID，分钟步进，独立配置空间）。"""
-    return _uid_generator_dyn.next()
+    return await _uid_generator_dyn.next()
 
 
 _uid_generator_topic = MinuteSnowflakeIdGenerator(
     worker_id=settings.topic_id_worker_id,
     epoch_sec=settings.topic_id_epoch_sec,
+    sequence_bits=settings.topic_id_sequence_bits,
 )
 
 
-def generate_topic_id() -> int:
+async def generate_topic_id() -> int:
     """生成一个新的话题 ID（短雪花 ID，分钟步进，独立配置空间）。"""
-    return _uid_generator_topic.next()
+    return await _uid_generator_topic.next()
 
 
 def parse_timestamp_ms(msgkey: int) -> int:
     """从 msgkey 反解出毫秒时间戳（分库路由的唯一依据）。"""
-    return (msgkey >> _TIMESTAMP_SHIFT) + settings.msgkey_epoch_ms
+    return (msgkey >> _msgkey_generator.timestamp_shift) + settings.msgkey_epoch_ms
 
 
 def parse_datetime(msgkey: int) -> datetime:
@@ -249,7 +204,7 @@ async def ensure_current_month_shards() -> None:
 
     这样首条私信写入时无需承担 DDL 耗时；历史月份库仍保持懒创建。
     """
-    now_key = generate_msgkey()
+    now_key = await generate_msgkey()
     db = db_name_of(now_key)
     width = len(str(settings.dm_content_table_count - 1))
     async with engine.begin() as conn:
@@ -263,7 +218,6 @@ async def ensure_current_month_shards() -> None:
 
 
 __all__ = [
-    "MsgKeyGenerator",
     "db_name_of",
     "ensure_current_month_shards",
     "ensure_shard",
