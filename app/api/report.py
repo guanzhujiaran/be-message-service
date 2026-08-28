@@ -10,6 +10,8 @@
 
 from fastapi import APIRouter, Query
 
+from bili_common.models.report import ReportBizTypeEnum
+
 from app.core.database import SessionDep
 from app.dependencies import AdminUser, RequiredUser
 from app.models import StandardResponse
@@ -18,7 +20,7 @@ from app.models.schemas import (
     ReportListResp,
     ReportReviewReq,
 )
-from app.services.report import ReportService
+from app.services.admin.report import ReportService
 
 # 2.41.0：be-gateway 已合并为 /api/v1/ 通配转发，举报使用独立业务域
 #（动态域前缀由 /api/v1/moment 更名为 /api/v1/community）；统一举报任意资源
@@ -52,7 +54,7 @@ async def create_report(
 async def list_reports(
     session: SessionDep,
     admin: AdminUser,
-    biz_type: str | None = Query(default=None, description="按来源过滤：dynamic/comment/user"),
+    biz_type: ReportBizTypeEnum | None = Query(default=None, description="按来源过滤（ReportBizTypeEnum 值）"),
     status: str | None = Query(default=None, description="按状态过滤：pending/resolved/rejected"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),

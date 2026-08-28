@@ -12,7 +12,7 @@
 import httpx
 import pytest
 
-from app.services.avatar_check import (
+from app.services.user.avatar_check import (
     ALLOWED_IMAGE_EXTENSIONS,
     AVATAR_MAX_BYTES,
     verify_avatar_url,

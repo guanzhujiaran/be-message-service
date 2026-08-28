@@ -11,7 +11,7 @@
 
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import DmMsgTypeEnum, EventTypeEnum
+from app.models.enums import DmMsgTypeEnum, EventTypeEnum, InteractionBizTypeEnum
 
 
 class DmContentPayload(SQLModel):
@@ -82,7 +82,8 @@ class InteractionViewPayload(SQLModel):
     浏览上报幂等：即使重试重复消费，ViewLog 唯一约束保证 Stat.viewCount 只首次 +1。
     """
 
-    bizType: str = Field(description="资源类型（对外文字：dynamic/lottery/...）")
+    # 2.43.0：内部统一投递 InteractionBizTypeEnum 整数值；兼容旧文字消息（str），消费端 from_text 统一解析
+    bizType: InteractionBizTypeEnum | str = Field(description="资源类型（InteractionBizTypeEnum 值；兼容旧文字）")
     bizId: str = Field(description="资源 id（字符串雪花 id）")
     mid: int = Field(description="浏览用户 mid")
 

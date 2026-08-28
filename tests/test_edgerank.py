@@ -37,17 +37,18 @@ from app.models.enums import (
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
 )
-from app.services.edgerank import (
+from app.services.moment.edgerank import (
     FEED_PROFILE,
     TOPIC_SQUARE_PROFILE,
+    EdgeRankExtra,
     build_anon_profile,
     compute_moment_score,
     compute_topic_score,
     decay,
 )
-from app.services.follow import FollowService
-from app.services.moment_feed import MomentFeedService
-from app.services.moment_topic import MomentTopicService
+from app.services.user.follow import FollowService
+from app.services.moment.moment_feed import MomentFeedService
+from app.services.moment.moment_topic import MomentTopicService
 
 # 独立区间，避免与其它模块用例冲突
 E_MID = 920101
@@ -59,6 +60,48 @@ E_TOPIC_B = 9200102
 # 时间基准 datetime.now()（本地 CST）——与业务写入/灌数数据一致，避免 UTC 字面值
 # 比 CST 小 8h 导致 seed 动态在库里相对灌数数据看起来更旧而被挤出候选集
 _BASE = datetime.datetime.now()  # noqa: DTZ005
+
+_MOMENT_WEIGHT_FIELDS = ("like", "comment", "repost", "view", "favorite", "share")
+
+
+def _stat(
+    *,
+    like: int = 0,
+    comment: int = 0,
+    repost: int = 0,
+    view: int = 0,
+    favorite: int = 0,
+    share: int = 0,
+) -> TInteractionStat:
+    return TInteractionStat(
+        bizType=InteractionBizTypeEnum.DYNAMIC,
+        bizId=0,
+        likeCount=like,
+        commentCount=comment,
+        repostCount=repost,
+        viewCount=view,
+        favoriteCount=favorite,
+        shareCount=share,
+    )
+
+
+def _topic(
+    *,
+    dyn_count: int = 0,
+    view_count: int = 0,
+    is_hot: int = 0,
+    sort_weight: int = 0,
+    pub_time: datetime.datetime | None = None,
+) -> TMomentTopic:
+    return TMomentTopic(
+        topicId=1,
+        topicName="t",
+        dynCount=dyn_count,
+        viewCount=view_count,
+        isHot=is_hot,
+        sortWeight=sort_weight,
+        pubTime=pub_time,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -111,7 +154,7 @@ async def _bind_engine_per_test():
             )
             await s.exec(
                 text(
-                    f"DELETE FROM TMomentStat WHERE dynId IN "
+                    f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId IN "
                     f"(SELECT dynId FROM TMoment WHERE mid IN ({E_MID}, {E_MID2}))"
                 )
             )
@@ -146,8 +189,8 @@ def test_decay_monotonic():
 def test_compute_moment_score_weight_and_decay():
     """权重与时间衰减共同决定排序：同时间高互动 > 低互动；同互动新 > 旧。"""
     now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
-    hot = {"like": 100, "comment": 50, "repost": 10, "view": 999, "favorite": 5}
-    cold = {"like": 2, "comment": 0, "repost": 0, "view": 3, "favorite": 0}
+    hot = _stat(like=100, comment=50, repost=10, view=999, favorite=5)
+    cold = _stat(like=2, view=3)
     assert compute_moment_score(hot, now, FEED_PROFILE, now=now) > compute_moment_score(
         cold, now, FEED_PROFILE, now=now
     )
@@ -164,8 +207,8 @@ def test_compute_moment_score_weight_and_decay():
 def test_compute_moment_score_zero_interaction():
     """零互动退化为最小基数 × decay，低于任意互动内容。"""
     now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
-    s_zero = compute_moment_score({}, now, FEED_PROFILE, now=now)
-    s_one = compute_moment_score({"like": 1}, now, FEED_PROFILE, now=now)
+    s_zero = compute_moment_score(_stat(), now, FEED_PROFILE, now=now)
+    s_one = compute_moment_score(_stat(like=1), now, FEED_PROFILE, now=now)
     assert s_zero < s_one
     assert s_zero >= 0
 
@@ -174,10 +217,10 @@ def test_compute_moment_score_disabled_fallback():
     """edgerank_enabled=False：返回时间倒序等价分（时间主导，与互动无关）。"""
     now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
     s_new = compute_moment_score(
-        {"like": 1}, now, FEED_PROFILE, now=now, enabled=False
+        _stat(like=1), now, FEED_PROFILE, now=now, enabled=False
     )
     s_old = compute_moment_score(
-        {"like": 99999},
+        _stat(like=99999),
         now - datetime.timedelta(days=1),
         FEED_PROFILE,
         now=now,
@@ -210,11 +253,12 @@ def test_build_anon_profile_deterministic():
     p1 = build_anon_profile("anon-a")
     p2 = build_anon_profile("anon-a")
     p3 = build_anon_profile("anon-b")
-    assert p1.weights == p2.weights  # 同 seed → 同权重（匿名用户刷新稳定）
-    assert p1.weights != p3.weights  # 不同 seed → 权重不同（不同用户不同 feed）
+    assert p1 == p2  # 同 seed → 同权重（匿名用户刷新稳定）
+    assert p1 != p3  # 不同 seed → 权重不同（不同用户不同 feed）
     ratio = settings.edgerank_anon_perturb_ratio
-    for k, v in p1.weights.items():
-        base = FEED_PROFILE.weight(k)
+    for k in _MOMENT_WEIGHT_FIELDS:
+        base = float(getattr(FEED_PROFILE, k))
+        v = float(getattr(p1, k))
         assert base * (1 - ratio) <= v <= base * (1 + ratio)
     # 半衰期与 FEED_PROFILE 一致（只扰动权重，不动时间衰减）
     assert p1.half_life_seconds == FEED_PROFILE.half_life_seconds
@@ -291,7 +335,7 @@ async def _seed_moment(
             bizId=did,
             mid=mid,
             pubTime=now,
-            auditStatus=MomentAuditStatusEnum.NORMAL.value,
+            auditStatus="normal",
             tags=[],
         )
     )
@@ -512,18 +556,21 @@ async def test_comprehensive_feed_report_penalty(monkeypatch):
 def test_compute_moment_score_author_fans_level_and_report():
     """2.37.0：作者粉丝/等级加权 + 举报数降权进入打分。"""
     now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
-    base = {"like": 1, "view": 100}
-    s0 = compute_moment_score(
-        base, now, FEED_PROFILE, now=now,
-        extra={"fans": 0, "level": 0, "report_count": 0},
-    )
+    base = _stat(like=1, view=100)
+    s0 = compute_moment_score(base, now, FEED_PROFILE, now=now, extra=EdgeRankExtra())
     s1 = compute_moment_score(
-        base, now, FEED_PROFILE, now=now,
-        extra={"fans": 10000, "level": 5},
+        base,
+        now,
+        FEED_PROFILE,
+        now=now,
+        extra=EdgeRankExtra(fans=10000, level=5),
     )
     s2 = compute_moment_score(
-        base, now, FEED_PROFILE, now=now,
-        extra={"report_count": 3},
+        base,
+        now,
+        FEED_PROFILE,
+        now=now,
+        extra=EdgeRankExtra(report_count=3),
     )
     assert s1 > s0  # 粉丝 log 加权 + 等级线性加权 → 加分
     assert s2 < s0  # 举报降权 → 扣分

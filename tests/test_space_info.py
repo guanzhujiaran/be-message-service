@@ -14,8 +14,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 from app.core.config import settings
 from app.models.db.follow import UserFollow
 from app.models.enums import FollowStatusEnum
-from app.services.follow import FollowService
-from app.services.pptr_user import PptrUserService
+from app.services.user.follow import FollowService
+from app.services.user.pptr_user import PptrUserService
 
 # 测试用的两个用户（黑名单关系测试写入/清理用；未登录相关字段）
 BLOCK_A = 920011

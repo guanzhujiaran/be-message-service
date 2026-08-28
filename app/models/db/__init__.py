@@ -29,7 +29,6 @@ from app.models.db.moment import (
     TMomentDislike,
     TMomentLike,
     TResourceReport,
-    TMomentStat,
     TMomentTopic,
     TMomentTopicRel,
 )
@@ -47,7 +46,6 @@ __all__ = [  # noqa: RUF022
     "CommentReport",
     "CommentSubject",
     "TMoment",
-    "TMomentStat",
     "TMomentLike",
     "TMomentDislike",
     "MomentAuthorQuality",

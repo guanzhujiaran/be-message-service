@@ -19,7 +19,7 @@ from sqlmodel import Field
 
 from app.models.db.base import TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import InteractionBizTypeEnum
+from app.models.enums import InteractionBizTypeEnum, MomentVisibleScopeEnum
 
 
 class TResourceFeed(TimestampMixin, table=True):
@@ -56,6 +56,14 @@ class TResourceFeed(TimestampMixin, table=True):
         default=None,
         max_length=32,
         description="资源审核状态字符串（各资源自定；'normal' 表示可公开入 Feed）",
+    )
+    # 2.46.0：动态冗余可见范围（与 TMoment.visibleScope 一致，发布/编辑同步），
+    # 推荐流候选零 join 直接过滤 PUBLIC；非动态资源缺省 PUBLIC（可公开入 Feed 的合理默认）
+    visibleScope: MomentVisibleScopeEnum | None = Field(
+        default=MomentVisibleScopeEnum.PUBLIC,
+        nullable=True,
+        sa_type=SAEnum(MomentVisibleScopeEnum),
+        description="可见范围冗余（动态行与 TMoment.visibleScope 一致；非动态资源缺省 PUBLIC）",
     )
     tags: list = Field(
         default_factory=list,

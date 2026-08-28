@@ -2,10 +2,10 @@
 
 清除指定 uid 用户在 be-message MySQL 的动态相关全部数据：
 
-- **发布的动态** `TMoment WHERE mid=uid`：`TMomentStat`/`TMomentLike`/
-  `TMomentViewLog`/`TMomentAuditLog` 对 `dynId` 均
-  `ondelete=CASCADE`，删主表自动级联清子表；
-- **点赞 / 浏览他人动态的痕迹**（`TMomentLike`/`TMomentViewLog` 的 `mid`）：
+- **发布的动态** `TMoment WHERE mid=uid`：`TMomentLike`/`TMomentAuditLog`
+  等子表对 `dynId` 均 `ondelete=CASCADE`，删主表自动级联清子表；
+  （旧动态统计双轨已删除，计数统一 `TInteractionStat`）
+- **点赞 / 浏览他人动态的痕迹**（`TMomentLike`/`TInteractionViewLog` 的 `mid`）：
   这些行的 `mid` 是该用户（操作者），非动态作者，需单独按 `mid` 删，
   不会随其发布动态级联。
 

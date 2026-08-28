@@ -7,6 +7,8 @@
 from pydantic import Field
 from sqlmodel import SQLModel
 
+from app.models.enums import InteractionBizTypeEnum
+
 
 from app.models.schemas.base import AutoStrMixin
 class FavoriteFolderCreateReq(SQLModel, AutoStrMixin):
@@ -51,7 +53,7 @@ class FavoriteAddReq(SQLModel, AutoStrMixin):
     `bizType≠dynamic` 时 `bizId` 必填、`dynId` 忽略。
     """
 
-    bizType: str = Field(default="dynamic", description="资源类型：dynamic/lottery/rpa_action/rpa_workflow/rpa_browser（对外文字，DB 存 int）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str | None = Field(default=None, description="资源id（字符串；动态时=动态id）")
     dynId: str | None = Field(default=None, description="[兼容]动态id（字符串，雪花ID；等价 bizId=bizType=dynamic）")
     folderId: str | None = Field(default=None, description="收藏夹id（字符串，雪花ID；缺省/空则收藏到默认收藏夹）")
@@ -60,7 +62,7 @@ class FavoriteAddReq(SQLModel, AutoStrMixin):
 class FavoriteRemoveReq(SQLModel, AutoStrMixin):
     """从收藏夹取消收藏（2.17.0 泛化）。"""
 
-    bizType: str = Field(default="dynamic", description="资源类型（对外文字，DB 存 int）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str | None = Field(default=None, description="资源id（字符串）")
     dynId: str | None = Field(default=None, description="[兼容]动态id（字符串，雪花ID）")
     folderId: str = Field(description="收藏夹id（字符串，雪花ID）")
@@ -69,7 +71,7 @@ class FavoriteRemoveReq(SQLModel, AutoStrMixin):
 class FavoriteAddResp(SQLModel, AutoStrMixin):
     """收藏响应（2.17.0 泛化）。"""
 
-    bizType: str = Field(default="dynamic", description="资源类型")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源id（字符串）")
     dynId: str | None = Field(default=None, description="[兼容]动态id（动态资源时返回）")
     folderId: str = Field(description="收藏夹id（字符串）")
@@ -81,7 +83,7 @@ class FavoriteListReq(SQLModel, AutoStrMixin):
     """某收藏夹下的资源分页。"""
 
     folderId: str = Field(description="收藏夹id（字符串，雪花ID）")
-    bizType: str | None = Field(default=None, description="资源类型过滤（缺省返回全部类型；对外文字，DB 存 int）")
+    bizType: InteractionBizTypeEnum | None = Field(default=None, description="资源类型过滤（缺省返回全部类型；InteractionBizTypeEnum 值）")
     page: int = Field(default=1, ge=1, description="页码")
     pageSize: int = Field(default=20, ge=1, le=50, description="每页数量")
 
@@ -89,7 +91,7 @@ class FavoriteListReq(SQLModel, AutoStrMixin):
 class FavoriteListItem(SQLModel, AutoStrMixin):
     """某收藏夹下的一条资源（2.17.0 新增）。"""
 
-    bizType: str = Field(description="资源类型")
+    bizType: InteractionBizTypeEnum = Field(description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源id（字符串）")
 
 
@@ -113,7 +115,7 @@ class FavoriteItemListResp(SQLModel, AutoStrMixin):
 class FavoriteDynFoldersResp(SQLModel, AutoStrMixin):
     """某资源被当前用户收藏在哪些收藏夹（2.17.0 泛化）。"""
 
-    bizType: str = Field(default="dynamic", description="资源类型")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源id（字符串）")
     dynId: str | None = Field(default=None, description="[兼容]动态id（动态资源时返回）")
     folderIds: list[str] = Field(default_factory=list, description="已收藏该资源的收藏夹id列表")

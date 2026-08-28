@@ -15,7 +15,7 @@ from app.core.database import SessionDep
 from app.dependencies import CurrentUser, RootUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
-from app.services.message_admin import MessageAdminService
+from app.services.admin.message_admin import MessageAdminService
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin"])
 

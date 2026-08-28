@@ -25,10 +25,7 @@ from loguru import logger
 from app.core.database import new_session
 from app.models.enums import InteractionBizTypeEnum
 from app.models.schemas import InteractionViewPayload
-from app.services.interaction import (
-    BeMessageInteractionStatService as InteractionStatService,
-)
-from app.services.moment_stat import MomentStatService
+from app.services.interaction_actions import get_action
 
 #: 浏览统计最大重试次数（requeue 重投超过该次数则 ack 丢弃）
 MAX_VIEW_RETRIES = 3
@@ -66,10 +63,11 @@ async def handle_interaction_view(payload: InteractionViewPayload, msg: RabbitMe
 
     async with new_session() as session:
         try:
-            if biz_type == InteractionBizTypeEnum.DYNAMIC:
-                await MomentStatService.report_view(session, biz_id, payload.mid)
-            else:
-                await InteractionStatService.report_view(session, biz_type, biz_id, payload.mid)
+            # 2.47.0：按 biz_type 分发到对应浏览上报操作类（每个类声明自己的 _biz_type）
+            action = get_action("view", biz_type)(
+                session, actor_mid=payload.mid, biz_id=biz_id
+            )
+            await action.run()
             await session.commit()
         except asyncio.CancelledError:
             # 服务关停：不 rollback / 不 nack，上抛交由框架处理

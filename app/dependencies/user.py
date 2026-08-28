@@ -29,7 +29,7 @@ from bili_common.deps.auth import (
 from bili_common.models.depends import AuthInfo
 from fastapi import Depends, Header, HTTPException, status
 
-from app.services import jwt_service
+from app.services.infrastructure import jwt_service
 
 
 async def get_current_user(

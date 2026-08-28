@@ -35,11 +35,11 @@ from app.models.schemas import (
     CommentTopResp,
     CommentUserBrief,
 )
-from app.services.ban_service import BanService
-from app.services.comment import CommentService
-from app.services.comment_action import CommentActionService
-from app.services.comment_read import CommentReadService
-from app.services.pptr_user import PptrUserService
+from app.services.admin.ban_service import BanService
+from app.services.message.comment import CommentService
+from app.services.message.comment_action import CommentActionService
+from app.services.message.comment_read import CommentReadService
+from app.services.user.pptr_user import PptrUserService
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/comment", tags=["comment"])
@@ -54,7 +54,7 @@ def resolve_ip_geo_pairs(
     返回 `(ip_location, ip_isp)`，供评论/动态发布时保存展示。
     """
     try:
-        from app.services.geo_ip import lookup
+        from app.services.infrastructure.geo_ip import lookup
 
         ip = ip_v4 or ip_v6
         r = lookup(ip)

@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models.push import PushChannelConfig
 
-
 class Settings(BaseSettings):
     """message-service 运行时配置。
 
@@ -68,9 +67,9 @@ class Settings(BaseSettings):
     )
     # pptr 用户表所在 schema（sequelize 默认 public）
     postgres_pptr_schema: str = "public"
-    # 只读连接池（读多写零，池子略小）
-    postgres_pptr_pool_size: int = 5
-    postgres_pptr_max_overflow: int = 10
+    # 只读连接池（读多写零；seed 高并发审核/Feed 渲染抢连接，2.46.0 调大 5+10→10+20）
+    postgres_pptr_pool_size: int = 10
+    postgres_pptr_max_overflow: int = 20
     postgres_pptr_pool_recycle: int = 300
     postgres_pptr_echo: bool = False
 
@@ -211,6 +210,24 @@ class Settings(BaseSettings):
     # 作者粉丝/等级（moment_author_quality.fansCount / currentLevel，定时任务聚合）
     edgerank_fans_weight: float = 0.2  # log(1+fans)
     edgerank_level_weight: float = 0.1  # currentLevel
+    # 2.43.0：时间衰减基准改用「最近活跃时间」（max(pubTime, 最后评论时间)），
+    # 最后评论时间取评论系统 CommentSubject.updated_at；关闭则仅用发布时间
+    edgerank_decay_use_last_activity: bool = True
+    # ==================== 候选集多路召回（2.46.0）====================
+    # sort=recommend 候选由「72h 最新 N 条」升级为五路召回并集去重；每路独立开关与上限。
+    # 并集后仍受 edgerank_candidate_limit 总上限约束，召回阶段不排序（统一交 rank_feed 精排）。
+    edgerank_recall_hot_enabled: bool = True  # 热门/趋势路：时间窗口最新 + 互动 top 兜底
+    edgerank_recall_hot_limit: int = 200  # 时间窗口最新条数
+    edgerank_recall_hot_top_limit: int = 100  # 互动量(like+comment+repost) top 兜底条数
+    edgerank_recall_social_enabled: bool = True  # 社交关系路：关注作者动态（未登录跳过）
+    edgerank_recall_social_limit: int = 100
+    edgerank_recall_topic_enabled: bool = True  # 内容标签/分类路：偏好话题动态（未登录跳过）
+    edgerank_recall_topic_limit: int = 100
+    edgerank_recall_geo_enabled: bool = True  # 地理位置路：附近动态（需请求带 lat/lng）
+    edgerank_recall_geo_limit: int = 50
+    edgerank_recall_geo_radius_km: float = 50.0  # 附近范围半径
+    edgerank_recall_cf_enabled: bool = True  # 协同过滤路（MVP 近似）：点赞/互动过作者的新动态
+    edgerank_recall_cf_limit: int = 100
 
     # ==================== 私信策略 ====================
     # 消息可撤回的时间窗口（秒），超过则不允许撤回

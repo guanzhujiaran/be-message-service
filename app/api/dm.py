@@ -36,9 +36,9 @@ from app.models.schemas import (
     DmSessionListResp,
 )
 from app.models.str_int import StrInt
-from app.services.activity import ActivityService
-from app.services.ban_service import BanService
-from app.services.dm import DmService
+from app.services.message.activity import ActivityService
+from app.services.admin.ban_service import BanService
+from app.services.message.dm import DmService
 
 router = APIRouter(prefix="/api/v1/message/dm", tags=["message-dm"])
 

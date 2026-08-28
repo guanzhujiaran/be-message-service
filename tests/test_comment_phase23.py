@@ -29,12 +29,12 @@ from app.models.enums import (
 )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.schemas import CommentAddReq
-from app.services.comment import CommentService
-from app.services.comment_action import CommentActionService
-from app.services.comment_admin import CommentAdminService
-from app.services.comment_audit import audit_text
-from app.services.comment_read import CommentReadService
-from app.services.pptr_user import PptrUserService
+from app.services.message.comment import CommentService
+from app.services.message.comment_action import CommentActionService
+from app.services.message.comment_admin import CommentAdminService
+from app.services.message.comment_audit import audit_text
+from app.services.message.comment_read import CommentReadService
+from app.services.user.pptr_user import PptrUserService
 
 
 @pytest.fixture(autouse=True)
@@ -98,18 +98,17 @@ async def _cleanup(oid: int, mids: set[int]) -> None:
         if mids:
             placeholders = ",".join(str(m) for m in mids)
             await s.exec(text(f"DELETE FROM msg_event WHERE mid IN ({placeholders}) OR actor_mid IN ({placeholders})"))
-        # 测试挂载的真实动态行（TMomentStat 由 FK ON DELETE CASCADE 级联清理）
+        # 测试挂载的真实动态行（子表由 FK ON DELETE CASCADE 级联清理）
         await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
         await s.commit()
 
 
 async def _ensure_moment(session, oid: int, mid: int) -> None:
-    """确保测试 oid 有对应真实 TMoment 行（评论 stat 回写的父行）。
+    """确保测试 oid 有对应真实 TMoment 行（DYNAMIC 评论计数回写的宿主）。
 
-    DYNAMIC 评论的 `commentCount ±1`（审核通过 / 驳回 / 删除）会回写
-    `TMomentStat`（ensure_stat_row + incr/decr_stat），而 `TMomentStat.dynId`
-    外键指向 `TMoment.dynId`——测试 oid 若没有父行会外键失败
-    （见 `TMomentStat_dynId_fkey`）。
+    DYNAMIC 评论的 `commentCount ±1`（审核通过 / 驳回 / 删除）经
+    ``MomentStatService`` 回写动态计数（2.36.0 起为 `TInteractionStat`），
+    评论测试需把 oid 挂到真实动态上以完整覆盖 DYNAMIC 生命周期。
     """
     exists = (
         await session.exec(select(TMoment.dynId).where(TMoment.dynId == oid))
@@ -137,8 +136,8 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
 
     `comment_pre_audit=True` 下发布即 `auditing`，auditing 不计入
     `root_count/all_count`（见 comment.py「仅 NORMAL 才计入」），审核通过时补 +1。
-    不走 `CommentAdminService.set_state`：其内部回写 `TMomentStat`，而测试 oid 为
-    虚构值、`TMomentStat.dynId` 外键指向不存在的 `TMoment` 会失败。
+    不走 `CommentAdminService.set_state`：其内部会回写动态计数（经
+    ``MomentStatService``），而测试 oid 为虚构值、无真实 `TMoment` 宿主行。
     """
     row = (
         await session.exec(
@@ -470,7 +469,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
     """
     from app.models.enums import EventTypeEnum
     from app.models.schemas import EventReportReq
-    from app.services.event import EventService as EventSvc
+    from app.services.message.event import EventService as EventSvc
 
     # 关掉「先审后发」，保证无敏感词评论直接 NORMAL（与
     # test_author_sees_own_auditing_comment 同理），使状态判定可控
@@ -552,7 +551,7 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
     """
     from app.models.enums import EventTypeEnum
     from app.models.schemas import EventReportReq
-    from app.services.event import EventService as EventSvc
+    from app.services.message.event import EventService as EventSvc
 
     # 关掉「先审后发」：无敏感词评论（含根评论）直接 NORMAL，作为楼中楼回复目标；
     # 疑似词子评论仍会命中预筛进 AUDITING（与 test_interact_notify_only_for_visible_comment 同理）

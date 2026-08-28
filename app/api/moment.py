@@ -12,8 +12,10 @@
 - POST /space/untop   取消置顶
 - POST /create/check  发布页预校验
 
-互动类（P4-T7）：
-- POST /thumb         点赞 / 取消点赞（幂等）
+互动类（P4-T7，2.47.0 起直接实例化 `interaction_actions` 操作对象）：
+- POST /thumb         点赞 / 取消点赞（幂等，LikeAction）
+- POST /dislike       点踩 / 取消点踩（幂等，DislikeAction）
+- POST /share         分享上报（shareCount +1，ShareAction）
 - POST /report        举报动态（不改 auditStatus）
 （浏览计数无上报接口：由后端在详情接口 GET /detail/{id} 访问时自动累计）
 
@@ -52,6 +54,7 @@ from app.models.enums import (
     InteractionBizTypeEnum,
     MomentAuditStatusEnum,
 )
+from bili_common.models.report import ReportBizTypeEnum
 from app.models.schemas.interaction import (
     InteractionStatusItem,
     InteractionStatusResp,
@@ -89,16 +92,22 @@ from app.models.schemas.moment import (
     MomentUpStatResp,
     MomentTopicDetailResp,
 )
-from app.services.follow import FollowService
-from app.services.interaction import (
+from app.services.user.follow import FollowService
+from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
-from app.services.publisher import publish_interaction_view
-from app.services.rpa_rpc import rpa_rpc_client
-from app.services.moment_feed import MomentFeedService
-from app.services.moment_interaction import MomentInteractionService
-from app.services.moment_publish import MomentPublishService
-from app.services.moment_topic import MomentTopicService
+from app.services.message.publisher import publish_interaction_view
+from app.services.infrastructure.rpa_rpc import rpa_rpc_client
+from app.services.interaction_actions import (
+    DislikeAction,
+    ReportAction,
+    RepostAction,
+    ShareAction,
+    get_action,
+)
+from app.services.moment.moment_feed import MomentFeedService
+from app.services.moment.moment_publish import MomentPublishService
+from app.services.moment.moment_topic import MomentTopicService
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/community", tags=["moment"])
@@ -219,9 +228,15 @@ async def repost_dynamic(
 ) -> StandardResponse[MomentRepostResp]:
     ip, ua = _client_ctx(request, user_agent)
     try:
-        data = await MomentPublishService.repost(
-            session, user.mid, req, client_ip=ip, user_agent=ua
+        action = RepostAction(
+            session,
+            actor_mid=user.mid,
+            biz_id=req.srcDynId,
+            content=req.content,
+            client_ip=ip,
+            user_agent=ua,
         )
+        data = await action.run()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=MomentRepostResp(**data))
@@ -287,10 +302,7 @@ async def thumb(
     req: MomentThumbReq,
 ) -> StandardResponse[MomentThumbResp]:
     # 解析目标资源 (bizType, bizId)：dynamic 时 bizId 与 dynId 任取其一
-    try:
-        biz_type = InteractionBizTypeEnum.from_text(req.bizType)
-    except (ValueError, KeyError):
-        return StandardResponse(code=400, msg=f"不支持的资源类型: {req.bizType}")
+    biz_type = req.bizType
     if biz_type == InteractionBizTypeEnum.DYNAMIC:
         biz_id = req.bizId if req.bizId is not None else req.dynId
         if biz_id is None:
@@ -300,14 +312,20 @@ async def thumb(
             return StandardResponse(code=400, msg="bizId 必填")
         biz_id = req.bizId
     try:
-        is_like, like_count = await MomentInteractionService.thumb(
-            session, user.mid, biz_type, biz_id, req.up
+        # 按 biz_type 分发到对应资源类型的点赞操作类（每个类声明自己的 _biz_type）
+        action = get_action("like", biz_type)(
+            session,
+            actor_mid=user.mid,
+            biz_id=biz_id,
+            up=req.up,
+            dyn_id=req.dynId,
         )
+        is_like, like_count = await action.run()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(
         data=MomentThumbResp(
-            bizType=biz_type.to_text(),
+            bizType=biz_type,
             bizId=biz_id,
             bizIdStr=str(biz_id),
             dynId=req.dynId,
@@ -333,20 +351,26 @@ async def dislike(
     MVP 仅支持动态资源：`bizType` 必须为 `dynamic`，`bizId` 与 `dynId` 任取其一。
     计数供 EdgeRank `dislike_ratio` 降权使用。
     """
-    if req.bizType != "dynamic":
+    if req.bizType != InteractionBizTypeEnum.DYNAMIC:
         return StandardResponse(code=400, msg="点踩当前仅支持动态资源")
     biz_id = req.bizId if req.bizId is not None else req.dynId
     if biz_id is None:
         return StandardResponse(code=400, msg="bizId/dynId 不合法")
     try:
-        is_dislike, dislike_count = await MomentInteractionService.dislike(
-            session, user.mid, "dynamic", biz_id, req.up
+        action = DislikeAction(
+            session,
+            actor_mid=user.mid,
+            biz_type=InteractionBizTypeEnum.DYNAMIC,
+            biz_id=biz_id,
+            up=req.up,
+            dyn_id=biz_id,
         )
+        is_dislike, dislike_count = await action.run()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(
         data=MomentDislikeResp(
-            bizType="dynamic",
+            bizType=InteractionBizTypeEnum.DYNAMIC,
             bizId=biz_id,
             bizIdStr=str(biz_id),
             dynId=biz_id,
@@ -369,7 +393,13 @@ async def share(
 ) -> StandardResponse[MomentShareResp]:
     """分享上报：normal 动态 ``shareCount`` 原子 +1（行为上报，不幂等）。"""
     try:
-        count = await MomentInteractionService.share(session, req.dynId)
+        action = ShareAction(
+            session,
+            actor_mid=user.mid,
+            biz_id=req.dynId,
+            dyn_id=req.dynId,
+        )
+        count = await action.run()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(
@@ -405,7 +435,7 @@ async def _verify_resources_exist(
         ).all()
         existing = {int(r) for r in dyn_rows}
     elif biz_type == InteractionBizTypeEnum.LOTTERY:
-        from app.services.lottery_rpc import get_lottery_rpc_client
+        from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
 
         client = await get_lottery_rpc_client()
         existing = await client.get_existing_lottery_ids(ids)
@@ -503,7 +533,7 @@ async def _query_status_items(
     if ids:
         if InteractionStatService.is_dynamic(biz_type):
             _rp_where = (
-                col(TResourceReport.bizType) == "dynamic",
+                col(TResourceReport.bizType) == ReportBizTypeEnum.DYNAMIC.value,
                 col(TResourceReport.bizId).in_(ids),
             )
         else:
@@ -526,7 +556,7 @@ async def _query_status_items(
 
     return [
         InteractionStatusItem(
-            bizType=biz_type.to_text(),
+            bizType=biz_type,
             bizId=str(_id),
             isLike=_id in liked_ids,
             isFavorite=_id in faved_ids,
@@ -551,13 +581,9 @@ async def _query_status_items(
 async def interaction_status(
     session: SessionDep,
     user: RequiredUser,
-    bizType: str = Query(description="资源类型（文字：dynamic/lottery/...）"),
+    bizType: InteractionBizTypeEnum = Query(description="资源类型（InteractionBizTypeEnum 值）"),
     bizIds: str = Query(description="资源 id 列表（逗号分隔，限 50 个）"),
 ) -> StandardResponse[InteractionStatusResp]:
-    try:
-        bizType = InteractionBizTypeEnum.from_text(bizType)
-    except (ValueError, KeyError):
-        return StandardResponse(code=400, msg=f"不支持的资源类型: {bizType}")
     try:
         ids = [int(x.strip()) for x in bizIds.split(",") if x.strip()]
     except ValueError:
@@ -585,17 +611,14 @@ async def interaction_status_detail(
     session: SessionDep,
     user: RequiredUser,
     biz_id: str,
-    bizType: str = Query(description="资源类型（文字：dynamic/lottery/...）"),
+    bizType: InteractionBizTypeEnum = Query(description="资源类型（InteractionBizTypeEnum 值）"),
 ) -> StandardResponse[InteractionStatusItem]:
     """查询单个资源互动状态；detail 页调用，查询后投递浏览 MQ 异步累计（2.23.1）。
 
     列表批量接口不累计浏览，仅进入详情页（本接口）才 +1——
     经 ViewLog 按 bizType+bizId+mid+refDate 去重幂等，同日重复进入详情不重复计数。
     """
-    try:
-        biz_type = InteractionBizTypeEnum.from_text(bizType)
-    except (ValueError, KeyError):
-        return StandardResponse(code=400, msg=f"不支持的资源类型: {bizType}")
+    biz_type = bizType
     try:
         biz_id_int = int(biz_id)
     except ValueError:
@@ -613,7 +636,7 @@ async def interaction_status_detail(
     # 由 lastViewAt 是否同一自然日判断跨天访问才 +1
     await publish_interaction_view(
         InteractionViewPayload(
-            bizType=biz_type.to_text(), bizId=str(biz_id_int), mid=user.mid
+            bizType=biz_type, bizId=str(biz_id_int), mid=user.mid
         )
     )
     return StandardResponse(data=item)
@@ -630,7 +653,15 @@ async def report(
     req: MomentReportReq,
 ) -> StandardResponse[MomentReportResp]:
     try:
-        await MomentInteractionService.report(session, user.mid, req)
+        action = ReportAction(
+            session,
+            actor_mid=user.mid,
+            biz_id=req.dynId,
+            reason_type=req.reasonType,
+            reason_desc=req.reasonDesc,
+            dyn_id=req.dynId,
+        )
+        await action.run()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(

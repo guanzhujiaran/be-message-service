@@ -28,8 +28,8 @@ from app.models.schemas.moment import (
     MomentForwardListResp,
     MomentLikerListResp,
 )
-from app.services.follow import FollowService
-from app.services.moment_feed import MomentFeedService
+from app.services.user.follow import FollowService
+from app.services.moment.moment_feed import MomentFeedService
 
 router = APIRouter(prefix="/api/v1/community", tags=["moment-feed"])
 
@@ -95,6 +95,9 @@ async def feed_all(
     fresh_idx: int | None = Query(default=None, description="刷新序号（1 起递增，仅日志统计）"),
     fresh_idx_1h: int | None = Query(default=None, description="1 小时内刷新次数（仅日志统计）"),
     uniq_id: str | None = Query(default=None, description="客户端唯一 ID"),
+    # ---- 2.46.0：地理位置召回（可选，未传则跳过该路）----
+    lat: float | None = Query(default=None, ge=-90, le=90, description="[recommend 可选] 纬度（地理位置召回）"),
+    lng: float | None = Query(default=None, ge=-180, le=180, description="[recommend 可选] 经度（地理位置召回）"),
     # ---- 以下参数为 time 模式保留 / 旧客户端兼容（recommend 模式忽略）----
     page: int = Query(default=1, ge=1, description="[recommend 忽略] 分页页码"),
     page_size: int = Query(default=20, ge=1, le=50, description="[兼容] 等价 ps，ps 优先"),
@@ -115,6 +118,8 @@ async def feed_all(
         last_showlist=_parse_dyn_id_list(last_showlist),
         last_clicklist=_parse_dyn_id_list(last_clicklist),
         uniq_id=uniq_id,
+        lat=lat,
+        lng=lng,
     )
     return StandardResponse(data=data)
 

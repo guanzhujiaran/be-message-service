@@ -4,7 +4,7 @@
 （be-message 主库）统一纳管。
 
 约束（对齐 `app.models.db` 既有规范）：
-- 表名沿用计划书冻结的 `"T"` 前缀 PascalCase（TMoment / TMomentStat …）；
+- 表名沿用计划书冻结的 `"T"` 前缀 PascalCase（TMoment / TMomentLike …）；
 - 列名（name）使用 camelCase，Python 属性名与数据库列名完全一致；
 - 时间戳统一用 `TimestampMixin`（datetime + default_factory + onupdate）；
 - JSON 正文用 `sa.JSON()`；枚举列直接用 `sqlalchemy.Enum(...)`（如 `sa_type=Enum(SomeEnum)`），落库为 MySQL 原生 ENUM 存成员名；
@@ -105,32 +105,6 @@ class TMoment(TimestampMixin, table=True):
     deletedAt: datetime | None = Field(default=None, description="软删时间（不为 NULL 时所有对外接口视为不存在）")
 
 
-class TMomentStat(TimestampMixin, table=True):
-    """动态统计表（1:1 关联 TMoment）。
-
-    统一「明细表唯一约束幂等 + 计数原子 UPDATE ±1」范式：
-    likeCount / commentCount / repostCount / viewCount 等直接存数字字段，
-    由对应业务在**同一事务**内原子增减，禁止请求热路径做 COUNT 聚合。
-    """
-
-    __tablename__ = "TMomentStat"
-    __table_args__ = (
-        ForeignKeyConstraint(["dynId"], ["TMoment.dynId"], ondelete="CASCADE", name="TMomentStat_dynId_fkey"),
-        PrimaryKeyConstraint("dynId", name="TMomentStat_pkey"),
-        {"extend_existing": True, "comment": "动态统计表：计数直接存数字字段，明细表做幂等，原子 UPDATE ±1"},
-    )
-
-    dynId: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": False})
-    likeCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="点赞数（TMomentLike 明细 + 原子 ±1）")
-    dislikeCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="点踩数（TMomentDislike 明细 + 原子 ±1，2.35.0）")
-    commentCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="评论数（评论系统写明细后回调同事务 ±1）")
-    repostCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="转发数（状态机驱动原子 ±1，操作对象是源动态行）")
-    viewCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="浏览数（TInteractionViewLog 每用户每资源一行，跨天访问 +1）")
-    shareCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="分享数（分享上报原子 +1，2.35.0 启用）")
-    coinCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="投币数（预留）")
-    favoriteCount: int = Field(default=0, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}, description="收藏数（预留）")
-
-
 class TMomentLike(TimestampMixin, table=True):
     """点赞明细表（2.17.0 泛化：支持任意业务资源 bizType+bizId，幂等双写的关键）。
 
@@ -168,7 +142,8 @@ class TMomentDislike(TimestampMixin, table=True):
     """点踩明细表（2.35.0）：幂等，uq(bizType,bizId,mid)。
 
     与点赞对称：一人一踩，唯一约束保证幂等双写；`dislikeCount` 在
-    `TMomentStat` 同事务原子 ±1，EdgeRank 以 `dislike_ratio` 降权。
+    `TInteractionStat`（2.36.0 起统一）同事务原子 ±1，EdgeRank 以
+    `dislike_ratio` 降权。
     """
 
     __tablename__ = "TMomentDislike"
@@ -335,7 +310,6 @@ __all__ = [
     "TMomentAuditLog",
     "TMomentLike",
     "TResourceReport",
-    "TMomentStat",
     "TMomentTopic",
     "TMomentTopicRel",
 ]

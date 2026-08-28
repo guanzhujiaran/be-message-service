@@ -28,7 +28,7 @@ from app.models.schemas import (
     CommentSourceResp,
     CommentStatsResp,
 )
-from app.services.comment_admin import CommentAdminService
+from app.services.message.comment_admin import CommentAdminService
 
 router = APIRouter(prefix="/api/v1/comment/admin", tags=["comment-admin"])
 

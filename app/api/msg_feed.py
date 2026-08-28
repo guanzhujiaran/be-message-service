@@ -15,10 +15,10 @@ from app.dependencies import RequiredUser
 from app.models import StandardResponse
 from app.models.enums import EventTypeEnum
 from app.models.schemas import EventUnreadResp, UserActivityResp
-from app.services.activity import ActivityService
-from app.services.dm import DmService
-from app.services.event import EventService
-from app.services.notify import NotifyService
+from app.services.message.activity import ActivityService
+from app.services.message.dm import DmService
+from app.services.message.event import EventService
+from app.services.message.notify import NotifyService
 
 router = APIRouter(prefix="/api/v1/message/msg_feed", tags=["message"])
 

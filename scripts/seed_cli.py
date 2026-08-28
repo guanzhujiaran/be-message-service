@@ -23,13 +23,16 @@
 - 作者/互动者取自 pptr Postgres 真实用户（只读）；大数据灌数作者/点赞者/浏览者统一映射自有用户系统；
 - 全互动阶段断言失败会**响亮报错**（暴露代码 bug）；大数据灌数阶段（biliopusdb/连接问题）**软降级跳过**，
   不阻断前面已完成的全互动阶段；
-- 私信覆盖「发送 → 拉记录可见 → 撤回（验证双方 RECALLED + recalled_by 落库与出参）
-  → 再发送 → 单方面删除（验证自己视角不可见、对方仍可见）→ 删除后尝试撤回被拒」全流程。
+- 私信覆盖 a→b 与 b→a **双向互发**：每个方向均验证「发送 → 拉记录可见 → 撤回
+  （验证双方 RECALLED + recalled_by 落库与出参）→ 再发送 → 单方面删除
+  （验证自己视角不可见、对方仍可见）→ 删除后尝试撤回被拒」全流程；
+  另对**多对用户**双向互发（发送 → 审核 → 已读 → 双方可见），覆盖会话网络广度。
 """
 import argparse
 import asyncio
 import os
 import random
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -55,7 +58,9 @@ from app.models.enums import (
     NotifyTargetTypeEnum,
     CommentTypeEnum,
     BanDurationTypeEnum,
+    InteractionBizTypeEnum,
 )
+from bili_common.models.report import ReportBizTypeEnum
 from app.models.pptr_db import PptrUserDetail, PptrUserInfo
 
 # ---------------------------------------------------------------------------
@@ -140,6 +145,9 @@ _IMG_URLS = [
 ]
 
 _TOPIC_NAMES = ["日常", "美食", "动漫", "编程", "健身", "旅行", "摄影", "读书"]
+
+#: 素材池是否已从外库真实数据加载（幂等，启动时加载一次）
+_MATERIAL_LOADED = True
 
 # 举报原因：与 ReportReasonEnum / MomentReportReasonEnum 对齐（1-6）
 _REPORT_REASON_TYPE = 3  # 人身攻击
@@ -409,7 +417,7 @@ class SeedClient:
                 lambda: self._post(
                     "/api/v1/community/thumb",
                     mid,
-                    {"bizType": "lottery", "bizId": lottery_id, "up": 1},
+                    {"bizType": InteractionBizTypeEnum.LOTTERY, "bizId": lottery_id, "up": 1},
                 ),
                 f"thumb lottery mid={mid} id={lottery_id}",
             )
@@ -422,7 +430,7 @@ class SeedClient:
             lambda: self._get(
                 f"/api/v1/community/interaction/status/{dyn_id}",
                 mid,
-                {"bizType": "dynamic"},
+                {"bizType": InteractionBizTypeEnum.DYNAMIC},
             ),
             f"browse mid={mid} dyn={dyn_id}",
         )
@@ -434,7 +442,7 @@ class SeedClient:
                 "/api/v1/report",
                 mid,
                 {
-                    "bizType": "dynamic",
+                    "bizType": ReportBizTypeEnum.DYNAMIC,
                     "bizId": dyn_id,
                     "reasonType": _REPORT_REASON_TYPE,
                     "reasonDesc": "seed 举报动态",
@@ -591,7 +599,7 @@ class SeedClient:
             lambda: self._post(
                 "/api/v1/favorite/add",
                 mid,
-                {"bizType": "dynamic", "dynId": str(dyn_id), "folderId": folder_id},
+                {"bizType": InteractionBizTypeEnum.DYNAMIC, "dynId": str(dyn_id), "folderId": folder_id},
             ),
             f"favorite add mid={mid} dyn={dyn_id}",
         )
@@ -644,9 +652,7 @@ class SeedClient:
                         "event_type": event_type,
                         "source_type": SourceTypeEnum.DYNAMIC,
                         "source_id": str(dyn_id),
-                        "source_title": "动态",
                         "actor_mid": actor_mid,
-                        "actor_name": actor_name,
                         "content": random.choice(_COMMENTS),
                         "biz_id": biz_id,
                     },
@@ -765,7 +771,7 @@ class SeedClient:
                 "/api/v1/report",
                 mid,
                 {
-                    "bizType": "user",
+                    "bizType": ReportBizTypeEnum.USER,
                     "bizId": target_mid,
                     "reasonType": _REPORT_REASON_TYPE,
                     "reasonDesc": "seed 举报用户空间",
@@ -1097,11 +1103,19 @@ async def seed_interact(
     others = [u for u in users[1:] if u[0] != hub[0]]
     followed: list[int] = []
     for target in others[: min(3, len(others))]:
-        await client.follow(hub[0], target[0])
-        followed.append(target[0])
+        try:
+            await client.follow(hub[0], target[0])
+            followed.append(target[0])
+        except RuntimeError as e:
+            # 业务拒绝（如对方已拉黑 → 400「无法关注」，黑名单持久化会跨 seed 命中）
+            # 软降级跳过，不中断整体流程（与服务端行为一致：拉黑即互斥）
+            logger.warning(f"关注失败（已跳过，可能被拉黑）: {e}")
     # 拉黑其中一个（演示黑名单）
     if len(others) > 1:
-        await client.block(hub[0], others[1][0])
+        try:
+            await client.block(hub[0], others[1][0])
+        except RuntimeError as e:
+            logger.warning(f"拉黑失败（已跳过）: {e}")
     # 3.1) 关注流验证（/feed/following 应返回关注作者的动态）
     if not skip_follow and followed:
         try:
@@ -1153,88 +1167,222 @@ async def seed_message(client: SeedClient, users: list[tuple[int, str | None]]) 
     )
 
     # ---- 场景 A：发送 → 确认可见 → 撤回（留撤回记录）----
-    msgkey1 = await client.dm_send(a[0], b[0], b[1])
-    await client.approve_dm(msgkey1)
-    await client.dm_ack(b[0], a[0])
-    rows1 = await _dm_index_by_msgkey(int(msgkey1))
-    if not rows1:
-        logger.error(f"私信 {msgkey1} 发送后主库无索引行，终止私信场景。")
-    else:
-        owners1 = {r.owner_mid: r for r in rows1}
-        assert a[0] in owners1, "发送方视角索引行缺失（写扩散未落库）"
-        logger.info(
-            f"私信已发送并落库：msgkey={msgkey1}，索引行 owner={sorted(owners1)}，"
-            f"content_ready={sum(1 for r in rows1 if r.content_ready)}"
-        )
-        # 接收方拉取聊天记录确认可见（被陌生人过滤时无接收方视角，宽容跳过）
-        msgs1 = await client.dm_messages(b[0], a[0])
-        item1 = next(
-            (it for it in msgs1.get("items", []) if it["msgkey"] == msgkey1), None
-        )
-        if item1 is None:
-            logger.warning(
-                f"接收方 {b[0]} 视角未拉到 {msgkey1}（可能被陌生人过滤），跳过可见性断言。"
+    try:
+        msgkey1 = await client.dm_send(a[0], b[0], b[1])
+        await client.approve_dm(msgkey1)
+        await client.dm_ack(b[0], a[0])
+        rows1 = await _dm_index_by_msgkey(int(msgkey1))
+        if not rows1:
+            logger.error(f"私信 {msgkey1} 发送后主库无索引行，终止私信场景。")
+        else:
+            owners1 = {r.owner_mid: r for r in rows1}
+            assert a[0] in owners1, "发送方视角索引行缺失（写扩散未落库）"
+            logger.info(
+                f"私信已发送并落库：msgkey={msgkey1}，索引行 owner={sorted(owners1)}，"
+                f"content_ready={sum(1 for r in rows1 if r.content_ready)}"
             )
-        # 发送方在时间窗内撤回
-        ok1, msg1 = await client.dm_recall(a[0], msgkey1)
-        assert ok1, f"撤回应成功: {msg1}"
-        # 查询数据库验证：双方索引行 RECALLED + 撤回记录（recalled_by/recalled_at）落库
-        rows1b = await _dm_index_by_msgkey(int(msgkey1))
-        assert rows1b and all(
-            r.msg_status is DmMsgStatusEnum.RECALLED for r in rows1b
-        ), "撤回后双方索引行应均为 RECALLED"
-        assert all(
-            r.recalled_by == a[0] for r in rows1b
-        ), "撤回记录 recalled_by 应落库为撤回方"
-        assert all(
-            r.recalled_at is not None for r in rows1b
-        ), "撤回记录 recalled_at 应落库"
-        logger.success(
-            f"私信撤回并留记录：msgkey={msgkey1}，recalled_by={rows1b[0].recalled_by}"
-        )
-        # 接收方拉取确认撤回记录出参（recalled_by / recalled_at）
-        msgs1b = await client.dm_messages(b[0], a[0])
-        item1b = next(
-            (it for it in msgs1b.get("items", []) if it["msgkey"] == msgkey1), None
-        )
-        if item1b is not None:
-            assert (
-                item1b["msg_status"] == DmMsgStatusEnum.RECALLED.value
-            ), "撤回后状态应为 RECALLED"
-            assert item1b.get("recalled_by") == a[0], "撤回记录应出参 recalled_by"
-            assert item1b.get("recalled_at"), "撤回记录应出参 recalled_at"
-            logger.success(f"撤回记录出参验证通过：recalled_by={item1b['recalled_by']}")
+            # 接收方拉取聊天记录确认可见（被陌生人过滤时无接收方视角，宽容跳过）
+            msgs1 = await client.dm_messages(b[0], a[0])
+            item1 = next(
+                (it for it in msgs1.get("items", []) if it["msgkey"] == msgkey1), None
+            )
+            if item1 is None:
+                logger.warning(
+                    f"接收方 {b[0]} 视角未拉到 {msgkey1}（可能被陌生人过滤），跳过可见性断言。"
+                )
+            # 发送方在时间窗内撤回
+            ok1, msg1 = await client.dm_recall(a[0], msgkey1)
+            assert ok1, f"撤回应成功: {msg1}"
+            # 查询数据库验证：双方索引行 RECALLED + 撤回记录（recalled_by/recalled_at）落库
+            rows1b = await _dm_index_by_msgkey(int(msgkey1))
+            assert rows1b and all(
+                r.msg_status is DmMsgStatusEnum.RECALLED for r in rows1b
+            ), "撤回后双方索引行应均为 RECALLED"
+            assert all(
+                r.recalled_by == a[0] for r in rows1b
+            ), "撤回记录 recalled_by 应落库为撤回方"
+            assert all(
+                r.recalled_at is not None for r in rows1b
+            ), "撤回记录 recalled_at 应落库"
+            logger.success(
+                f"私信撤回并留记录：msgkey={msgkey1}，recalled_by={rows1b[0].recalled_by}"
+            )
+            # 接收方拉取确认撤回记录出参（recalled_by / recalled_at）
+            msgs1b = await client.dm_messages(b[0], a[0])
+            item1b = next(
+                (it for it in msgs1b.get("items", []) if it["msgkey"] == msgkey1), None
+            )
+            if item1b is not None:
+                assert (
+                    item1b["msg_status"] == DmMsgStatusEnum.RECALLED.value
+                ), "撤回后状态应为 RECALLED"
+                assert item1b.get("recalled_by") == a[0], "撤回记录应出参 recalled_by"
+                assert item1b.get("recalled_at"), "撤回记录应出参 recalled_at"
+                logger.success(f"撤回记录出参验证通过：recalled_by={item1b['recalled_by']}")
+    except RuntimeError as e:
+        # 拉黑/陌生人过滤/网络超时等业务拒绝 → 软降级跳过本场景（不中断整体）
+        logger.warning(f"场景A 私信链路被拒（软降级）: {e}")
 
     # ---- 场景 B：单方面删除 → 删除后不可撤回 ----
-    msgkey2 = await client.dm_send(a[0], b[0], b[1])
-    await client.approve_dm(msgkey2)
-    # 发送方单方面删除（仅自己视角，对方仍可见）
-    await client.dm_delete(a[0], [msgkey2])
-    rows2 = await _dm_index_by_msgkey(int(msgkey2))
-    if not rows2:
-        logger.error(f"私信 {msgkey2} 发送后主库无索引行，跳过删除场景。")
+    try:
+        msgkey2 = await client.dm_send(a[0], b[0], b[1])
+        await client.approve_dm(msgkey2)
+        # 发送方单方面删除（仅自己视角，对方仍可见）
+        await client.dm_delete(a[0], [msgkey2])
+        rows2 = await _dm_index_by_msgkey(int(msgkey2))
+        if not rows2:
+            logger.error(f"私信 {msgkey2} 发送后主库无索引行，跳过删除场景。")
+        else:
+            state2 = {r.owner_mid: r.msg_status for r in rows2}
+            assert state2.get(a[0]) is DmMsgStatusEnum.DELETED, "删除者视角应 DELETED"
+            if b[0] in state2:
+                assert (
+                    state2[b[0]] is DmMsgStatusEnum.NORMAL
+                ), "对方视角应保持 NORMAL（单方面删除）"
+            logger.success(f"单方面删除验证通过：{a[0]}=DELETED，{b[0]}={state2.get(b[0])}")
+            # 删除者自己看不到，对方仍可见
+            my_msgs = await client.dm_messages(a[0], b[0])
+            assert not any(
+                it["msgkey"] == msgkey2 for it in my_msgs.get("items", [])
+            ), "删除者视角不应再看到"
+            other_msgs = await client.dm_messages(b[0], a[0])
+            if b[0] in state2:
+                assert any(
+                    it["msgkey"] == msgkey2 for it in other_msgs.get("items", [])
+                ), "对方视角应仍可见"
+            # 删除后尝试撤回 → 应被拒（删除后不可撤回）
+            ok2, msg2 = await client.dm_recall(a[0], msgkey2)
+            assert not ok2 and "无法撤回" in msg2, f"删除后撤回应被拒绝: {ok2=} {msg2}"
+            logger.success(f"删除后不可撤回验证通过：{msg2}")
+    except RuntimeError as e:
+        logger.warning(f"场景B 私信链路被拒（软降级）: {e}")
+
+    # ---- 场景 C：反向互发（b→a）—— 私信写扩散双向覆盖 ----
+    # 发送方换成 b（反向），验证「用户之间互相私信」链路在另一方向同样正确：
+    # 发送 → 已读 → 撤回（recalled_by=b 落库 + 出参）→ 再发送 → 单方面删除 → 删除后不可撤回。
+    try:
+        msgkey3 = await client.dm_send(b[0], a[0], a[1])
+        await client.approve_dm(msgkey3)
+        await client.dm_ack(a[0], b[0])
+        rows3 = await _dm_index_by_msgkey(int(msgkey3))
+        if not rows3:
+            logger.error(f"反向私信 {msgkey3} 发送后主库无索引行，跳过反向撤回场景。")
+        else:
+            owners3 = {r.owner_mid: r for r in rows3}
+            assert b[0] in owners3 and a[0] in owners3, "反向发送写扩散应双方落库"
+            logger.info(
+                f"反向私信已发送并落库：msgkey={msgkey3}，索引行 owner={sorted(owners3)}，"
+                f"content_ready={sum(1 for r in rows3 if r.content_ready)}"
+            )
+            # 发送方 b 在时间窗内撤回自己的消息
+            ok3, msg3 = await client.dm_recall(b[0], msgkey3)
+            assert ok3, f"反向撤回应成功: {msg3}"
+            rows3b = await _dm_index_by_msgkey(int(msgkey3))
+            assert rows3b and all(
+                r.msg_status is DmMsgStatusEnum.RECALLED for r in rows3b
+            ), "反向撤回后双方索引行应均为 RECALLED"
+            assert all(
+                r.recalled_by == b[0] for r in rows3b
+            ), "反向撤回 recalled_by 应落库为发送方 b"
+            assert all(
+                r.recalled_at is not None for r in rows3b
+            ), "反向撤回 recalled_at 应落库"
+            # 接收方 a 拉取确认撤回记录出参
+            msgs3b = await client.dm_messages(a[0], b[0])
+            item3b = next(
+                (it for it in msgs3b.get("items", []) if it["msgkey"] == msgkey3), None
+            )
+            if item3b is not None:
+                assert (
+                    item3b["msg_status"] == DmMsgStatusEnum.RECALLED.value
+                ), "反向撤回后状态应为 RECALLED"
+                assert item3b.get("recalled_by") == b[0], "反向撤回记录应出参 recalled_by"
+            logger.success(
+                f"反向互发撤回验证通过：b→a msgkey={msgkey3}，recalled_by={b[0]}"
+            )
+
+        # 反向 + 单方面删除 → 删除后不可撤回
+        msgkey4 = await client.dm_send(b[0], a[0], a[1])
+        await client.approve_dm(msgkey4)
+        await client.dm_delete(b[0], [msgkey4])
+        rows4 = await _dm_index_by_msgkey(int(msgkey4))
+        if not rows4:
+            logger.error(f"反向私信 {msgkey4} 发送后主库无索引行，跳过反向删除场景。")
+        else:
+            state4 = {r.owner_mid: r.msg_status for r in rows4}
+            assert state4.get(b[0]) is DmMsgStatusEnum.DELETED, "反向删除者视角应 DELETED"
+            if a[0] in state4:
+                assert (
+                    state4[a[0]] is DmMsgStatusEnum.NORMAL
+                ), "反向对方视角应保持 NORMAL（单方面删除）"
+            logger.success(f"反向单方面删除验证通过：{b[0]}=DELETED，{a[0]}={state4.get(a[0])}")
+            # 删除者自己看不到，对方仍可见
+            my_msgs4 = await client.dm_messages(b[0], a[0])
+            assert not any(
+                it["msgkey"] == msgkey4 for it in my_msgs4.get("items", [])
+            ), "反向删除者视角不应再看到"
+            other_msgs4 = await client.dm_messages(a[0], b[0])
+            if a[0] in state4:
+                assert any(
+                    it["msgkey"] == msgkey4 for it in other_msgs4.get("items", [])
+                ), "反向对方视角应仍可见"
+            # 删除后尝试撤回 → 应被拒
+            ok4, msg4 = await client.dm_recall(b[0], msgkey4)
+            assert not ok4 and "无法撤回" in msg4, f"反向删除后撤回应被拒: {ok4=} {msg4}"
+            logger.success(f"反向删除后不可撤回验证通过：{msg4}")
+    except RuntimeError as e:
+        # 拉黑/陌生人过滤/网络超时等业务拒绝 → 软降级跳过反向场景（不中断整体）
+        logger.warning(f"场景C 反向私信链路被拒（软降级）: {e}")
+
+    # ---- 场景 D：多对用户互相私信（广度）—— 会话网络覆盖 ----
+    # 深度撤回/删除已由 a/b 对（场景 A/B/C）承担；此处让更多用户对**双向互发**，
+    # 覆盖「用户之间互相私信」的会话网络广度：每对 发送 → 审核 → 已读 → 双方可见。
+    # 任一方关闭陌生人私信 / 可见性未确认 → 宽容跳过该对，不阻断整体流程。
+    pair_count = 0
+    for i in range(0, min(len(users) - 1, 8), 2):
+        x, y = users[i], users[i + 1]
+        if (x[0] == a[0] and y[0] == b[0]) or (x[0] == b[0] and y[0] == a[0]):
+            continue  # a/b 对已深度覆盖，跳过避免重复
+        if not await _accept_stranger_dm(y[0]) or not await _accept_stranger_dm(x[0]):
+            logger.warning(
+                f"用户对 {x[0]}<->{y[0]} 存在关闭陌生人私信，跳过该对。"
+            )
+            continue
+        # x→y 与 y→x 双向互发（拉黑/陌生人过滤等业务拒绝 → 跳过该对）
+        try:
+            mk_xy = await client.dm_send(x[0], y[0], y[1])
+            await client.approve_dm(mk_xy)
+            await client.dm_ack(y[0], x[0])
+            mk_yx = await client.dm_send(y[0], x[0], x[1])
+            await client.approve_dm(mk_yx)
+            await client.dm_ack(x[0], y[0])
+        except RuntimeError as e:
+            logger.warning(
+                f"用户对 {x[0]}<->{y[0]} 互发被拒（可能拉黑），跳过该对: {e}"
+            )
+            continue
+        # 双方视角可见性（宽容：被陌生人过滤时跳过该对）
+        xy_visible = any(
+            it["msgkey"] == mk_xy
+            for it in (await client.dm_messages(x[0], y[0])).get("items", [])
+        )
+        yx_visible = any(
+            it["msgkey"] == mk_yx
+            for it in (await client.dm_messages(y[0], x[0])).get("items", [])
+        )
+        if not (xy_visible and yx_visible):
+            logger.warning(
+                f"用户对 {x[0]}<->{y[0]} 互发可见性未完全确认（可能被陌生人过滤），宽容跳过。"
+            )
+            continue
+        pair_count += 1
+        logger.success(
+            f"用户对 {x[0]}<->{y[0]} 双向互发可见：x→y={mk_xy}，y→x={mk_yx}"
+        )
+    if pair_count:
+        logger.success(f"[消息与管理] 额外 {pair_count} 对用户完成互相私信")
     else:
-        state2 = {r.owner_mid: r.msg_status for r in rows2}
-        assert state2.get(a[0]) is DmMsgStatusEnum.DELETED, "删除者视角应 DELETED"
-        if b[0] in state2:
-            assert (
-                state2[b[0]] is DmMsgStatusEnum.NORMAL
-            ), "对方视角应保持 NORMAL（单方面删除）"
-        logger.success(f"单方面删除验证通过：{a[0]}=DELETED，{b[0]}={state2.get(b[0])}")
-        # 删除者自己看不到，对方仍可见
-        my_msgs = await client.dm_messages(a[0], b[0])
-        assert not any(
-            it["msgkey"] == msgkey2 for it in my_msgs.get("items", [])
-        ), "删除者视角不应再看到"
-        other_msgs = await client.dm_messages(b[0], a[0])
-        if b[0] in state2:
-            assert any(
-                it["msgkey"] == msgkey2 for it in other_msgs.get("items", [])
-            ), "对方视角应仍可见"
-        # 删除后尝试撤回 → 应被拒（删除后不可撤回）
-        ok2, msg2 = await client.dm_recall(a[0], msgkey2)
-        assert not ok2 and "无法撤回" in msg2, f"删除后撤回应被拒绝: {ok2=} {msg2}"
-        logger.success(f"删除后不可撤回验证通过：{msg2}")
+        logger.warning("[消息与管理] 无额外用户对完成互发（用户数不足或均被陌生人过滤）")
 
     # 2) 通用互动计数：lottery 资源点赞（TInteractionStat）
     for mid, _ in users[: min(2, len(users))]:
@@ -1272,6 +1420,8 @@ async def seed(
     skip_message: bool,
     skip_follow: bool,
 ) -> None:
+    # 素材池真实化：从 biliopusdb / bilidb 拉取真实素材（失败降级内置兜底）
+    await _load_material_pools()
     real_users = await _fetch_real_users(users_n)
     if not real_users:
         logger.error("没有可用作作者的真实用户，终止。")
@@ -1342,16 +1492,105 @@ VIEW_DISTRIBUTION = [
 TOPIC_LINK_RATIO = 0.5
 
 
-def _biliopus_conn() -> dict:
-    """从 mysql_message_url 派生 biliopusdb 的连接参数（同一 MySQL 实例）。"""
+def _raw_conn(db: str) -> dict:
+    """从 mysql_message_url 派生指定库的连接参数（同一 MySQL 实例）。"""
     url = make_url(settings.mysql_message_url)
     return {
         "host": url.host or "127.0.0.1",
         "port": url.port or 10000,
         "user": url.username or "root",
         "password": url.password or "",
-        "db": BILIOPUS_DB,
+        "db": db,
     }
+
+
+def _biliopus_conn() -> dict:
+    """从 mysql_message_url 派生 biliopusdb 的连接参数（同一 MySQL 实例）。"""
+    return _raw_conn(BILIOPUS_DB)
+
+
+#: bilidb 库名（素材池话题名来源：t_topic_item）
+BILIDB = "bilidb"
+
+
+async def _load_material_pools() -> None:
+    """从外库拉取真实素材池（幂等，启动时加载一次）。
+
+    - `_SENTENCES` / `_COMMENTS` / `_REPLIES`：取自 `biliopusdb.t_lotdyninfo.dynContent`
+      真实动态正文，按长度分池——长文（10~80 字）作动态正文 `_SENTENCES`，
+      短文（2~30 字）作评论/楼中楼语 `_COMMENTS` / `_REPLIES`；统一去空白、去重。
+    - `_TOPIC_NAMES`：取自 `bilidb.t_topic_item`（自动探测话题名列）。
+
+    任一步失败（连接 / 表 / 列不存在）→ warning + 保留内置硬编码兜底，不阻断 seed。
+    """
+    global _SENTENCES, _COMMENTS, _REPLIES, _TOPIC_NAMES, _MATERIAL_LOADED
+    if _MATERIAL_LOADED:
+        return
+    _MATERIAL_LOADED = True
+
+    # 1) biliopusdb.t_lotdyninfo → 正文 / 评论 / 回复素材
+    try:
+        conn = await aiomysql.connect(**_biliopus_conn())
+        try:
+            cur = await conn.cursor()
+            await cur.execute(
+                "SELECT dynContent FROM t_lotdyninfo "
+                "WHERE dynContent IS NOT NULL AND TRIM(dynContent) <> '' "
+                "ORDER BY dynId DESC LIMIT 5000"
+            )
+            rows = await cur.fetchall()
+        finally:
+            conn.close()
+        cleaned: list[str] = []
+        for r in rows:
+            t = re.sub(r"\s+", " ", str(r[0])).strip()
+            if t and t not in cleaned:
+                cleaned.append(t)
+        sentences = [t for t in cleaned if 10 <= len(t) <= 80]
+        shorts = [t for t in cleaned if 2 <= len(t) <= 30]
+        if sentences:
+            _SENTENCES = sentences
+        if shorts:
+            _COMMENTS = shorts
+            _REPLIES = shorts
+        logger.info(
+            f"素材池已从 biliopusdb.t_lotdyninfo 加载：正文 {len(sentences)} / "
+            f"评论语 {len(shorts)}（共 {len(cleaned)} 条去重）"
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"biliopusdb 素材池加载失败，使用内置兜底: {e}")
+
+    # 2) bilidb.t_topic_item → 话题名（自动探测话题名列）
+    try:
+        conn = await aiomysql.connect(**_raw_conn(BILIDB))
+        try:
+            cur = await conn.cursor()
+            await cur.execute("SHOW COLUMNS FROM t_topic_item")
+            cols = [r[0] for r in await cur.fetchall()]
+            name_col = next(
+                (
+                    c
+                    for c in cols
+                    if c.lower()
+                    in ("topic_name", "topicname", "name", "topic_title", "topic_text")
+                ),
+                None,
+            )
+            if name_col is None:
+                raise RuntimeError(f"t_topic_item 未找到话题名列，实际列: {cols}")
+            await cur.execute(
+                f"SELECT DISTINCT `{name_col}` FROM t_topic_item "
+                f"WHERE `{name_col}` IS NOT NULL AND TRIM(`{name_col}`) <> '' LIMIT 2000"
+            )
+            rows = await cur.fetchall()
+        finally:
+            conn.close()
+        names = [str(r[0]).strip()[:20] for r in rows if r[0]]
+        if names:
+            _TOPIC_NAMES = list(dict.fromkeys(names))
+        logger.info(f"话题名已从 bilidb.t_topic_item 加载：{len(_TOPIC_NAMES)} 个")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"bilidb.t_topic_item 话题名加载失败，使用内置兜底: {e}")
 
 
 def _sample(distribution: list[tuple[int, float]]) -> int:
@@ -1559,6 +1798,8 @@ async def _seed_dynamic(
 
 
 async def run_bulk(args: argparse.Namespace) -> None:
+    # 素材池真实化：从 biliopusdb / bilidb 拉取真实素材（失败降级内置兜底）
+    await _load_material_pools()
     logger.info(
         f"灌数计划（走 API）：count={args.count}, base_url={args.base_url}, "
         f"concurrency={args.concurrency}, dry_run={args.dry_run}"

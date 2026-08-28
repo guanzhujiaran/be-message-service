@@ -13,13 +13,13 @@
 | `push_helper`  | 推送业务辅助逻辑（渠道配置合并、用户标签）                     |
 """
 
-from app.services import publisher
-from app.services.activity import ActivityService
-from app.services.dm import DmService, make_session_key
-from app.services.dm_content import DmContentService
-from app.services.event import EventService, build_dedup_key
-from app.services.notify import NotifyService
-from app.services.setting import SettingService
+from app.services.message import publisher
+from app.services.message.activity import ActivityService
+from app.services.message.dm import DmService, make_session_key
+from app.services.message.dm_content import DmContentService
+from app.services.message.event import EventService, build_dedup_key
+from app.services.message.notify import NotifyService
+from app.services.message.setting import SettingService
 
 __all__ = [
     "ActivityService",

@@ -61,7 +61,7 @@ from app.mq import rpc_pptr_user  # noqa: F401
 from app.mq import rpc_push  # noqa: F401
 from app.mq.consumers import comment, deactivate, dm, push  # noqa: F401
 from app.mq.router import router as mq_router
-from app.services.rpa_rpc import rpa_rpc_client
+from app.services.infrastructure.rpa_rpc import rpa_rpc_client
 
 # 业务日志统一输出到 stderr（容器日志由 docker logs 收集持久化）；
 # 输出等级由 LOG_LEVEL 控制（生产默认 WARNING 只打印告警 / 开发设 DEBUG），与 FastStream 框架日志（FASTSTREAM_LOG_LEVEL）解耦。

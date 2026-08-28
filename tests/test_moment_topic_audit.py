@@ -29,9 +29,9 @@ from app.models.schemas.moment import (
     MomentTopicSquareResp,
 )
 from app.core.sharding import generate_topic_id
-from app.services.moment_feed import MomentFeedService
-from app.services.moment_topic import MomentTopicService
-from app.services.moment_topic_audit import MomentTopicAuditService
+from app.services.moment.moment_feed import MomentFeedService
+from app.services.moment.moment_topic import MomentTopicService
+from app.services.moment.moment_topic_audit import MomentTopicAuditService
 
 # 独立区间，避免与既有用例冲突
 A_MID = 930001

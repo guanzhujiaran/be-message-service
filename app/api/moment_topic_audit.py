@@ -15,7 +15,7 @@ from app.models.schemas.moment import (
     MomentTopicAuditListResp,
     MomentTopicAuditRejectReq,
 )
-from app.services.moment_topic_audit import MomentTopicAuditService
+from app.services.moment.moment_topic_audit import MomentTopicAuditService
 
 router = APIRouter(prefix="/api/v1/community/topic/audit", tags=["moment-topic-audit"])
 

@@ -44,8 +44,8 @@ from bili_common.rpc.safe import rpc_safe
 from loguru import logger
 
 from app.core.broker import broker, message_exchange
-from app.services.notify import NotifyService
-from app.services.pptr_user import PptrUserService, _level_calc
+from app.services.message.notify import NotifyService
+from app.services.user.pptr_user import PptrUserService, _level_calc
 
 
 async def _push_new_user_notify(

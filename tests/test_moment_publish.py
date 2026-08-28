@@ -38,7 +38,7 @@ from app.models.schemas.moment import (
     MomentRemoveReq,
     MomentTopReq,
 )
-from app.services.moment_publish import (
+from app.services.moment.moment_publish import (
     _AT_MAX_COUNT,
     _CONTENT_MAX_LENGTH,
     MomentPublishService,
@@ -197,7 +197,7 @@ async def _seed_dynamic(
             bizId=did,
             mid=mid,
             pubTime=(now if audit_status is MomentAuditStatusEnum.NORMAL else None),
-            auditStatus=audit_status.value,
+            auditStatus=audit_status.name.lower(),
             tags=[],
         )
     )

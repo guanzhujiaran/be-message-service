@@ -13,8 +13,8 @@
 - 收藏夹可自定义封面（`cover_url`，**仅存链接不转存图片**）、名称、描述；
 - 收藏明细 `TMomentFavorite` 唯一约束 `(bizType, bizId, folderId)` 保证同一收藏夹
   对同一资源不重复收藏（2.17.0 泛化，支持任意业务资源）；
-- 动态资源（`bizType='dynamic'`）计数走 `TMomentStat.favoriteCount`，
-  非动态资源（lottery / rpa_*）计数走 `TInteractionStat.favoriteCount`，收藏/取消时原子 ±1。
+- 动态资源（`bizType='dynamic'`）与非动态资源（lottery / rpa_*）计数统一走
+  `TInteractionStat.favoriteCount`（2.36.0 起），收藏/取消时原子 ±1。
 """
 
 from datetime import datetime

@@ -18,6 +18,9 @@ from typing import Any
 
 from sqlmodel import Field, SQLModel
 
+from app.models.enums import InteractionBizTypeEnum
+
+from app.models.enums import MomentVisibleScopeEnum
 from app.models.str_int import StrInt
 
 # ==================== 富文本节点 ====================
@@ -34,7 +37,7 @@ class MomentContentNode(SQLModel, AutoStrMixin):
 
     type: str = Field(description="节点类型：WORDS / AT / TOPIC / LINK / RESOURCE")
     text: str = Field(default="", description="节点文本")
-    bizType: str | None = Field(default=None, description="资源类型（RESOURCE 节点：lottery/rpa_action/rpa_workflow/rpa_browser/dynamic）")
+    bizType: InteractionBizTypeEnum | None = Field(default=None, description="资源类型（RESOURCE 节点；InteractionBizTypeEnum 值）")
     bizId: str | None = Field(default=None, description="业务 ID：AT→被@用户mid，TOPIC→话题id，RESOURCE→资源id")
     name: str | None = Field(default=None, description="展示名：AT→昵称，TOPIC→话题名，RESOURCE→资源标题")
     cover: str | None = Field(default=None, description="封面图链接（RESOURCE 节点）")
@@ -73,6 +76,12 @@ class MomentCreateOption(SQLModel, AutoStrMixin):
     """发布选项。"""
 
     closeComment: int = Field(default=0, description="是否关闭评论：0=否,1=是")
+    # 2.46.0：可见范围——仅 WORD 可设（public/follower/self/charge，缺省 public）；
+    # FORWARD 一律强制 public（服务端忽略传入值）
+    visibleScope: MomentVisibleScopeEnum | None = Field(
+        default=None,
+        description="可见范围：0=public,1=follower,2=self,3=charge；缺省 public",
+    )
 
 
 class MomentAttachRef(SQLModel, AutoStrMixin):
@@ -82,7 +91,7 @@ class MomentAttachRef(SQLModel, AutoStrMixin):
     Feed/详情装配时按 `bizType` 经 RPC 实时获取资源详情。
     """
 
-    bizType: str = Field(description="资源类型：lottery/rpa_action/rpa_workflow/rpa_browser/dynamic")
+    bizType: InteractionBizTypeEnum = Field(description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源 ID（字符串，避免 19 位雪花 ID 精度丢失）")
 
 
@@ -159,7 +168,7 @@ class MomentThumbReq(SQLModel, AutoStrMixin):
     `bizType≠dynamic` 时 `bizId` 必填、`dynId` 忽略。
     """
 
-    bizType: str = Field(default="dynamic", description="资源类型：dynamic/lottery/rpa_action/rpa_workflow/rpa_browser（对外文字，DB 存 int）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
     dynId: StrInt | None = Field(default=None, description="[兼容]动态 ID（int|str，兼容前端 str 传参）")
     up: int = Field(default=1, description="1=点赞, 2=取消点赞")
@@ -176,7 +185,7 @@ class MomentReportReq(SQLModel, AutoStrMixin):
 class MomentThumbResp(SQLModel, AutoStrMixin):
     """点赞响应（2.17.0 泛化）。"""
 
-    bizType: str = Field(default="dynamic", description="资源类型")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: int = Field(description="资源 ID（int）")
     bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
     dynId: int | None = Field(default=None, description="[兼容]动态 ID（动态资源时返回）")
@@ -192,7 +201,7 @@ class MomentDislikeReq(SQLModel, AutoStrMixin):
     当前 MVP 仅支持动态资源（非动态 400）。
     """
 
-    bizType: str = Field(default="dynamic", description="资源类型（当前仅支持 dynamic）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（当前仅支持 dynamic）")
     bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
     dynId: StrInt | None = Field(default=None, description="[兼容]动态 ID（int|str，兼容前端 str 传参）")
     up: int = Field(default=1, description="1=点踩, 2=取消点踩")
@@ -201,7 +210,7 @@ class MomentDislikeReq(SQLModel, AutoStrMixin):
 class MomentDislikeResp(SQLModel, AutoStrMixin):
     """点踩响应（2.35.0）。"""
 
-    bizType: str = Field(default="dynamic", description="资源类型")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: int = Field(description="资源 ID（int）")
     bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
     dynId: int | None = Field(default=None, description="[兼容]动态 ID")
@@ -312,7 +321,7 @@ class MomentModule(SQLModel, AutoStrMixin):
         default=None, description="多话题（2.22.0）：动态关联的全部话题 [{topicId, topicName}]，按关联顺序"
     )
     # additional（附加卡）模块：只存 bizType+bizId，name/cover/jumpUrl 由装配层 RPC 实时获取
-    bizType: str | None = Field(default=None, description="附加卡资源类型（lottery/rpa_*/dynamic）")
+    bizType: InteractionBizTypeEnum | None = Field(default=None, description="附加卡资源类型（InteractionBizTypeEnum 值）")
     bizId: str | None = Field(default=None, description="附加卡资源 ID（字符串）")
     name: str | None = Field(default=None, description="附加卡标题（RPC 实时获取）")
     cover: str | None = Field(default=None, description="附加卡封面（RPC 实时获取）")
@@ -693,7 +702,7 @@ class MomentLikerListResp(SQLModel, AutoStrMixin):
     """点赞明细列表响应。"""
 
     items: list[MomentLikerItem] = Field(default_factory=list, description="点赞用户列表")
-    total: int = Field(default=0, description="点赞总数（TMomentStat.likeCount）")
+    total: int = Field(default=0, description="点赞总数（TInteractionStat.likeCount，2.36.0 起）")
     page_num: int = Field(default=1, description="当前页")
     page_size: int = Field(default=20, description="每页条数")
 

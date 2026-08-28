@@ -7,6 +7,9 @@
 
 from sqlmodel import Field, SQLModel
 
+from bili_common.models.report import ReportBizTypeEnum
+
+from app.models.enums import InteractionBizTypeEnum
 from app.models.str_int import StrInt
 
 
@@ -14,9 +17,9 @@ from app.models.schemas.base import AutoStrMixin
 class ReportCreateReq(SQLModel, AutoStrMixin):
     """统一举报请求（评论 / 动态 / 用户空间 / RPA 资源）。"""
 
-    bizType: str = Field(description="举报来源类型：dynamic/comment/user（ReportBizTypeEnum 值）")
+    bizType: ReportBizTypeEnum = Field(description="举报来源类型（ReportBizTypeEnum 值）")
     bizId: StrInt = Field(description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid（雪花 ID，StrInt 兼容前端 str 传参）")
-    resourceType: int | None = Field(
+    resourceType: InteractionBizTypeEnum | None = Field(
         default=None,
         description="被举报对象所属资源类型（InteractionBizTypeEnum 值，2.37.0）：dynamic 举报可不传（默认 1）；lottery/rpa_* 等资源举报必传",
     )
@@ -29,7 +32,7 @@ class ReportItem(SQLModel, AutoStrMixin):
     """统一举报记录展示项。"""
 
     pk: int
-    bizType: str
+    bizType: ReportBizTypeEnum
     bizId: int
     accusedMid: int
     reportMid: int

@@ -17,8 +17,8 @@ from loguru import logger
 from app.core.database import new_session
 from app.models.db import DmContentDeadLetter
 from app.models.schemas import DmContentPayload
-from app.services.dm import DmService
-from app.services.dm_content import DmContentService
+from app.services.message.dm import DmService
+from app.services.message.dm_content import DmContentService
 
 
 async def handle_dm_content(payload: DmContentPayload, msg: RabbitMessage) -> None:

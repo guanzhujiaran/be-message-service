@@ -17,12 +17,12 @@ from sqlmodel import text
 
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
-from app.models.db import TMoment, TMomentStat
+from app.models.db import TMoment
 from app.models.enums import (
     MomentAuditStatusEnum,
     MomentTypeEnum,
 )
-from app.services.moment_feed import MomentFeedService
+from app.services.moment.moment_feed import MomentFeedService
 from seed_biliopus import RealDyn, fetch_real_dyns
 
 D_MID = 920001
@@ -75,7 +75,6 @@ async def _seed(
 async def _commit_seed(session, mid, **kw) -> int:
     did = await _seed(session, mid, **kw)
     await session.flush()
-    session.add(TMomentStat(dynId=did))
     await session.commit()
     return did
 
@@ -89,7 +88,6 @@ async def _cleanup(dids: list[int]) -> None:
     async with new_session() as s:
         for d in dids:
             await s.exec(text(f"DELETE FROM TMomentAuditLog WHERE dynId = {d}"))
-            await s.exec(text(f"DELETE FROM TMomentStat WHERE dynId = {d}"))
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {d}"))
         await s.commit()
 

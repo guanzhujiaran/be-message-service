@@ -85,7 +85,6 @@ from app.models.schemas.folder_cover_audit import (
 )
 from app.models.schemas.interaction import InteractionStatusItem, InteractionStatusResp
 from app.models.schemas.event import (
-    EventActorBrief,
     EventAggregateItem,
     EventAggregateResp,
     EventItem,
@@ -245,7 +244,6 @@ __all__ = [
     # 多业务资源交互（2.17.0）
     "InteractionStatusItem",
     "InteractionStatusResp",
-    "EventActorBrief",
     "EventAggregateItem",
     "EventAggregateResp",
     "EventItem",

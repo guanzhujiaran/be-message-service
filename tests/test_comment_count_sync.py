@@ -1,7 +1,7 @@
 """评论计数口径同步测试（P10-T3，2.13.0）。
 
 覆盖：评论审核状态翻转（通过 / 驳回 / 恢复）时，评论系统冗余计数
-`msg_comment_subject.root_count` / `all_count` 与动态统计 `TMomentStat.commentCount`
+`msg_comment_subject.root_count` / `all_count` 与动态统计 `TInteractionStat.commentCount`
 保持同步，确保**未审核评论不计入评论数量**（Feed/详情展示的 stat.commentCount 读的
 正是 root_count，P10-T1 bugfix）。
 """
@@ -23,8 +23,8 @@ from app.models.enums import (
     MomentTypeEnum,
 )
 from app.models.schemas import CommentAddReq
-from app.services.comment import CommentService
-from app.services.comment_admin import CommentAdminService
+from app.services.message.comment import CommentService
+from app.services.message.comment_admin import CommentAdminService
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +84,7 @@ async def _cleanup(oid: int) -> None:
 
 
 async def _create_moment(session, oid: int) -> None:
-    """创建最小 WORD 动态记录，满足 TMomentStat 外键（评论计数的宿主）。"""
+    """创建最小 WORD 动态记录，作为评论计数回写的宿主。"""
     session.add(
         TMoment(
             dynId=oid,

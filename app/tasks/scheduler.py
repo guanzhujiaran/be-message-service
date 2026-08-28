@@ -7,6 +7,7 @@
 | `dispatch_notify_job`    | `notify_dispatch_interval_seconds`  | 标记已到发布时间的系统通知为「已投递」   |
 | `retry_dead_letter_job`  | 5 分钟                              | 私信正文写入失败的死信补偿               |
 | `prewarm_shard_job`      | 1 小时                              | 跨月时提前建好新月份的 100 张内容分表    |
+| `comment_hot_score_job`  | 30 分钟                             | 评论热度分全量重算（时间衰减自然下沉）   |
 
 说明：
 - **站内信（系统通知 / 事件提醒 / 私信）的送达完全由数据库写路径保证**
@@ -15,6 +16,10 @@
   转发到 PushMe / PushPlus 的批量推送任务。
 - `dispatch_notify_job` 只负责把「已到发布时间但尚未标记」的通知置为 dispatched，
   供管理端展示「已投递」状态，并防止重复扫描；通知内容本身在发布时即已对用户可见。
+- **计数对账已移除（2.46.0）**：评论冗余计数（root_count/all_count/rcount/
+  like_count/hate_count）的加减全部在同一数据库事务内原子 ±1，数据一致由事务保证，
+  无需定时全量对账兜底（旧 `comment_reconcile_job` 全量重算持锁/占连接，
+  在高并发灌数下会导致其他接口卡死，已删除）。
 
 所有任务都用 `max_instances=1` + `coalesce=True`：小设备上任务执行时间可能
 超过间隔，这两个参数保证不会堆积并发实例把机器压垮。
@@ -22,27 +27,25 @@
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
-from sqlalchemy import and_, case, func, text
+from sqlalchemy import and_, case, func, text, update
 from sqlmodel import col, select
 
 from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
 from app.core.sharding import ensure_current_month_shards
 from app.models.db import (
-    CommentAction,
     CommentIndex,
-    CommentSubject,
     MomentAuthorQuality,
     TMoment,
     TInteractionStat,
     UserFollow,
 )
-from app.models.enums import CommentActionEnum, FollowStatusEnum, InteractionBizTypeEnum
+from app.models.enums import FollowStatusEnum, InteractionBizTypeEnum
 from app.models.pptr_db import PptrUserLevel
-from app.services.comment import VISIBLE_STATES
-from app.services.comment_action import compute_hot_score
-from app.services.dm import DmService
-from app.services.notify import NotifyService
+from app.services.message.comment import VISIBLE_STATES
+from app.services.message.comment_action import compute_hot_score
+from app.services.message.dm import DmService
+from app.services.message.notify import NotifyService
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 
@@ -93,7 +96,13 @@ async def comment_hot_score_job() -> None:
     写互动时已经增量更新 `hot_score`，但时间衰减会随时间让老评论自然下沉，
     需要定时任务按 `like - hate*1.5 + rcount*0.5 - 时间衰减` 全量重算，
     保证排序长期稳定。仅在可见评论上计算。
+
+    **性能约束（2.46.0）**：数据量大时严禁「全量 ORM 加载 + 一次性 commit」——
+    一次提交会长时间持有大量行锁并占用连接池，拖垮高并发下的其他接口。
+    改为「快照读一次算出分数 → 逐行直接 UPDATE → 每批 500 条 commit」，
+    锁持有从「全量」降到「单批」，且批量 UPDATE 不依赖跨 commit 的 ORM 对象。
     """
+    BATCH = 500
     try:
         async with new_session() as session:
             rows = (
@@ -103,109 +112,24 @@ async def comment_hot_score_job() -> None:
                     )
                 )
             ).all()
-            for r in rows:
-                r.hot_score = compute_hot_score(
+            scores = {
+                r.rpid: compute_hot_score(
                     r.like_count, r.hate_count, r.rcount, r.created_at
                 )
-                session.add(r)
-            await session.commit()
+                for r in rows
+            }
+            items = list(scores.items())
+            for i in range(0, len(items), BATCH):
+                for rpid, score in items[i : i + BATCH]:
+                    await session.exec(
+                        update(CommentIndex)
+                        .where(CommentIndex.rpid == rpid)
+                        .values(hot_score=score)
+                    )
+                await session.commit()
         logger.info("评论热度分批量重算完成")
     except Exception as e:  # noqa: BLE001
         logger.error(f"评论热度分重算失败: {e}")
-
-
-async def comment_reconcile_job() -> None:
-    """计数对账（Phase 5.10）。
-
-    写倾斜 / 并发丢更新可能导致冗余计数（root_count / all_count / rcount /
-    like_count / hate_count）漂移。本任务以索引表为权威源，全量重算并回写，
-    是计数最终一致性的兜底。小数据量下每小时跑一次足够。
-    """
-    try:
-        async with new_session() as session:
-            # 1) 每个评论区的 root_count / all_count
-            group_rows = (
-                await session.exec(
-                    select(
-                        CommentIndex.oid,
-                        CommentIndex.type,
-                        func.count().label("total"),
-                        func.sum(
-                            case((CommentIndex.root == 0, 1), else_=0)
-                        ).label("root_total"),
-                    )
-                    .where(CommentIndex.state.in_(VISIBLE_STATES))
-                    .group_by(CommentIndex.oid, CommentIndex.type)
-                )
-            ).all()
-            for oid, ctype, total, root_total in group_rows:
-                subj = (
-                    await session.exec(
-                        select(CommentSubject).where(
-                            CommentSubject.oid == oid, CommentSubject.type == ctype
-                        )
-                    )
-                ).one_or_none()
-                if subj is None:
-                    continue
-                subj.all_count = int(total or 0)
-                subj.root_count = int(root_total or 0)
-                session.add(subj)
-            await session.commit()
-
-            # 2) 每个根评论的 rcount（楼中楼数）
-            rcount_rows = (
-                await session.exec(
-                    select(CommentIndex.root, func.count())
-                    .where(
-                        CommentIndex.root != 0,
-                        CommentIndex.state.in_(VISIBLE_STATES),
-                    )
-                    .group_by(CommentIndex.root)
-                )
-            ).all()
-            for root, cnt in rcount_rows:
-                root_row = (
-                    await session.exec(
-                        select(CommentIndex).where(CommentIndex.rpid == root)
-                    )
-                ).one_or_none()
-                if root_row is not None:
-                    root_row.rcount = int(cnt or 0)
-                    session.add(root_row)
-            await session.commit()
-
-            # 3) 每个评论的 like_count / hate_count（来自互动关系表）
-            action_rows = (
-                await session.exec(
-                    select(
-                        CommentAction.rpid,
-                        CommentAction.action,
-                        func.count(),
-                    ).group_by(CommentAction.rpid, CommentAction.action)
-                )
-            ).all()
-            agg: dict[int, list[int]] = {}
-            for rpid, act, cnt in action_rows:
-                bucket = agg.setdefault(rpid, [0, 0])
-                if act == CommentActionEnum.LIKE:
-                    bucket[0] = int(cnt or 0)
-                elif act == CommentActionEnum.HATE:
-                    bucket[1] = int(cnt or 0)
-            for rpid, (like_c, hate_c) in agg.items():
-                idx_row = (
-                    await session.exec(
-                        select(CommentIndex).where(CommentIndex.rpid == rpid)
-                    )
-                ).one_or_none()
-                if idx_row is not None:
-                    idx_row.like_count = like_c
-                    idx_row.hate_count = hate_c
-                    session.add(idx_row)
-            await session.commit()
-        logger.info("评论计数对账完成")
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"评论计数对账失败: {e}")
 
 
 # ==================== 作者质量聚合（2.35.0 EdgeRank）====================
@@ -368,19 +292,12 @@ def start_scheduler() -> None:
         id="comment_hot_score",
         **common,
     )
-    scheduler.add_job(
-        comment_reconcile_job,
-        "interval",
-        seconds=600,
-        id="comment_reconcile",
-        **common,
-    )
     scheduler.start()
     logger.info(
         "后台定时任务已启动："
         f"通知投递标记 {settings.notify_dispatch_interval_seconds}s / "
         "死信补偿 300s / 分片预热 3600s / "
-        "评论热度重算 1800s / 评论计数对账 600s"
+        "评论热度重算 1800s（计数对账已移除 2.46.0）"
     )
 
 
@@ -393,7 +310,6 @@ def shutdown_scheduler() -> None:
 
 __all__ = [
     "comment_hot_score_job",
-    "comment_reconcile_job",
     "dispatch_notify_job",
     "prewarm_shard_job",
     "retry_dead_letter_job",

@@ -22,6 +22,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
+from app.exceptions import CommentNotInteractiveException
 from app.models.db import (
     CommentAt,
     CommentIndex,
@@ -36,8 +37,8 @@ from app.models.enums import (
     MomentTypeEnum,
 )
 from app.models.schemas import CommentAddReq
-from app.services.comment import CommentService
-from app.services.comment_read import CommentReadService
+from app.services.message.comment import CommentService
+from app.services.message.comment_read import CommentReadService
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +97,7 @@ async def _cleanup(oid: int, mids: set[int]) -> None:
         await s.exec(text(f"DELETE FROM msg_comment_content WHERE rpid IN (SELECT rpid FROM msg_comment_index WHERE oid = {oid})"))
         await s.exec(text(f"DELETE FROM msg_comment_index WHERE oid = {oid}"))
         await s.exec(text(f"DELETE FROM msg_comment_subject WHERE oid = {oid}"))
-        # 测试挂载的真实动态行（TMomentStat 由 FK ON DELETE CASCADE 级联清理）
+        # 测试挂载的真实动态行（子表由 FK ON DELETE CASCADE 级联清理）
         await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
         await s.commit()
 
@@ -105,12 +106,11 @@ _msg_seq = 0
 
 
 async def _ensure_moment(session, oid: int, mid: int) -> None:
-    """确保测试 oid 有对应真实 TMoment 行（评论 stat 回写的父行）。
+    """确保测试 oid 有对应真实 TMoment 行（DYNAMIC 评论计数回写的宿主）。
 
-    DYNAMIC 评论的 `commentCount ±1` 会回写 `TMomentStat`（ensure_stat_row +
-    incr/decr_stat），而 `TMomentStat.dynId` 外键指向 `TMoment.dynId`——
-    测试 oid 若没有父行会外键失败（见 `TMomentStat_dynId_fkey`）。因此评论
-    测试需把 oid 挂到一条真实动态上，完整覆盖 DYNAMIC 生命周期。
+    DYNAMIC 评论的 `commentCount ±1` 经 ``MomentStatService`` 回写动态计数
+    （2.36.0 起为 `TInteractionStat`），评论测试需把 oid 挂到真实动态上以
+    完整覆盖 DYNAMIC 生命周期。
     """
     exists = (
         await session.exec(select(TMoment.dynId).where(TMoment.dynId == oid))
@@ -140,8 +140,8 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
     auditing 不计入 `root_count/all_count`（见 comment.py「仅 NORMAL 才计入」），
     审核通过时须补 +1（与 `CommentAdminService.set_state(NORMAL)` 的计数语义一致）。
 
-    不走 `set_state`：其内部会回写 `TMomentStat`（ensure_stat_row + incr_stat），
-    测试 oid 为虚构值、`TMomentStat.dynId` 外键指向不存在的 `TMoment` 会失败。
+    不走 `set_state`：其内部会回写动态计数（经 ``MomentStatService``），
+    测试 oid 为虚构值、无真实 `TMoment` 宿主行。
     """
     row = (
         await session.exec(
@@ -443,8 +443,8 @@ async def test_input_validation() -> None:
                     _AUTHOR,
                     CommentAddReq(oid="not-a-number", type=CommentTypeEnum.DYNAMIC, message="x"),
                 )
-            # 楼中楼但 root 不存在
-            with pytest.raises(ValueError):
+            # 楼中楼但 root 不存在 → 按状态给出准确反馈的异常
+            with pytest.raises(CommentNotInteractiveException):
                 await CommentService.add(
                     s,
                     _AUTHOR,

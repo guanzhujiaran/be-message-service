@@ -22,7 +22,7 @@ from app.core.database import new_pptr_session, new_session
 from app.models.db import NotifyMessage, TUserAvatarAudit
 from app.models.enums import AvatarAuditStatusEnum, NotifyTargetTypeEnum
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
-from app.services.avatar_audit import AvatarAuditService
+from app.services.user.avatar_audit import AvatarAuditService
 
 # 独立区间，避免与既有用例冲突
 A_MID = 940001

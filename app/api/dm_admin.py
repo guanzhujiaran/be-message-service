@@ -27,7 +27,7 @@ from app.models.schemas import (
     DmSessionContextResp,
     DmStatsResp,
 )
-from app.services.dm_admin import DmAdminService
+from app.services.message.dm_admin import DmAdminService
 
 router = APIRouter(prefix="/api/v1/message/dm/admin", tags=["message-dm-admin"])
 

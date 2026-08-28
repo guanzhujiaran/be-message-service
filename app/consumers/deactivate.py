@@ -14,7 +14,7 @@ from faststream.rabbit import RabbitMessage
 from loguru import logger
 
 from app.models.schemas import UserDeactivatePayload
-from app.services.user_deactivate import UserDeactivateService
+from app.services.user.user_deactivate import UserDeactivateService
 
 
 async def handle_user_deactivate(payload: UserDeactivatePayload, msg: RabbitMessage) -> None:

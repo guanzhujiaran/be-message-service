@@ -26,7 +26,11 @@ from app.models.schemas.moment import (
     MomentAuditRejectReq,
     MomentAuditStatisticsResp,
 )
-from app.services.moment_audit import MomentAuditService
+from app.services.interaction_actions.dynamic.audit import (
+    AuditApproveAction,
+    AuditRejectAction,
+)
+from app.services.moment.moment_audit import MomentAuditService
 
 router = APIRouter(prefix="/api/v1/community/audit", tags=["moment-audit"])
 
@@ -106,9 +110,9 @@ async def audit_approve(
     req: MomentAuditActionReq,
 ) -> StandardResponse[MomentAuditDetailResp]:
     try:
-        item = await MomentAuditService.approve(
-            session, req.dynId, operator_mid=user.mid, remark=req.remark
-        )
+        item = await AuditApproveAction(
+            session, actor_mid=user.mid, biz_id=req.dynId, remark=req.remark
+        ).run()
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     return StandardResponse(
@@ -127,13 +131,13 @@ async def audit_reject(
     req: MomentAuditRejectReq,
 ) -> StandardResponse[MomentAuditDetailResp]:
     try:
-        item = await MomentAuditService.reject(
+        item = await AuditRejectAction(
             session,
-            req.dynId,
-            operator_mid=user.mid,
+            actor_mid=user.mid,
+            biz_id=req.dynId,
             reject_reason=req.rejectReason,
             remark=req.remark,
-        )
+        ).run()
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     return StandardResponse(

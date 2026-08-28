@@ -22,7 +22,7 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
-from app.models.db import TMoment, TMomentStat, TMomentTopic, TResourceFeed
+from app.models.db import TMoment, TMomentTopic, TResourceFeed
 from app.models.enums import (
     InteractionBizTypeEnum,
     MomentAuditStatusEnum,
@@ -35,8 +35,8 @@ from app.models.schemas.moment import (
     MomentPoiResp,
     MomentTopicSquareResp,
 )
-from app.services.moment_feed import MomentFeedService
-from app.services.moment_topic import MomentTopicService
+from app.services.moment.moment_feed import MomentFeedService
+from app.services.moment.moment_topic import MomentTopicService
 from seed_biliopus import fetch_real_dyns, fetch_real_topics
 
 # 独立区间，避免与 Phase 2 用例（D_MID=910001）冲突
@@ -89,7 +89,7 @@ async def _bind_engine_per_test():
         )
         await s.exec(
             text(
-                f"DELETE FROM TMomentStat WHERE dynId IN "
+                f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId IN "
                 f"(SELECT dynId FROM TMoment WHERE mid IN ({T_MID}, {T_MID2}))"
             )
         )
@@ -164,7 +164,6 @@ async def _seed_moment(
     )
     session.add(dyn)
     await session.flush()
-    session.add(TMomentStat(dynId=did))
     # 2.36.0：通用 Feed 元数据行（comprehensive_feed 推荐流候选来自本表，
     # normal + pubTime 才会入候选；auditing 时不写 pubTime）
     session.add(
@@ -172,7 +171,7 @@ async def _seed_moment(
             bizType=InteractionBizTypeEnum.DYNAMIC,
             bizId=did,
             mid=mid,
-            auditStatus=MomentAuditStatusEnum.NORMAL.value,
+            auditStatus="normal",
             pubTime=now if audit_status is MomentAuditStatusEnum.NORMAL else None,
             tags=[topic_id] if topic_id else [],
         )
@@ -185,7 +184,6 @@ async def _cleanup(topics: list[int], moment_ids: list[int]) -> None:
     async with new_session() as s:
         for did in moment_ids:
             await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}"))
-            await s.exec(text(f"DELETE FROM TMomentStat WHERE dynId = {did}"))
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
         for tid in topics:
             await s.exec(text(f"DELETE FROM TMomentTopic WHERE topicId = {tid}"))

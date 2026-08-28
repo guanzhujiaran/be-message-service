@@ -30,8 +30,8 @@ from bili_common.rpc.safe import rpc_safe
 from app.core.broker import broker, message_exchange, message_queue
 from app.core.broker import RK_PUSH
 from app.models import PushMessagePayload
-from app.services.push import PushMessageService
-from app.services.push_helper import merge_config
+from app.services.message.push import PushMessageService
+from app.services.message.push_helper import merge_config
 
 
 def _with_label(title: str, user_label: str | None) -> str:

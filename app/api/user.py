@@ -17,7 +17,7 @@ from app.dependencies import MsgAdminUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
 from app.models.schemas import CommentUserBrief
-from app.services.pptr_user import PptrUserService
+from app.services.user.pptr_user import PptrUserService
 
 router = APIRouter(prefix="/api/v1/message/admin/user", tags=["message-admin-user"])
 

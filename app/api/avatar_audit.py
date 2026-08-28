@@ -19,7 +19,7 @@ from app.models.schemas.avatar_audit import (
     AvatarAuditMineResp,
     AvatarAuditRejectReq,
 )
-from app.services.avatar_audit import AvatarAuditService
+from app.services.user.avatar_audit import AvatarAuditService
 
 router = APIRouter(prefix="/api/v1/user/avatar/audit", tags=["avatar-audit"])
 

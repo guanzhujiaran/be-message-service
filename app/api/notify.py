@@ -34,8 +34,8 @@ from app.models.schemas import (
     SystemNotifyItem,
     SystemNotifyListResp,
 )
-from app.services.activity import ActivityService
-from app.services.notify import NotifyService
+from app.services.message.activity import ActivityService
+from app.services.message.notify import NotifyService
 
 router = APIRouter(prefix="/api/v1/message/notify", tags=["message-notify"])
 

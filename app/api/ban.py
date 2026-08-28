@@ -31,7 +31,7 @@ from app.models.schemas import (
     BanStatusResp,
     UnbanReq,
 )
-from app.services.ban_service import BanService
+from app.services.admin.ban_service import BanService
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin-ban"])
 

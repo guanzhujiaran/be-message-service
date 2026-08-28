@@ -10,6 +10,12 @@
 
 去重靠 `dedup_key` 唯一索引：同一个人对同一实体的同类行为只记一次，
 重复上报（MQ 重投、前端重试）会被数据库直接拦掉，实现幂等消费。
+
+冗余字段说明：事件表**只存定位所需的 id 与事件自身正文**，
+触发者昵称 / 头像（`actor_name` / `actor_avatar`）与来源标题 / 封面 / 跳转
+（`source_title` / `source_cover` / `jump_url`）均不落库，
+读取时分别按 `actor_mid` 回查用户服务、按 `source_id` + `source_type` 实时回捞原资源，
+避免两份数据、省空间、且不易过期。
 """
 
 from datetime import datetime
@@ -49,27 +55,18 @@ class EventMessage(TimestampMixin, table=True):
         description="来源实体类型",
     )
     source_id: str = Field(max_length=64, description="来源实体id")
-    source_title: str | None = Field(
-        default=None, max_length=256, description="来源实体标题（聚合卡片展示用）"
-    )
-    source_cover: str | None = Field(
-        default=None, max_length=512, description="来源实体封面"
-    )
     biz_id: str | None = Field(
         default=None,
         max_length=64,
         description="业务资源id（如评论rpid / 动态dynId），与 source_type 共同唯一定位原资源，供前端跳转；为空时同人对同实体的同类行为只记一条",
     )
 
-    # ---- 触发者 ----
+    # ---- 触发者（仅存 mid，昵称 / 头像读取时按 mid 回查用户服务）----
     actor_mid: int = Field(sa_type=BIGINT, index=True, description="触发行为的用户mid")
-    actor_name: str | None = Field(default=None, max_length=64, description="触发者昵称")
-    actor_avatar: str | None = Field(default=None, max_length=512, description="触发者头像")
 
     content: str | None = Field(
         default=None, sa_column=Column(Text), description="事件内容（回复正文 / @上下文）"
     )
-    jump_url: str | None = Field(default=None, max_length=512, description="跳转链接")
 
     is_read: bool = Field(default=False, index=True, description="是否已读")
     read_at: datetime | None = Field(default=None, description="已读时间")

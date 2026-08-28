@@ -36,8 +36,8 @@ from app.models.enums import (
     MomentTypeEnum,
 )
 from app.models.schemas.moment import MomentReportReq
-from app.services.moment_interaction import MomentInteractionService
-from app.services.moment_stat import MomentStatService
+from app.services.interaction_actions import LikeAction, ReportAction
+from app.services.moment.moment_stat import MomentStatService
 from seed_biliopus import RealDyn, fetch_real_dyns
 
 D_MID = 930001
@@ -90,7 +90,7 @@ async def _commit_seed(session, mid, **kw) -> int:
             bizId=did,
             mid=mid,
             pubTime=pub,
-            auditStatus=audit.value,
+            auditStatus=audit.name.lower(),
             tags=[],
         )
     )
@@ -105,10 +105,10 @@ async def _cleanup(dids: list[int]) -> None:
             await s.exec(
                 text(f"DELETE FROM TInteractionViewLog WHERE bizType = 1 AND bizId = {d}")
             )
-            # TResourceReport 已统一为 ReportBase 结构（bizType+bizId，不再有 dynId 列）
+            # TResourceReport 已统一为 ReportBase 结构（bizType+bizId 数值编码，不再有 dynId 列）
             await s.exec(
                 text(
-                    f"DELETE FROM TResourceReport WHERE bizType = 'dynamic' AND bizId = {d}"
+                    f"DELETE FROM TResourceReport WHERE bizType = 1 AND bizId = {d}"
                 )
             )
             await s.exec(
@@ -150,7 +150,7 @@ async def test_thumb_first_like():
         dids.append(await _commit_seed(s, D_MID, real=reals[0]))
     try:
         async with new_session() as s:
-            is_like, cnt = await MomentInteractionService.thumb(s, D_MID2, InteractionBizTypeEnum.DYNAMIC, dids[0], 1)
+            is_like, cnt = await LikeAction(s, D_MID2, dids[0], up=1).run()
             assert is_like is True and cnt == 1
             like = (await s.exec(select(TMomentLike).where(TMomentLike.dynId == dids[0]))).first()
             assert like is not None and like.mid == D_MID2
@@ -165,8 +165,8 @@ async def test_thumb_idempotent():
         dids.append(await _commit_seed(s, D_MID, real=reals[0]))
     try:
         async with new_session() as s:
-            await MomentInteractionService.thumb(s, D_MID2, InteractionBizTypeEnum.DYNAMIC, dids[0], 1)
-            is_like, cnt = await MomentInteractionService.thumb(s, D_MID2, InteractionBizTypeEnum.DYNAMIC, dids[0], 1)
+            await LikeAction(s, D_MID2, dids[0], up=1).run()
+            is_like, cnt = await LikeAction(s, D_MID2, dids[0], up=1).run()
             assert is_like is True and cnt == 1  # 不叠加
             n = (await s.exec(select(TMomentLike).where(TMomentLike.dynId == dids[0]))).all()
             assert len(n) == 1
@@ -181,8 +181,8 @@ async def test_thumb_cancel():
         dids.append(await _commit_seed(s, D_MID, real=reals[0]))
     try:
         async with new_session() as s:
-            await MomentInteractionService.thumb(s, D_MID2, InteractionBizTypeEnum.DYNAMIC, dids[0], 1)
-            is_like, cnt = await MomentInteractionService.thumb(s, D_MID2, InteractionBizTypeEnum.DYNAMIC, dids[0], 2)
+            await LikeAction(s, D_MID2, dids[0], up=1).run()
+            is_like, cnt = await LikeAction(s, D_MID2, dids[0], up=2).run()
             assert is_like is False and cnt == 0
             n = (await s.exec(select(TMomentLike).where(TMomentLike.dynId == dids[0]))).all()
             assert len(n) == 0
@@ -198,7 +198,7 @@ async def test_thumb_reject_non_normal():
     try:
         async with new_session() as s:
             with pytest.raises(ValueError):
-                await MomentInteractionService.thumb(s, D_MID2, InteractionBizTypeEnum.DYNAMIC, dids[0], 1)
+                await LikeAction(s, D_MID2, dids[0], up=1).run()
     finally:
         await _cleanup(dids)
 
@@ -244,9 +244,9 @@ async def test_report_writes_and_keeps_status():
         dids.append(await _commit_seed(s, D_MID, real=reals[0]))
     try:
         async with new_session() as s:
-            await MomentInteractionService.report(
-                s, D_MID2, MomentReportReq(dynId=dids[0], reasonType=MomentReportReasonEnum.FAKE_INFO.value)
-            )
+            await ReportAction(
+                s, D_MID2, dids[0], reason_type=MomentReportReasonEnum.FAKE_INFO.value
+            ).run()
             # TResourceReport 已统一为 ReportBase 结构（bizType+bizId，不再有 dynId 列）
             rep = (
                 await s.exec(
@@ -281,7 +281,7 @@ async def test_repost_count_state_machine():
                     bizId=fwd,
                     mid=D_MID2,
                     pubTime=None,
-                    auditStatus=MomentAuditStatusEnum.AUDITING.value,
+                    auditStatus="auditing",
                     tags=[],
                 )
             )

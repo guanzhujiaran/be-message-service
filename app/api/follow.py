@@ -20,7 +20,7 @@ from app.models.schemas import (
     FollowRelationResp,
     FollowReq,
 )
-from app.services.follow import FollowService
+from app.services.user.follow import FollowService
 
 router = APIRouter(prefix="/api/v1/message/follow", tags=["message-follow"])
 

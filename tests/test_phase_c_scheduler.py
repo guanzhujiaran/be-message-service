@@ -27,9 +27,9 @@ from app.models.db import (
 )
 from app.models.enums import DmMsgTypeEnum
 from app.models.schemas import NotifyCreateReq
-from app.services.dm import DmContentService
-from app.services.notify import NotifyService
-from app.services.setting import SettingService
+from app.services.message.dm import DmContentService
+from app.services.message.notify import NotifyService
+from app.services.message.setting import SettingService
 
 # app.tasks.__init__ 把 `scheduler` 重导出成了 AsyncIOScheduler 实例，
 # 直接 `from app.tasks.scheduler import ...` 会命中实例而非模块，故显式按模块路径加载。

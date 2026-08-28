@@ -26,8 +26,8 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import NotifyMessage, TFavoriteFolder, TFolderCoverAudit
 from app.models.enums import FolderCoverAuditStatusEnum, NotifyTargetTypeEnum
-from app.services.favorite import FavoriteService
-from app.services.folder_cover_audit import FolderCoverAuditService
+from app.services.user.folder_cover_audit import FolderCoverAuditService
+from app.services.interaction_actions.folder import FavoriteFolderAction
 
 # 独立区间，避免与既有用例冲突
 C_MID = 941001
@@ -108,7 +108,7 @@ def _ok_verify(monkeypatch):
     async def _fake(url, *, transport=None, label="头像"):
         return True, ""
 
-    monkeypatch.setattr("app.services.favorite.verify_avatar_url", _fake)
+    monkeypatch.setattr("app.services.interaction_actions.folder.verify_avatar_url", _fake)
 
 
 def _fail_verify(monkeypatch):
@@ -117,13 +117,13 @@ def _fail_verify(monkeypatch):
     async def _fake(url, *, transport=None, label="头像"):
         return False, f"{label}图片不能超过 1MB"
 
-    monkeypatch.setattr("app.services.favorite.verify_avatar_url", _fake)
+    monkeypatch.setattr("app.services.interaction_actions.folder.verify_avatar_url", _fake)
 
 
 async def _create_folder(s, mid: int, cover_url: str | None = None):
     """便捷：创建收藏夹并返回 folder_id。"""
-    folder_id, status = await FavoriteService.create_folder(
-        s, mid=mid, name="测试收藏夹", description=None, cover_url=cover_url
+    folder_id, status = await FavoriteFolderAction(s, mid).create(
+        name="测试收藏夹", description=None, cover_url=cover_url
     )
     return folder_id, status
 
@@ -188,8 +188,8 @@ async def test_update_folder_cover_goes_pending(monkeypatch):
     _ok_verify(monkeypatch)
     async with new_session() as s:
         folder_id, _ = await _create_folder(s, C_MID)
-        status = await FavoriteService.update_folder(
-            s, C_MID, folder_id, cover_url=NEW_COVER
+        status = await FavoriteFolderAction(s, C_MID).update(
+            folder_id, cover_url=NEW_COVER
         )
         assert status == FolderCoverAuditStatusEnum.PENDING
         folder = await s.get(TFavoriteFolder, folder_id)
@@ -205,8 +205,8 @@ async def test_update_folder_cover_verify_failure(monkeypatch):
     async with new_session() as s:
         folder_id, _ = await _create_folder(s, C_MID)
         with pytest.raises(ValueError) as ei:
-            await FavoriteService.update_folder(
-                s, C_MID, folder_id, cover_url="https://example.com/big.png"
+            await FavoriteFolderAction(s, C_MID).update(
+                folder_id, cover_url="https://example.com/big.png"
             )
         assert "1MB" in str(ei.value)
 
@@ -216,13 +216,13 @@ async def test_update_folder_clear_cover(monkeypatch):
     async with new_session() as s:
         folder_id, _ = await _create_folder(s, C_MID)
         # 先审核通过一个封面
-        await FavoriteService.update_folder(s, C_MID, folder_id, cover_url=OLD_COVER)
+        await FavoriteFolderAction(s, C_MID).update(folder_id, cover_url=OLD_COVER)
         audit = await _latest_for_folder(s, folder_id)
         await FolderCoverAuditService.approve(s, audit.pk, operator_mid=ADMIN_MID)
         folder = await s.get(TFavoriteFolder, folder_id)
         assert folder.cover_url == OLD_COVER
         # 空串清除封面：直接清 cover_url，不经审核
-        status = await FavoriteService.update_folder(s, C_MID, folder_id, cover_url="")
+        status = await FavoriteFolderAction(s, C_MID).update(folder_id, cover_url="")
         assert status is None
         folder = await s.get(TFavoriteFolder, folder_id)
         assert folder.cover_url is None
@@ -238,9 +238,9 @@ async def test_resubmit_overrides_old_pending(monkeypatch):
     _ok_verify(monkeypatch)
     async with new_session() as s:
         folder_id, _ = await _create_folder(s, C_MID)
-        await FavoriteService.update_folder(s, C_MID, folder_id, cover_url=NEW_COVER)
-        await FavoriteService.update_folder(
-            s, C_MID, folder_id, cover_url="https://example.com/new2.png"
+        await FavoriteFolderAction(s, C_MID).update(folder_id, cover_url=NEW_COVER)
+        await FavoriteFolderAction(s, C_MID).update(
+            folder_id, cover_url="https://example.com/new2.png"
         )
         rows = (
             await s.exec(
@@ -322,7 +322,7 @@ async def test_reject_keeps_cover_and_notifies(monkeypatch):
     _ok_verify(monkeypatch)
     async with new_session() as s:
         folder_id, _ = await _create_folder(s, C_MID)
-        await FavoriteService.update_folder(s, C_MID, folder_id, cover_url=NEW_COVER)
+        await FavoriteFolderAction(s, C_MID).update(folder_id, cover_url=NEW_COVER)
         audit = await _latest_for_folder(s, folder_id)
         item = await FolderCoverAuditService.reject(
             s, audit.pk, operator_mid=ADMIN_MID, reason="图片违规"

@@ -28,7 +28,7 @@ from app.services.cleanup import (
     cleanup_pptr,
     cleanup_report,
 )
-from app.services.user_deactivate import UserDeactivateService
+from app.services.user.user_deactivate import UserDeactivateService
 
 # 独立测试区间（避免与既有用例 / 真实数据冲突）
 UID = 920901
@@ -150,7 +150,7 @@ async def test_cleanup_follow_deletes_both_directions():
 
 
 async def test_cleanup_moment_deletes_dynamic_and_children():
-    """动态删除：TMoment 及 TMomentStat 级联清（子表对 dynId CASCADE）。"""
+    """动态删除：TMoment 及子表级联清（子表对 dynId CASCADE）。"""
     from app.core.database import new_session
 
     async with new_session() as s:
@@ -162,14 +162,6 @@ async def test_cleanup_moment_deletes_dynamic_and_children():
             ),
             params={"d": DYN_ID, "m": UID},
         )
-        await s.exec(
-            text(
-                "INSERT INTO TMomentStat (dynId, likeCount, coinCount, commentCount, favoriteCount, "
-                "repostCount, shareCount, viewCount, created_at, updated_at) "
-                "VALUES (:d, 1, 0, 0, 0, 0, 0, 0, NOW(), NOW())"
-            ),
-            params={"d": DYN_ID},
-        )
         await s.commit()
 
     async with new_session() as s:
@@ -180,11 +172,7 @@ async def test_cleanup_moment_deletes_dynamic_and_children():
         dyn = (
             await s.exec(text("SELECT COUNT(*) AS c FROM TMoment WHERE dynId = :d"), params={"d": DYN_ID})
         ).one()
-        stat = (
-            await s.exec(text("SELECT COUNT(*) AS c FROM TMomentStat WHERE dynId = :d"), params={"d": DYN_ID})
-        ).one()
         assert dyn.c == 0
-        assert stat.c == 0
 
 
 async def test_cleanup_misc_deletes_setting_activity_ban_admin():
@@ -333,7 +321,7 @@ async def test_deactivate_rejects_invalid_uid():
 async def test_publish_user_deactivate_calls_broker(monkeypatch):
     """publisher 投递注销消息（monkeypatch broker.publish，验证 payload / routing key）。"""
     from app.core import broker as broker_mod
-    from app.services import publisher
+    from app.services.message import publisher
 
     calls: list[dict] = []
 

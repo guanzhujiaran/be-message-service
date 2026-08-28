@@ -50,14 +50,14 @@ from app.models.schemas import (
     MessageSettingUpdateReq,
     NotifyCreateReq,
 )
-from app.services import dm as dm_svc_mod
-from app.services import publisher
-from app.services.activity import ActivityService
-from app.services.dm import DmService
-from app.services.event import EventService
-from app.services.notify import NotifyService
-from app.services.pptr_user import PptrUserService
-from app.services.setting import SettingService
+from app.services.message import dm as dm_svc_mod
+from app.services.message import publisher
+from app.services.message.activity import ActivityService
+from app.services.message.dm import DmService
+from app.services.message.event import EventService
+from app.services.message.notify import NotifyService
+from app.services.user.pptr_user import PptrUserService
+from app.services.message.setting import SettingService
 
 
 # 每个测试函数跑在独立的事件循环里；模块级 engine 会绑死在第一个循环上，
@@ -99,58 +99,69 @@ M = {
     "notify_lv6": 900061,
     "notify_vip": 900062,
 }
-ALL_MIDS = set(M.values())
 
 
-async def _purge_notify() -> None:
-    """清空系统通知三张表，保证 notify 相关测试在干净数据上断言精确计数。
+async def _delete_notify(s: AsyncSession, *mids: int) -> None:
+    """删除指定用户相关的系统通知数据，就地清理，不依赖全局清理。"""
+    for stmt in [
+        select(NotifyMessage).where(NotifyMessage.creator_mid.in_(mids)),
+        select(NotifyCursor).where(NotifyCursor.mid.in_(mids)),
+        select(NotifyState).where(NotifyState.mid.in_(mids)),
+    ]:
+        rows = (await s.exec(stmt)).all()
+        for r in rows:
+            await s.delete(r)
+    await s.commit()
 
-    共享开发库里常残留历史 notify 行（ALL 等），会把 `pull` 的首页填满，
-    导致「只应有 1 条」之类的断言失真；故 notify 测试开始前整体清空这三张表。
-    """
-    async with new_session() as s:
-        for tbl in ("msg_notify_state", "msg_notify_cursor", "msg_notify"):
-            await s.exec(text(f"DELETE FROM {tbl}"))
-        await s.commit()
+
+async def _delete_event(s: AsyncSession, *mids: int) -> None:
+    """删除指定用户相关的互动事件数据，就地清理。"""
+    for stmt in [
+        select(EventMessage).where(EventMessage.mid.in_(mids)),
+        select(EventReadCursor).where(EventReadCursor.mid.in_(mids)),
+    ]:
+        rows = (await s.exec(stmt)).all()
+        for r in rows:
+            await s.delete(r)
+    await s.commit()
 
 
-async def _cleanup() -> None:
-    """删除本次测试产生的所有行，避免污染。"""
-    async with new_session() as s:
-        for stmt in [
-            select(NotifyMessage).where(NotifyMessage.creator_mid.in_(ALL_MIDS)),
-            select(NotifyCursor).where(NotifyCursor.mid.in_(ALL_MIDS)),
-            select(NotifyState).where(NotifyState.mid.in_(ALL_MIDS)),
-            select(EventMessage).where(EventMessage.mid.in_(ALL_MIDS)),
-            select(EventReadCursor).where(EventReadCursor.mid.in_(ALL_MIDS)),
-            select(DmMessageIndex).where(DmMessageIndex.owner_mid.in_(ALL_MIDS)),
-            select(DmSession).where(DmSession.owner_mid.in_(ALL_MIDS)),
-            select(UserMessageSetting).where(UserMessageSetting.mid.in_(ALL_MIDS)),
-            select(UserActivity).where(UserActivity.mid.in_(ALL_MIDS)),
-            select(DmContentDeadLetter).where(
-                DmContentDeadLetter.sender_uid.in_(ALL_MIDS)
-            ),
-        ]:
-            rows = (await s.exec(stmt)).all()
-            for r in rows:
-                await s.delete(r)
-        # DmMessageIndex 也按 talker_mid / sender_uid 清理
-        for stmt in [
-            select(DmMessageIndex).where(DmMessageIndex.talker_mid.in_(ALL_MIDS)),
-            select(DmMessageIndex).where(DmMessageIndex.sender_uid.in_(ALL_MIDS)),
-            select(DmSession).where(DmSession.talker_mid.in_(ALL_MIDS)),
-            select(DmContentDeadLetter).where(
-                DmContentDeadLetter.receiver_uid.in_(ALL_MIDS)
-            ),
-        ]:
-            rows = (await s.exec(stmt)).all()
-            for r in rows:
-                await s.delete(r)
-        await s.commit()
+async def _delete_dm(s: AsyncSession, *mids: int) -> None:
+    """删除指定用户相关的私信数据（会话/索引按 owner 与 talker/sender 双向清理）。"""
+    for stmt in [
+        select(DmMessageIndex).where(DmMessageIndex.owner_mid.in_(mids)),
+        select(DmMessageIndex).where(DmMessageIndex.talker_mid.in_(mids)),
+        select(DmMessageIndex).where(DmMessageIndex.sender_uid.in_(mids)),
+        select(DmSession).where(DmSession.owner_mid.in_(mids)),
+        select(DmSession).where(DmSession.talker_mid.in_(mids)),
+        select(DmContentDeadLetter).where(DmContentDeadLetter.sender_uid.in_(mids)),
+        select(DmContentDeadLetter).where(DmContentDeadLetter.receiver_uid.in_(mids)),
+    ]:
+        rows = (await s.exec(stmt)).all()
+        for r in rows:
+            await s.delete(r)
+    await s.commit()
+
+
+async def _delete_setting(s: AsyncSession, *mids: int) -> None:
+    """删除指定用户的消息设置数据。"""
+    rows = (
+        await s.exec(select(UserMessageSetting).where(UserMessageSetting.mid.in_(mids)))
+    ).all()
+    for r in rows:
+        await s.delete(r)
+    await s.commit()
+
+
+async def _delete_activity(s: AsyncSession, *mids: int) -> None:
+    """删除指定用户的活跃度数据。"""
+    rows = (await s.exec(select(UserActivity).where(UserActivity.mid.in_(mids)))).all()
+    for r in rows:
+        await s.delete(r)
+    await s.commit()
 
 
 async def test_notify_cursor_dedup_and_visibility() -> None:
-    await _purge_notify()
     user = AuthInfo(mid=M["notify_user"], role="normal", level=0)
     async with new_session() as s:
         # 发布一条面向全站的已发布通知（用测试 mid 作为创建者，便于清理）
@@ -177,8 +188,9 @@ async def test_notify_cursor_dedup_and_visibility() -> None:
         items, total = await NotifyService.list_for_user(s, user, only_unread=True)
         assert total == 0, "删除后仅看未读应为空"
 
+        # 就地清理本测试产生的通知数据
+        await _delete_notify(s, M["notify_user"])
     # 受众可见性：CUSTOM 只投放给指定 mid
-    await _purge_notify()
     async with new_session() as s:
         custom = await NotifyService.create(
             s,
@@ -197,12 +209,13 @@ async def test_notify_cursor_dedup_and_visibility() -> None:
         rt = await NotifyService.pull(s, target)
         assert all(i.id != custom.id for i in ro.items), "非目标用户不应看到 CUSTOM 通知"
         assert any(i.id == custom.id for i in rt.items), "目标用户应看到 CUSTOM 通知"
-    await _purge_notify()
+
+        # 就地清理本测试产生的通知数据（含 notify_user / notify_custom 的游标与状态）
+        await _delete_notify(s, M["notify_user"], M["notify_custom"])
 
 
 async def test_notify_level_role_vip_visibility() -> None:
     """验证按等级(LEVEL)/角色(ROLE)/大会员(VIP)投放的可见性判定。"""
-    await _purge_notify()
     admin = M["notify_user"]
     async with new_session() as s:
         lv5 = await NotifyService.create(
@@ -267,11 +280,18 @@ async def test_notify_level_role_vip_visibility() -> None:
         ids_c = await pull_as(M["notify_vip"], role="normal", level=0, vip_status="1")
         assert vip.id in ids_c and role_normal.id in ids_c and alln.id in ids_c
         assert lv5.id not in ids_c, "level=0 不应命中 LEVEL(5)"
-    await _cleanup()
+
+        # 就地清理本测试产生的通知数据（创建者 + 各拉取用户的游标/状态）
+        await _delete_notify(
+            s,
+            M["notify_user"],
+            M["notify_lv0"],
+            M["notify_lv6"],
+            M["notify_vip"],
+        )
 
 
 async def test_event_aggregation_and_dedup() -> None:
-    await _cleanup()
     mid = M["event_user"]
     async with new_session() as s:
         req = lambda actor: EventReportReq(
@@ -280,7 +300,6 @@ async def test_event_aggregation_and_dedup() -> None:
             source_type=SourceTypeEnum.VIDEO,
             source_id="BV1",
             actor_mid=actor,
-            actor_name=f"user{actor}",
         )
         # 同一人对同一来源重复上报 → 去重
         r1 = await EventService.report(s, req(800001))
@@ -309,14 +328,14 @@ async def test_event_aggregation_and_dedup() -> None:
         rows = (await s.exec(select(EventMessage).where(EventMessage.mid == mid))).all()
         await EventService.delete(s, mid, [r.id for r in rows])
         assert await EventService.count_unread(s, mid) == 0
-    await _cleanup()
+
+        # 就地清理本测试产生的事件数据
+        await _delete_event(s, mid)
 
 
 async def test_dm_write_diffusion_recall_and_stranger(
     monkeypatch,
 ) -> None:
-    await _cleanup()
-
     async def _ok(*a, **k):
         return True
 
@@ -382,8 +401,10 @@ async def test_dm_write_diffusion_recall_and_stranger(
         my_msgs = await DmService.list_messages(s, sender, receiver)
         assert my_msgs.items == [], "删除后自己视角应看不到"
 
+        # 就地清理本测试产生的私信数据（收发双方双向）
+        await _delete_dm(s, sender, receiver)
+
     # 陌生人过滤：接收方关闭陌生人私信 → 仅写发送方视角
-    await _cleanup()
     async with new_session() as s:
         await SettingService.update(
             s, M["dm_stranger_receiver"], MessageSettingUpdateReq(recv_stranger_dm=False)
@@ -405,11 +426,13 @@ async def test_dm_write_diffusion_recall_and_stranger(
             )
         ).all()
         assert recv_sessions == [], "被过滤时接收方不应有会话"
-    await _cleanup()
+
+        # 就地清理本测试产生的私信与设置数据
+        await _delete_dm(s, M["dm_stranger_sender"], M["dm_stranger_receiver"])
+        await _delete_setting(s, M["dm_stranger_receiver"])
 
 
 async def test_setting_gate_and_dnd() -> None:
-    await _cleanup()
     mid = M["setting_user"]
     async with new_session() as s:
         setting = await SettingService.get(s, mid)
@@ -431,12 +454,13 @@ async def test_setting_gate_and_dnd() -> None:
             s, mid, MessageSettingUpdateReq(dnd_start_hour=0, dnd_end_hour=0)
         )
         assert await SettingService.can_push_now(s, mid) is True
-    await _cleanup()
+
+        # 就地清理本测试产生的设置数据
+        await _delete_setting(s, mid)
 
 
 async def test_activity_active_judgement() -> None:
     """活跃度仅用于判定用户是否在线（驱动前端轮询节奏），与站内信送达无关。"""
-    await _cleanup()
     async with new_session() as s:
         # 刚 touch 的用户视为活跃
         await ActivityService.touch(s, M["activity_active"])
@@ -448,12 +472,12 @@ async def test_activity_active_judgement() -> None:
         assert await ActivityService.is_active(s, M["activity_batch"]) is False
         snap2 = await ActivityService.get_snapshot(s, M["activity_batch"])
         assert snap2.is_active is False
-    await _cleanup()
+
+        # 就地清理本测试产生的活跃度数据
+        await _delete_activity(s, M["activity_active"], M["activity_batch"])
 
 
 async def test_msg_feed_unread_aggregation() -> None:
-    await _cleanup()
-    await _purge_notify()
     mid = M["feed_user"]
     user = AuthInfo(mid=mid, role="normal", level=0)
     async with new_session() as s:
@@ -487,7 +511,10 @@ async def test_msg_feed_unread_aggregation() -> None:
         assert resp.notify == 1, "未读通知应为 1"
         assert resp.like == 1, "未读 like 应为 1"
         assert resp.total >= 2
-    await _cleanup()
+
+        # 就地清理本测试产生的通知与事件数据
+        await _delete_event(s, mid)
+        await _delete_notify(s, mid)
 
 
 async def test_event_biz_id_roundtrip(monkeypatch) -> None:
@@ -496,7 +523,6 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
     对应计划书 Phase J：互动通知以 biz_type(source_type) + biz_id 唯一定位原资源，
     供前端点击跳转（如评论 rpid 定位到具体评论）。
     """
-    await _cleanup()
     mid = M["event_user"]
 
     # list_msgfeed 内部会回源 pptr 用户信息，测试环境打桩为空
@@ -515,7 +541,6 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
                 source_type=SourceTypeEnum.COMMENT,
                 source_id="900100",
                 actor_mid=800001,
-                actor_name="actor",
                 content="回复内容",
                 biz_id="10000001",
             ),
@@ -531,10 +556,12 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
         groups, _t = await EventService.aggregate(s, mid, EventTypeEnum.REPLY)
         assert groups and groups[0].biz_id == "10000001", "aggregate 应透传 biz_id"
 
-        # msgfeed 出参带 biz_id
+        # msgfeed 出参带 resource_id（替代原 biz_id + subject_id）
         feed = await EventService.list_msgfeed(s, mid, event_type=EventTypeEnum.REPLY)
         assert feed.total.items, "msgfeed 应有聚合条目"
         assert (
-            feed.total.items[0].item.biz_id == "10000001"
-        ), "msgfeed item 应透传 biz_id"
-    await _cleanup()
+            feed.total.items[0].item.resource_id == "10000001"
+        ), "msgfeed item 应透传 resource_id"
+
+        # 就地清理本测试产生的事件数据
+        await _delete_event(s, mid)

@@ -10,11 +10,14 @@
 **JWT 续期**：pptr 网关通过 `x-bili-jwt` 请求头将原始 JWT 透传给本服务。
 `/nav` 和 `/refresh_token` 端点在返回数据的同时，会检查 JWT 是否需要续期
 （非当天签发的 token 需要刷新），若需要则签发新 token 并同步刷新 Casdoor token，
-将新 token 注入响应体的 `jwt_token` 字段。
+通过 **HttpOnly + Secure Cookie（`bili_jwt`）** 下发（不再写入响应体，避免 XSS 读取）。
+浏览器直连服务端（be-message 经网关注理）落盘该 Cookie，前端不再使用 localStorage。
 
 **响应**：统一 `StandardResponse`（`code=0` 成功），不再沿用 pptr 旧的
 `{code, data, msg, ttl}` 格式。
 """
+
+import os
 
 from typing import Annotated
 
@@ -31,7 +34,7 @@ from bili_common.models import (
     StandardResponse,
     UserSearchParams,
 )
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from loguru import logger
 
 from app.core.config import settings
@@ -43,15 +46,61 @@ from app.models.schemas import (
     UserActLogListResp,
     UserExpRecordListResp,
 )
-from app.services import casdoor_service, jwt_service, publisher
-from app.services.avatar_audit import AvatarAuditService
-from app.services.avatar_check import verify_avatar_url
-from app.services.casdoor_service import CasdoorError
-from app.services.follow import FollowService
-from app.services.pptr_user import PptrUserService
+from app.services.user import casdoor_service
+from app.services.infrastructure import jwt_service
+from app.services.message import publisher
+from app.services.user.avatar_audit import AvatarAuditService
+from app.services.user.avatar_check import verify_avatar_url
+from app.services.user.casdoor_service import CasdoorError
+from app.services.user.follow import FollowService
+from app.services.user.pptr_user import PptrUserService
+from app.models.schemas.follow import (
+    BlockReq,
+    FollowListResp,
+    FollowOpResp,
+    FollowRelationResp,
+)
+from pydantic import BaseModel
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/user", tags=["pptr-user-gateway"])
+
+
+# --- JWT 存储（HttpOnly + Secure Cookie，替代前端 localStorage） ---
+# 浏览器直连服务端（be-message 作为 token 签发方，经网关注理时由代理透传 Set-Cookie，
+# 浏览器按网关域名落盘）写入 HttpOnly Cookie，前端 JS 无法读取，防 XSS 窃取。
+JWT_COOKIE_NAME = "bili_jwt"
+
+
+def _jwt_cookie_secure() -> bool:
+    env = os.getenv("JWT_COOKIE_SECURE")
+    if env is not None:
+        return env.lower() == "true"
+    return settings.app_env == "production"
+
+
+def set_jwt_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=JWT_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=_jwt_cookie_secure(),
+        samesite="lax",
+        path="/",
+        max_age=settings.jwt_expires_seconds,
+    )
+
+
+def clear_jwt_cookie(response: Response) -> None:
+    response.set_cookie(
+        key=JWT_COOKIE_NAME,
+        value="",
+        httponly=True,
+        secure=_jwt_cookie_secure(),
+        samesite="lax",
+        path="/",
+        max_age=0,
+    )
 
 
 @router.get(
@@ -148,6 +197,7 @@ async def get_user_nav(
     user: CurrentUser,
     request: Request,
     x_bili_jwt: Annotated[str | None, Header()] = None,
+    response: Response = None,
 ) -> StandardResponse[PptrUserNavData]:
     """返回当前登录用户的导航栏展示信息。
 
@@ -155,7 +205,7 @@ async def get_user_nav(
     与 pptr 旧 `get_user_nav_with_level` 行为一致；加经验失败不影响导航返回。
 
     同时检查 `x-bili-jwt` 头中的 JWT 是否需要续期（非当天签发的 token 需要刷新），
-    若需要则签发新 token 并刷新 Casdoor token，将新 token 注入 `jwt_token` 字段。
+    若需要则签发新 token 并刷新 Casdoor token，通过 **HttpOnly Cookie** 下发（不再写入响应体）。
     """
     uid = int(user.mid)
 
@@ -175,7 +225,8 @@ async def get_user_nav(
     # JWT 续期检查
     new_jwt = await _maybe_refresh_jwt(x_bili_jwt, uid)
     if new_jwt:
-        data.jwt_token = new_jwt
+        # 续期 token 改由 HttpOnly Cookie 下发，不再写入响应体（防 XSS 读取）
+        set_jwt_cookie(response, new_jwt)
 
     return StandardResponse(data=data)
 
@@ -288,6 +339,113 @@ async def update_user_info(
         ),
         msg="更新成功",
     )
+
+
+# ==================== 黑名单管理 ====================
+
+
+class UserDeactivateReq(BaseModel):
+    """账号注销请求：需二次确认。"""
+
+    confirm: bool = False
+
+
+@router.get(
+    "/blocklist",
+    response_model=StandardResponse[FollowListResp],
+    summary="我的黑名单列表",
+)
+async def list_blocklist(
+    session: SessionDep,
+    user: CurrentUser,
+    page_num: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+) -> StandardResponse[FollowListResp]:
+    """分页返回当前用户拉黑的用户（仅含 mid 与拉黑时间）。"""
+    uid = int(user.mid)
+    data = await FollowService.list_blocked(
+        session, mid=uid, page_num=page_num, page_size=page_size
+    )
+    return StandardResponse(data=data, msg="ok")
+
+
+@router.post(
+    "/blocklist",
+    response_model=StandardResponse[FollowOpResp],
+    summary="拉黑用户",
+)
+async def add_blocklist(
+    session: SessionDep,
+    user: CurrentUser,
+    req: BlockReq,
+) -> StandardResponse[FollowOpResp]:
+    """将指定 mid 加入黑名单；与关注关系互斥（会解除对方对自己的关注）。"""
+    uid = int(user.mid)
+    try:
+        data = await FollowService.block(session, mid=uid, target_mid=int(req.target_mid))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return StandardResponse(data=data, msg="已拉黑")
+
+
+@router.delete(
+    "/blocklist",
+    response_model=StandardResponse[FollowOpResp],
+    summary="解除拉黑",
+)
+async def remove_blocklist(
+    session: SessionDep,
+    user: CurrentUser,
+    target_mid: int = Query(..., description="被解除拉黑的用户 mid"),
+) -> StandardResponse[FollowOpResp]:
+    """将指定 mid 移出黑名单。"""
+    uid = int(user.mid)
+    try:
+        data = await FollowService.unblock(session, mid=uid, target_mid=target_mid)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return StandardResponse(data=data, msg="已解除拉黑")
+
+
+@router.get(
+    "/blocklist/check",
+    response_model=StandardResponse[FollowRelationResp],
+    summary="查询与某用户的关系",
+)
+async def check_blocklist(
+    session: SessionDep,
+    user: CurrentUser,
+    target_mid: int = Query(..., description="目标用户 mid"),
+) -> StandardResponse[FollowRelationResp]:
+    """查询当前用户与目标用户的双向关系（含是否拉黑 / 被拉黑）。"""
+    uid = int(user.mid)
+    data = await FollowService.get_relation(session, mid=uid, target_mid=target_mid)
+    return StandardResponse(data=data, msg="ok")
+
+
+# ==================== 账号注销 ====================
+
+
+@router.post(
+    "/deactivate",
+    response_model=StandardResponse[str],
+    summary="注销当前账户",
+)
+async def deactivate_account(
+    user: CurrentUser,
+    req: UserDeactivateReq,
+) -> StandardResponse[str]:
+    """注销当前登录账户（二次确认后入队异步清理）。
+
+    仅接受 `confirm=true` 的主动注销请求；实际账户与数据清理由 consumer 异步执行。
+    """
+    if not req.confirm:
+        raise HTTPException(status_code=400, detail="请确认注销操作")
+    uid = int(user.mid)
+    ok = await publisher.publish_user_deactivate(uid)
+    if not ok:
+        raise HTTPException(status_code=500, detail="注销请求提交失败，请稍后重试")
+    return StandardResponse(data=str(uid), msg="注销申请已提交，账户将在后台异步清理")
 
 
 @router.post(
@@ -589,6 +747,7 @@ async def refresh_token(
     user: CurrentUser,
     request: Request,
     x_bili_jwt: Annotated[str | None, Header()] = None,
+    response: Response = None,
 ) -> StandardResponse[dict]:
     """刷新当前登录用户的 JWT 令牌，同时同步刷新 Casdoor OAuth token。
 
@@ -617,11 +776,12 @@ async def refresh_token(
     except Exception as e:
         logger.warning(f"[refresh_token] 用户 {uid} 的 Casdoor token 刷新失败: {e}")
 
+    # 新 token 通过 HttpOnly Cookie 下发（替代响应体，避免 XSS 读取）
+    set_jwt_cookie(response, new_token)
     return StandardResponse(
         data={
             "uid": str(uid),
             "user_name": info.user_name or "",
-            "jwt_token": new_token,
         },
         msg="刷新成功！",
     )
@@ -807,12 +967,14 @@ async def casdoor_callback(
     )
 
     # 7. 重定向到前端
+    # token 不再出现在 URL（避免日志 / Referer 泄露），改为 HttpOnly Cookie 下发
     frontend_url = settings.frontend_url or ""
     redirect_target = (
         f"{frontend_url}/app/casdoor-callback"
-        f"?token={jwt_token}"
-        f"&uid={local_user.uid}"
+        f"?uid={local_user.uid}"
         f"&user_name={local_user.user_name}"
     )
-    return RedirectResponse(url=redirect_target, status_code=302)
+    resp = RedirectResponse(url=redirect_target, status_code=302)
+    set_jwt_cookie(resp, jwt_token)
+    return resp
 

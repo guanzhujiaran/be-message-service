@@ -6,10 +6,10 @@
 序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
 
-from enum import IntEnum
+from bili_common.models import IntEnumAutoDoc
 
 
-class MessageModuleEnum(IntEnum):
+class MessageModuleEnum(IntEnumAutoDoc):
     """消息系统四大模块（对应 routing_key 的第二段）。"""
 
     PUSH = 1
@@ -21,7 +21,7 @@ class MessageModuleEnum(IntEnum):
 # ==================== 系统通知 ====================
 
 
-class NotifyTargetTypeEnum(IntEnum):
+class NotifyTargetTypeEnum(IntEnumAutoDoc):
     """系统通知的目标用户类型（按用户类型推送）。"""
 
     # 全体用户
@@ -36,7 +36,7 @@ class NotifyTargetTypeEnum(IntEnum):
     CUSTOM = 5
 
 
-class NotifyStatusEnum(IntEnum):
+class NotifyStatusEnum(IntEnumAutoDoc):
     """系统通知的生命周期状态。"""
 
     # 草稿：管理员已创建但未发布，不会被任何用户拉取到
@@ -47,7 +47,7 @@ class NotifyStatusEnum(IntEnum):
     REVOKED = 3
 
 
-class NotifyLevelEnum(IntEnum):
+class NotifyLevelEnum(IntEnumAutoDoc):
     """通知重要级别，决定推送策略的激进程度。"""
 
     NORMAL = 1
@@ -58,7 +58,7 @@ class NotifyLevelEnum(IntEnum):
 # ==================== 事件提醒 ====================
 
 
-class EventTypeEnum(IntEnum):
+class EventTypeEnum(IntEnumAutoDoc):
     """用户行为事件类型（点赞 / 回复 / @提及 / 审核驳回 / 举报下架）。"""
 
     LIKE = 1
@@ -72,7 +72,7 @@ class EventTypeEnum(IntEnum):
     REPORT_RESOLVED = 7
 
 
-class SourceTypeEnum(IntEnum):
+class SourceTypeEnum(IntEnumAutoDoc):
     """事件来源实体类型，与 source_id 共同构成聚合分组键。"""
 
     VIDEO = 1
@@ -86,7 +86,7 @@ class SourceTypeEnum(IntEnum):
 # ==================== 私信 ====================
 
 
-class DmMsgTypeEnum(IntEnum):
+class DmMsgTypeEnum(IntEnumAutoDoc):
     """私信消息类型。"""
 
     TEXT = 1
@@ -94,7 +94,7 @@ class DmMsgTypeEnum(IntEnum):
     SYSTEM = 3
 
 
-class DmMsgStatusEnum(IntEnum):
+class DmMsgStatusEnum(IntEnumAutoDoc):
     """私信消息在某个用户视角下的状态（写扩散，双方各自独立）。"""
 
     # 正常可见
@@ -105,13 +105,13 @@ class DmMsgStatusEnum(IntEnum):
     DELETED = 2
 
 
-class DmSessionTypeEnum(IntEnum):
+class DmSessionTypeEnum(IntEnumAutoDoc):
     """会话类型，预留群聊扩展。"""
 
     SINGLE = 1
 
 
-class DmRelationEnum(IntEnum):
+class DmRelationEnum(IntEnumAutoDoc):
     """会话双方关系，用于陌生人私信过滤。"""
 
     # 普通会话：对方主动发起过或已被接收方回复
@@ -120,7 +120,7 @@ class DmRelationEnum(IntEnum):
     STRANGER = 2
 
 
-class DmAuditStateEnum(IntEnum):
+class DmAuditStateEnum(IntEnumAutoDoc):
     """私信管理端审核状态（与评论审核对齐）。
 
     可见性规则：
@@ -138,7 +138,7 @@ class DmAuditStateEnum(IntEnum):
 # ==================== 评论系统 ====================
 
 
-class CommentTypeEnum(IntEnum):
+class CommentTypeEnum(IntEnumAutoDoc):
     """评论区所属的业务实体类型，与 oid 共同唯一定位一个评论区。"""
 
     # 用户动态
@@ -152,7 +152,7 @@ class CommentTypeEnum(IntEnum):
     OTHER = 5
 
 
-class CommentSubjectStateEnum(IntEnum):
+class CommentSubjectStateEnum(IntEnumAutoDoc):
     """评论区状态。"""
 
     # 正常，可读可写
@@ -161,7 +161,7 @@ class CommentSubjectStateEnum(IntEnum):
     CLOSED = 2
 
 
-class CommentStateEnum(IntEnum):
+class CommentStateEnum(IntEnumAutoDoc):
     """单条评论的生命周期状态。
 
     可见性规则（Phase 5 审核落地后完整生效）：
@@ -182,7 +182,7 @@ class CommentStateEnum(IntEnum):
     DELETED = 5
 
 
-class CommentActionEnum(IntEnum):
+class CommentActionEnum(IntEnumAutoDoc):
     """评论互动动作（点赞 / 点踩）。
 
     与原 Node 端 `TCommentInteractRelation.action` 的语义保持一致，
@@ -195,7 +195,7 @@ class CommentActionEnum(IntEnum):
     HATE = 2
 
 
-class CommentSortEnum(IntEnum):
+class CommentSortEnum(IntEnumAutoDoc):
     """评论列表排序方式。"""
 
     # 热度排序：读冗余列 hot_score，走 idx_comment_hot
@@ -204,7 +204,7 @@ class CommentSortEnum(IntEnum):
     TIME = 2
 
 
-class CommentAttrBit(IntEnum):
+class CommentAttrBit(IntEnumAutoDoc):
     """`msg_comment_index.attr` 位图标记。
 
     用位图而不是多个 bool 列：新增标记不需要 DDL 改表，
@@ -222,7 +222,7 @@ class CommentAttrBit(IntEnum):
 # ==================== 用户封禁（审核联动）====================
 
 
-class BanServiceEnum(IntEnum):
+class BanServiceEnum(IntEnumAutoDoc):
     """可被封禁的服务范围，与评论 / 私信审核一一对应。
 
     封禁记录按服务维度隔离：封评论只影响评论区，不影响私信。
@@ -232,7 +232,7 @@ class BanServiceEnum(IntEnum):
     DM = 2
 
 
-class BanDurationTypeEnum(IntEnum):
+class BanDurationTypeEnum(IntEnumAutoDoc):
     """封禁时长类型。
 
     - `TEMPORARY`(1)：限时封禁，配合 `duration_days` 计算解封时间；
@@ -243,7 +243,7 @@ class BanDurationTypeEnum(IntEnum):
     PERMANENT = 2
 
 
-class BanStatusEnum(IntEnum):
+class BanStatusEnum(IntEnumAutoDoc):
     """封禁记录的生命周期状态。
 
     - `ACTIVE`(1)：生效中（限时封禁到期自动由读取层判定为失效，无需定时任务翻转）；
@@ -257,7 +257,7 @@ class BanStatusEnum(IntEnum):
 # ==================== 用户经验 ====================
 
 
-class ExpActionType(IntEnum):
+class ExpActionType(IntEnumAutoDoc):
     """用户经验增加行为类型，数据库存 int，对外接口转 string。"""
 
     DAILY_LOGIN = 1
@@ -267,7 +267,7 @@ class ExpActionType(IntEnum):
 # ==================== 用户动态（动态卡片模块）====================
 
 
-class MomentTypeEnum(IntEnum):
+class MomentTypeEnum(IntEnumAutoDoc):
     """Moment 类型（原"动态"，对齐 B站 MomentType，概念重命名为 Moment）。
 
     MVP 仅支持 WORD / FORWARD，其余类型后续迭代补充。
@@ -278,7 +278,7 @@ class MomentTypeEnum(IntEnum):
     WORD = 6
 
 
-class MomentAuditStatusEnum(IntEnum):
+class MomentAuditStatusEnum(IntEnumAutoDoc):
     """Moment 审核生命周期状态。
 
     - `AUDITING`(1)：审核中（先发后审，作者本人空间可见，普通用户不可见）；
@@ -293,7 +293,7 @@ class MomentAuditStatusEnum(IntEnum):
     HIDDEN = 4
 
 
-class MomentTopicAuditStatusEnum(IntEnum):
+class MomentTopicAuditStatusEnum(IntEnumAutoDoc):
     """话题审核生命周期状态（TMomentTopic.auditStatus，对齐动态审核）。
 
     - `AUDITING`(1)：待审核（用户创建，不公开展示）；
@@ -306,7 +306,7 @@ class MomentTopicAuditStatusEnum(IntEnum):
     REJECTED = 3
 
 
-class MomentVisibleScopeEnum(IntEnum):
+class MomentVisibleScopeEnum(IntEnumAutoDoc):
     """Moment 可见范围。"""
 
     # 公开
@@ -319,7 +319,7 @@ class MomentVisibleScopeEnum(IntEnum):
     CHARGE = 3
 
 
-class MomentFoldTypeEnum(IntEnum):
+class MomentFoldTypeEnum(IntEnumAutoDoc):
     """Moment 折叠类型。"""
 
     NONE = 0
@@ -327,7 +327,7 @@ class MomentFoldTypeEnum(IntEnum):
     OVER_FREQ_FOLD = 2
 
 
-class MomentReportReasonEnum(IntEnum):
+class MomentReportReasonEnum(IntEnumAutoDoc):
     """Moment 举报原因类型。"""
 
     # 不实信息
@@ -344,7 +344,7 @@ class MomentReportReasonEnum(IntEnum):
     OTHER = 6
 
 
-class MomentReportAuditStatusEnum(IntEnum):
+class MomentReportAuditStatusEnum(IntEnumAutoDoc):
     """Moment 举报处理状态。"""
 
     PENDING = 1
@@ -352,7 +352,7 @@ class MomentReportAuditStatusEnum(IntEnum):
     REJECTED = 3
 
 
-class MomentAuditLogActionEnum(IntEnum):
+class MomentAuditLogActionEnum(IntEnumAutoDoc):
     """Moment 审核流转动作类型（写 TMomentAuditLog.actionType）。"""
 
     CREATE = 1
@@ -363,7 +363,7 @@ class MomentAuditLogActionEnum(IntEnum):
     DELETE = 6
 
 
-class MomentAuditLogOperatorRoleEnum(IntEnum):
+class MomentAuditLogOperatorRoleEnum(IntEnumAutoDoc):
     """Moment 审核流转操作人角色。"""
 
     AUTHOR = 1
@@ -377,7 +377,7 @@ from bili_common.models.interaction import InteractionBizTypeEnum  # noqa: E402
 # ==================== 用户关注关系 ====================
 
 
-class FollowStatusEnum(IntEnum):
+class FollowStatusEnum(IntEnumAutoDoc):
     """用户间关系状态（关注 / 拉黑），按方向独立记录。
 
     - `FOLLOWING`(1)：mid 主动关注 target_mid；
@@ -392,7 +392,7 @@ class FollowStatusEnum(IntEnum):
     BLOCKED = 2
 
 
-class AvatarAuditStatusEnum(IntEnum):
+class AvatarAuditStatusEnum(IntEnumAutoDoc):
     """头像更换审核状态（TUserAvatarAudit.auditStatus）。
 
     - `PENDING`(1)：待审核，未对外展示；
@@ -405,7 +405,7 @@ class AvatarAuditStatusEnum(IntEnum):
     REJECTED = 3
 
 
-class FolderCoverAuditStatusEnum(IntEnum):
+class FolderCoverAuditStatusEnum(IntEnumAutoDoc):
     """收藏夹封面审核状态（TFolderCoverAudit.auditStatus）。
 
     - `PENDING`(1)：待审核，新封面未对外展示（TFavoriteFolder.cover_url 保持原封面）；

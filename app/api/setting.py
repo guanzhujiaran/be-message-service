@@ -15,8 +15,8 @@ from app.models.schemas import (
     MessageSettingUpdateReq,
     UserActivityResp,
 )
-from app.services.activity import ActivityService
-from app.services.setting import SettingService
+from app.services.message.activity import ActivityService
+from app.services.message.setting import SettingService
 
 router = APIRouter(prefix="/api/v1/message/setting", tags=["message-setting"])
 

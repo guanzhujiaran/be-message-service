@@ -1,7 +1,7 @@
 """通用交互计数表 ORM（2.17.0 新增，2.18.0 复用 bili-common 通用基类）。
 
-`TInteractionStat` 承载**非动态资源**（lottery / rpa_*）的收藏 / 点赞 / 浏览计数；
-动态资源的计数仍走 `TMomentStat`。字段与通用逻辑收口到 bili-common
+`TInteractionStat` 承载**任意资源**（lottery / rpa_* / 动态）的收藏 / 点赞 / 浏览
+计数（2.36.0 起动态并入）。字段与通用逻辑收口到 bili-common
 （`InteractionStatBase` / `InteractionViewLogBase` + `InteractionStatService`），
 本文件仅建立物理表。
 
