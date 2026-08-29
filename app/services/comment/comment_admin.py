@@ -24,14 +24,14 @@ from app.models.schemas import (
     CommentSourceResp,
     CommentStatsResp,
 )
-from app.services.message.comment import (
+from app.services.comment import (
     DEFAULT_REJECT_REASON,
     CommentService,
     summarize_text,
 )
 from app.services.moment.moment_stat import MomentStatService
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import CommentAdminUser
 from app.utils.audit_source import build_comment_source
 from app.utils.notify_markup import markup_inline_link
 
@@ -196,7 +196,7 @@ class CommentAdminService:
         # 评论作者昵称（弱依赖：取不到就 None，通知不展示昵称也可接受）
         actor_uname: str | None = None
         try:
-            profiles = await PptrUserService.get_many([row.mid])
+            profiles = await CommentAdminUser.get_many([row.mid])
             actor_uname = getattr(profiles.get(row.mid), "uname", None)
         except Exception:  # noqa: BLE001
             actor_uname = None
@@ -353,7 +353,7 @@ class CommentAdminService:
             session, {(r.oid, r.type) for r in rows}
         )
         # 作者信息：直连 pptr 一次 IN 查询取回，避免前端再回查
-        profiles = await PptrUserService.get_many([r.mid for r in rows])
+        profiles = await CommentAdminUser.get_many([r.mid for r in rows])
         items = [
             CommentAuditItem(
                 rpid=str(r.rpid),
@@ -411,7 +411,7 @@ class CommentAdminService:
         ).one_or_none()
         subject = await CommentAdminService._get_subject(session, row.oid, row.type)
         # 作者信息：直连 pptr 只读取回
-        profile = await PptrUserService.get_many([row.mid])
+        profile = await CommentAdminUser.get_many([row.mid])
         return CommentAuditItem(
             rpid=str(row.rpid),
             oid=str(row.oid),
@@ -553,7 +553,7 @@ class CommentAdminService:
         ).all()
         mids = [m for m, _ in top]
         # 作者展示信息从 pptr Postgres 只读取回（本服务不再冗余快照）
-        profiles = await PptrUserService.get_many(mids)
+        profiles = await CommentAdminUser.get_many(mids)
         top_authors = [profiles[m] for m in mids if m in profiles]
 
         return CommentStatsResp(

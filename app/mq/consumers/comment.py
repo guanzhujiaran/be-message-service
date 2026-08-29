@@ -6,7 +6,7 @@
 - `message.comment.audit`：异步内容复审（弱依赖）
 - `message.comment.count`：楼层发号 / 计数削峰与补偿
 
-当前评论的审核 / 通知已在发布主流程内同步完成（同进程调用 EventService），
+当前评论的审核 / 通知已在发布主流程内同步完成（同进程调用 report_event_weakly），
 这些队列作为解耦后的备用投递通道与定时补偿入口，按 Phase 3.6 预留。
 """
 

@@ -1,7 +1,7 @@
 """用户注销领域删除服务（`cleanup_*`）。
 
 每个模块负责「按 uid 彻底清除」某一业务领域的全部数据，对外暴露
-`delete_all_by_uid(session, uid)` 类方法；`UserDeactivateService` 只负责
+`delete_all_by_uid(session, uid)` 类方法；`PptrUser.deactivate` 只负责
 按依赖顺序编排调用，不在此处放置具体 SQL。
 
 | 模块            | 领域                                   | engine      |

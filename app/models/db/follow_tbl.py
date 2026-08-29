@@ -2,7 +2,7 @@
 
 `msg_user_follow` 自包含于 be-message 的 MySQL 主库，**不回写 pptr**：
 用户主数据（uid / uname / 头像 / 等级 / 大会员）只有一份，在 pptr 的
-Postgres，渲染关注列表时由 `PptrUserService` 直连只读批量回查（一次
+Postgres，渲染关注列表时由 `PptrUser` 直连只读批量回查（一次
 `WHERE uid IN (...)`），既避免 N+1，也不重复保存用户数据。
 
 设计要点：

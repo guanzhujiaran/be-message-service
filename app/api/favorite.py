@@ -4,6 +4,8 @@
 `folder_id` / `dyn_id` 均为雪花 ID，传输用字符串，路由层 `int()` 转换。
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 from sqlmodel import col, select
 
@@ -327,7 +329,9 @@ async def set_setting(
 @router.get("/user/folders", response_model=StandardResponse[list[FavoriteFolderResp] | None], summary="某用户主页公开的收藏夹列表")
 async def public_folders(
     session: SessionDep,
-    mid: StrInt = Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    mid: Annotated[
+        StrInt, Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    ],
 ) -> StandardResponse[list[FavoriteFolderResp] | None]:
     folders = await FavoriteFolderAction(session, user.mid).list_public_folders(int(mid))
     if folders is None:
@@ -338,7 +342,9 @@ async def public_folders(
 @router.get("/user/dynamics", response_model=StandardResponse[FavoriteListResp | None], summary="某用户某收藏夹下的公开资源")
 async def public_dynamics(
     session: SessionDep,
-    mid: StrInt = Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    mid: Annotated[
+        StrInt, Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    ],
     folderId: str = Query(description="收藏夹id（字符串）"),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=20, ge=1, le=50),

@@ -9,7 +9,7 @@ Phase 5.x 私信审核能力：
 - `GET  /admin/stats`   私信全局统计（总数 / 今日新增 / 待审 / 驳回 / 下架）。
 
 通过即把状态拨回 `normal` 对用户可见；驳回 / 下架置 `rejected` / `hidden`，
-`DmService.list_messages` 已过滤该状态，聊天窗对用户不可见。
+`DmSessionObject.fetch_messages` 已过滤该状态，聊天窗对用户不可见。
 """
 
 from fastapi import APIRouter, Query
@@ -27,7 +27,7 @@ from app.models.schemas import (
     DmSessionContextResp,
     DmStatsResp,
 )
-from app.services.message.dm_admin import DmAdminService
+from app.services.message.dm.dm_admin import DmAdminService
 
 router = APIRouter(prefix="/api/v1/message/dm/admin", tags=["message-dm-admin"])
 

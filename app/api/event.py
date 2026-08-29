@@ -25,8 +25,8 @@ from app.models.schemas import (
     EventReportReq,
     EventReportResp,
 )
-from app.services.message.activity import ActivityService
-from app.services.message.events import BaseEvent
+from app.services.message.insite.activity import ActivityService
+from app.services.message.insite.events import BaseEvent
 
 router = APIRouter(prefix="/api/v1/message/event", tags=["message-event"])
 

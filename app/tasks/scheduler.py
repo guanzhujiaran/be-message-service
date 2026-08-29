@@ -42,10 +42,10 @@ from app.models.db import (
 )
 from app.models.enums import FollowStatusEnum, InteractionBizTypeEnum
 from app.models.pptr_db import PptrUserLevel
-from app.services.message.comment import VISIBLE_STATES
-from app.services.message.comment_action import compute_hot_score
-from app.services.message.dm import DmService
-from app.services.message.notify import NotifyService
+from app.services.comment import VISIBLE_STATES
+from app.services.comment.comment_action import compute_hot_score
+from app.services.message.dm.dm import retry_dead_letters
+from app.services.message.insite.notify import NotifyService
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 
@@ -76,7 +76,7 @@ async def dispatch_notify_job() -> None:
 async def retry_dead_letter_job() -> None:
     """重试私信正文写入失败的死信，保证内容最终一致。"""
     async with new_session() as session:
-        await DmService.retry_dead_letters(session)
+        await retry_dead_letters(session)
 
 
 async def prewarm_shard_job() -> None:

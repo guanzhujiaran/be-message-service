@@ -11,7 +11,7 @@
 - 分页游标（P3-T5）：``updateBaseline``（最新 dynId）/ ``historyOffset``（最旧 dynId）/
   ``hasMore`` / ``updateNum``。
 
-渲染装配：author 模块经 ``PptrUserService.get_many`` 只读回查 pptr Postgres 取昵称/头像
+渲染装配：author 模块经 ``PptrUser.get_many`` 只读回查 pptr Postgres 取昵称/头像
 （与评论系统一致，不冗余用户快照）；计数统一从 ``TInteractionStat`` 读数字字段
 （严禁请求热路径做 COUNT 聚合；2.36.0 起计数统一 TInteractionStat）。
 """
@@ -65,7 +65,7 @@ from app.services.moment.edgerank import (
 )
 from app.services.moment.feed_engine import FeedCandidate, ResourceReportCount, rank_feed
 from app.services.user.follow import FollowService
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 from loguru import logger
 
@@ -222,7 +222,7 @@ async def _build_feed_item(
 ) -> MomentFeedItem:
     """把 TMoment 装配成对外卡片。
 
-    author 由调用方批量取回后传入（``PptrUserService.get_many`` 结果），
+    author 由调用方批量取回后传入（``PptrUser.get_many`` 结果），
     避免逐条回查造成 N+1。
 
     FORWARD 类型且传入 session 时，会递归加载源动态并嵌套到
@@ -373,7 +373,7 @@ async def _attach_authors(
     mids = {it.mid for it in all_items}
     if not mids:
         return
-    briefs = await PptrUserService.get_many(list(mids))
+    briefs = await PptrUser.get_many(list(mids))
     for it in all_items:
         b = briefs.get(it.mid)
         for m in it.modules:
@@ -1408,7 +1408,7 @@ class MomentFeedService:
 
         数据源：``TMomentLike``（mid/dynId/created_at）。无 status 字段，
         任意点赞都算（与 ``interaction_actions.LikeAction`` 写入保持一致）。
-        关联 ``PptrUserService.get_many`` 取作者简要（uname/face）。
+        关联 ``PptrUser.get_many`` 取作者简要（uname/face）。
         """
         page_num = max(1, page_num)
         page_size = min(max(1, page_size), 50)
@@ -1438,7 +1438,7 @@ class MomentFeedService:
         ).all()
 
         # 3) 关联用户简要（批量）
-        briefs = await PptrUserService.get_many([r.mid for r in rows])
+        briefs = await PptrUser.get_many([r.mid for r in rows])
         items = [
             MomentLikerItem(
                 mid=int(r.mid),
@@ -1497,7 +1497,7 @@ class MomentFeedService:
         ).all()
 
         # 4) 关联用户简要
-        briefs = await PptrUserService.get_many([r.mid for r in rows])
+        briefs = await PptrUser.get_many([r.mid for r in rows])
         items: list[MomentForwardItem] = []
         for r in rows:
             b = briefs.get(r.mid)

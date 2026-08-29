@@ -55,7 +55,7 @@ from app.models.schemas.moment import (
     MomentTopicRef,
     MomentTopReq,
 )
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 # 业务上限（MVP）
 _CONTENT_MAX_LENGTH = 2000
@@ -780,7 +780,7 @@ class MomentPublishService:
 
         独立会话投递：即便事件落库失败，也绝不回滚发布主事务。
         """
-        from app.services.message.events import BaseEvent
+        from app.services.message.insite.events import report_event_weakly
 
         targets: set[int] = set()
         for n in nodes or []:
@@ -795,25 +795,21 @@ class MomentPublishService:
         if not targets:
             return
 
-        try:
-            async with new_session() as ns:
-                briefs = await PptrUserService.get_many([actor_mid])
-                actor_name = (
-                    briefs.get(actor_mid).uname if briefs.get(actor_mid) else None
+        briefs = await PptrUser.get_many([actor_mid])
+        actor_name = (
+            briefs.get(actor_mid).uname if briefs.get(actor_mid) else None
+        )
+        for tmid in targets:
+            await report_event_weakly(
+                EventReportReq(
+                    mid=tmid,
+                    event_type=EventTypeEnum.AT,
+                    source_type=SourceTypeEnum.DYNAMIC,
+                    source_id=str(moment_id),
+                    actor_mid=actor_mid,
+                    biz_id=str(moment_id),
                 )
-                for tmid in targets:
-                    await BaseEvent.from_req(
-                        EventReportReq(
-                            mid=tmid,
-                            event_type=EventTypeEnum.AT,
-                            source_type=SourceTypeEnum.DYNAMIC,
-                            source_id=str(moment_id),
-                            actor_mid=actor_mid,
-                            biz_id=str(moment_id),
-                        ),
-                    ).report(ns)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"@通知投递失败（弱依赖，已忽略）: {e}")
+            )
 
     # ==================== 发布预校验（P2-T6 出参）====================
 

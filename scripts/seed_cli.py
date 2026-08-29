@@ -17,6 +17,13 @@
 **大数据灌数（基于 biliopusdb 真实动态，走 API，软降级跳过）**
 从 biliopusdb 拉取真实动态/话题，经 be-message HTTP 接口批量灌入动态 + 点赞/浏览，用于性能/联调。
 
+**@ 提及覆盖（联调 + 灌数两阶段）**
+动态正文与评论正文末尾统一追加**随机 @**：动态用 `AT` 富文本节点（`bizId`=被@ mid、
+`name`=昵称），评论用 `@昵称` 文本 + `at_name_to_mid` 映射（服务端归一为 `@{mid}` 占位符）。
+追加随机 @ 同时兼作正文去重，规避「同用户同正文 10s 内 >3 次」的评论限流（Phase 2.6）。
+两阶段落库后回查动态详情 / 评论列表断言 @ 已生效（AT 节点回显、`@{mid}` 渲染回 `@昵称`），
+并再查被 @ 用户的 AT 事件提醒，验证 @ 通知链路触达。
+
 说明：
 - 全部走 be-message-service 真实 HTTP 业务链路（``x-bili-*`` 头模拟网关身份；root 审核统一走 ``--admin-mid``），
   不直接写 MySQL 主库；仅只读回查 pptr Postgres / be-message / biliopusdb 确认前置数据存在；
@@ -168,9 +175,52 @@ def _headers(mid: int, *, role: str = "normal") -> dict[str, str]:
     }
 
 
-def _content_nodes(sentence: str) -> list[dict]:
-    """构造富文本节点（WORDS + 30% 概率外链图片 LINK）。"""
+def _random_at_targets(
+    users: list[tuple[int, str | None]],
+    *,
+    exclude_mid: int | None = None,
+    max_n: int = 2,
+    rng: random.Random | None = None,
+) -> list[tuple[int, str]]:
+    """随机挑 1~``max_n`` 个 @ 目标，返回 ``[(mid, 昵称)]``（昵称缺失时 ``user{mid}`` 兜底）。
+
+    - 排除 ``exclude_mid``：不 @ 自己（服务端也会跳过自 @ 的通知）；
+    - ``rng``：大数据灌数阶段复用固定种子的 ``random.Random``，默认用模块级 ``random``；
+    - 池子为空（用户不足）时返回空列表，调用方自然降级为「不带 @ 的正文」。
+    """
+    r = rng or random
+    pool = [u for u in users if u[0] != exclude_mid]
+    if not pool:
+        return []
+    picked = r.sample(pool, min(r.randint(1, max_n), len(pool)))
+    return [(int(mid), (name or f"user{mid}")) for mid, name in picked]
+
+
+def _at_text_suffix(targets: list[tuple[int, str]]) -> str:
+    """评论正文末尾追加的 @ 文本：`` @昵称 @昵称2``（无目标时为空串）。"""
+    return "".join(f" @{name}" for _, name in targets)
+
+
+def _at_name_to_mid(targets: list[tuple[int, str]]) -> dict[str, int]:
+    """@ 昵称 → mid 映射（服务端据此把正文里的 `@昵称` 归一为 `@{mid}` 占位符）。"""
+    return {name: mid for mid, name in targets}
+
+
+def _at_nodes(targets: list[tuple[int, str]]) -> list[dict]:
+    """动态正文末尾追加的 @ 富文本节点（AT 节点：`bizId`=被@ mid，`name`=昵称）。"""
+    nodes: list[dict] = []
+    for mid, name in targets:
+        nodes.append({"type": "WORDS", "text": " "})
+        nodes.append({"type": "AT", "bizId": str(mid), "name": name})
+    return nodes
+
+
+def _content_nodes(
+    sentence: str, at_targets: list[tuple[int, str]] | None = None
+) -> list[dict]:
+    """构造富文本节点（WORDS + 末尾随机 @ 节点 + 30% 概率外链图片 LINK）。"""
     nodes: list[dict] = [{"type": "WORDS", "text": sentence}]
+    nodes.extend(_at_nodes(at_targets or []))
     if random.random() < 0.3:
         url = random.choice(_IMG_URLS)
         nodes.append({"type": "WORDS", "text": " "})
@@ -435,6 +485,13 @@ class SeedClient:
             f"browse mid={mid} dyn={dyn_id}",
         )
 
+    async def detail(self, mid: int, dyn_id: int) -> dict:
+        """动态详情（desc 模块含 `text` 正文与 `nodes` 富文本节点，用于验证 @）。"""
+        return await self._req(
+            lambda: self._get(f"/api/v1/community/detail/{dyn_id}", mid),
+            f"detail mid={mid} dyn={dyn_id}",
+        )
+
     async def report_moment(self, mid: int, dyn_id: int) -> None:
         # 2.41.0：统一举报接口泛化为 bizType+bizId（不再用 dynId）
         await self._req(
@@ -470,23 +527,35 @@ class SeedClient:
         message: str | None = None,
         at_mids: list[int] | None = None,
         at_name_to_mid: dict[str, int] | None = None,
+        at_users: list[tuple[int, str]] | None = None,
     ) -> str:
-        """发评论并返回 rpid（评论开启先审后发，正常落 auditing）。"""
+        """发评论并返回 rpid（评论开启先审后发，正常落 auditing）。
+
+        ``at_users`` 为随机 @ 目标 ``[(mid, 昵称)]``：以 ``@昵称`` 追加到正文末尾，
+        并同时带上 ``at_mids`` / ``at_name_to_mid``（服务端归一为 ``@{mid}`` 占位符）。
+        """
         # 正文唯一化：评论服务对「同用户同正文 10s 内 >3 次」限流（Phase 2.6），
-        # 素材池仅 20 条，直接复用会在高频 seed 时撞限流，追加随机后缀保证 md5 key 唯一
+        # 素材池重复度高，直接复用会在高频 seed 时撞限流 —— 末尾追加随机 @，
+        # 昵称组合各异，兼作正文去重（md5 key 唯一）
         raw_message = message or random.choice(_COMMENTS)
+        targets = list(at_users or [])
         body: dict = {
             "oid": str(dyn_id),
             "type": CommentTypeEnum.DYNAMIC,
             "root": root,
             "parent": parent,
-            "message": f"{raw_message} ·{uuid.uuid4().hex[:6]}",
+            "message": f"{raw_message}{_at_text_suffix(targets)}",
             "up_mid": author_mid,
         }
-        if at_mids:
-            body["at_mids"] = at_mids
-        if at_name_to_mid:
-            body["at_name_to_mid"] = at_name_to_mid
+        # @ 目标并入显式传入的 at_mids / at_name_to_mid（显式 @ 场景二者共存）
+        merged_mids = list(at_mids or [])
+        merged_mids.extend(mid for mid, _ in targets if mid not in merged_mids)
+        merged_name_to_mid = dict(at_name_to_mid or {})
+        merged_name_to_mid.update(_at_name_to_mid(targets))
+        if merged_mids:
+            body["at_mids"] = merged_mids
+        if merged_name_to_mid:
+            body["at_name_to_mid"] = merged_name_to_mid
         data = await self._req(
             lambda: self._post("/api/v1/comment/add", mid, body),
             f"comment mid={mid} dyn={dyn_id}",
@@ -539,6 +608,34 @@ class SeedClient:
                 {"oid": str(dyn_id), "type": CommentTypeEnum.DYNAMIC, "rpid": rpid, "top": True},
             ),
             f"comment top mid={mid} rpid={rpid}",
+        )
+
+    async def comment_main(self, mid: int, dyn_id: int, page_size: int = 20) -> dict:
+        """一级评论列表（用于验证 @ 落库与 `@{mid}` → `@昵称` 渲染）。"""
+        return await self._req(
+            lambda: self._get(
+                "/api/v1/comment/main",
+                mid,
+                {
+                    "oid": str(dyn_id),
+                    "type": CommentTypeEnum.DYNAMIC,
+                    "page_size": page_size,
+                },
+            ),
+            f"comment main mid={mid} dyn={dyn_id}",
+        )
+
+    async def event_list(
+        self, mid: int, event_type: EventTypeEnum, page_size: int = 50
+    ) -> dict:
+        """互动提醒列表（msgfeed 聚合），用于验证 @ 通知是否触达被 @ 用户。"""
+        return await self._req(
+            lambda: self._get(
+                "/api/v1/message/event/list",
+                mid,
+                {"event_type": event_type, "page_size": page_size},
+            ),
+            f"event list mid={mid} type={event_type}",
         )
 
     # ==================== 收藏夹体系 ====================
@@ -847,6 +944,118 @@ class SeedClient:
 
 
 # ---------------------------------------------------------------------------
+# @ 提及验证（动态 / 评论两处落库后回查）
+# ---------------------------------------------------------------------------
+
+
+async def _verify_at_event(client: SeedClient, at_mid: int, resource_id: str) -> None:
+    """查被 @ 用户的 AT 事件提醒，确认存在指向 ``resource_id``（评论 rpid / 动态 dynId）的通知。
+
+    @ 通知是**弱依赖**，以下情况都会导致查不到，均属预期、只 warning 不判定失败：
+    ① 黑名单静默——@ 本身允许，但被 @ 者与发布者存在任一向黑名单关系时不投递提醒（2.50.0）；
+    ② 消息设置闸门（用户关闭 @ 提醒）；③ 幂等去重。
+    """
+    try:
+        data = await client.event_list(at_mid, EventTypeEnum.AT)
+    except RuntimeError as e:
+        logger.warning(f"[@通知] 被@用户 {at_mid} 的 AT 事件列表查询失败: {e}")
+        return
+    items = ((data.get("total") or {}).get("items")) or []
+    hit = next(
+        (
+            it
+            for it in items
+            if str((it.get("item") or {}).get("resource_id")) == resource_id
+        ),
+        None,
+    )
+    if hit is None:
+        logger.warning(
+            f"[@通知] 被@用户 {at_mid} 的 AT 提醒中未找到 resource_id={resource_id}"
+            f"（共 {len(items)} 条；可能是黑名单静默 / 消息设置闸门 / 幂等去重，均属预期）"
+        )
+        return
+    logger.success(f"[@通知] 验证通过：用户 {at_mid} 已收到 resource_id={resource_id} 的 @ 提醒")
+
+
+async def _verify_dynamic_at(client: SeedClient, viewer_mid: int, dyn_id: int) -> None:
+    """回查动态详情，验证正文末尾追加的随机 @ 已落库并渲染。
+
+    断言点：① desc 模块回显 AT 节点（`type=AT` + `bizId`/`name`）；
+    ② 正文 `text` 中 AT 节点昵称已渲染为 `@昵称`；③ 被 @ 用户收到 AT 事件（弱依赖）。
+    """
+    try:
+        data = await client.detail(viewer_mid, dyn_id)
+    except RuntimeError as e:
+        logger.error(f"[动态@] 详情回查失败 dyn={dyn_id}: {e}")
+        return
+    texts: list[str] = []
+    at_nodes: list[dict] = []
+    for m in data.get("modules") or []:
+        if m.get("text"):
+            texts.append(str(m["text"]))
+        at_nodes.extend(n for n in (m.get("nodes") or []) if n.get("type") == "AT")
+    if not at_nodes:
+        logger.error(
+            f"[动态@] dyn={dyn_id} 详情未回显任何 AT 节点（正文={texts[:1]}），动态 @ 链路未生效"
+        )
+        return
+    joined = "".join(texts)
+    missed = [
+        n.get("name") for n in at_nodes if n.get("name") and f"@{n['name']}" not in joined
+    ]
+    if missed:
+        logger.error(f"[动态@] dyn={dyn_id} 正文未渲染 @昵称: {missed}")
+        return
+    names = [n.get("name") for n in at_nodes]
+    logger.success(
+        f"[动态@] 验证通过 dyn={dyn_id}：AT 节点 {len(at_nodes)} 个（{names}）已渲染进正文"
+    )
+    first_mid = at_nodes[0].get("bizId")
+    if first_mid:
+        await _verify_at_event(client, int(first_mid), str(dyn_id))
+
+
+async def _verify_comment_at(client: SeedClient, viewer_mid: int, dyn_id: int) -> None:
+    """回查一级评论列表，验证评论正文末尾追加的随机 @ 已落库并渲染。
+
+    断言点：① 出参带 ``at_name_to_mid`（昵称 → mid）/ ``at_users`（被@用户快照）；
+    ② 正文 `message` 中 `@{mid}` 占位符已渲染回 `@昵称`；③ 被 @ 用户收到 AT 事件（弱依赖）。
+    """
+    try:
+        data = await client.comment_main(viewer_mid, dyn_id)
+    except RuntimeError as e:
+        logger.error(f"[评论@] 评论列表回查失败 dyn={dyn_id}: {e}")
+        return
+    items = data.get("items") or []
+    hit = [it for it in items if it.get("at_name_to_mid") or it.get("at_users")]
+    if not hit:
+        logger.error(
+            f"[评论@] dyn={dyn_id} 的 {len(items)} 条一级评论均无 @ 落库，评论 @ 链路未生效"
+        )
+        return
+    bad: list[tuple] = []
+    for it in hit:
+        msg = str(it.get("message") or "")
+        for uname in it.get("at_name_to_mid") or {}:
+            if f"@{uname}" not in msg:
+                bad.append((it.get("rpid"), uname, msg))
+    if bad:
+        logger.error(f"[评论@] 正文未渲染 @昵称（rpid, 昵称, 正文）: {bad[:3]}")
+        return
+    names = sorted({u for it in hit for u in (it.get("at_name_to_mid") or {})})
+    logger.success(
+        f"[评论@] 验证通过 dyn={dyn_id}：{len(hit)}/{len(items)} 条一级评论带 @，被@昵称 {names[:5]}"
+    )
+    # AT 通知以评论 rpid 为 biz_id（resource_id）
+    first_name_to_mid = hit[0].get("at_name_to_mid") or {}
+    if first_name_to_mid:
+        await _verify_at_event(
+            client, next(iter(first_name_to_mid.values())), str(hit[0].get("rpid"))
+        )
+
+
+# ---------------------------------------------------------------------------
 # 四大模块编排（全互动联调）
 # ---------------------------------------------------------------------------
 
@@ -888,6 +1097,8 @@ async def seed_moment(
         async with sem:
             author_mid, _ = random.choice(authors)
             sentence = random.choice(_SENTENCES)
+            # 正文末尾追加随机 @（不 @ 自己），覆盖动态 @ 落库 + 事件通知链路
+            at_targets = _random_at_targets(users, exclude_mid=author_mid)
             topic_id = (
                 random.choice(topic_ids) if topic_ids and random.random() < 0.5 else None
             )
@@ -896,7 +1107,7 @@ async def seed_moment(
             dyn_id = await client.create_dynamic(
                 author_mid,
                 scene="WORD",
-                content=_content_nodes(sentence),
+                content=_content_nodes(sentence, at_targets),
                 topic_id=topic_id,
             )
             # 2) 审核通过 → normal
@@ -923,7 +1134,12 @@ async def seed_moment(
             if normal_ids and random.random() < 0.2:
                 src_dyn = random.choice(normal_ids)
                 fwd_id = await client.repost(
-                    author_mid, src_dyn, _content_nodes("转发：这个说得太对了")
+                    author_mid,
+                    src_dyn,
+                    _content_nodes(
+                        "转发：这个说得太对了",
+                        _random_at_targets(users, exclude_mid=author_mid),
+                    ),
                 )
                 await client.approve(fwd_id)
 
@@ -953,6 +1169,10 @@ async def seed_moment(
         except RuntimeError as e:
             logger.warning(f"置顶失败（动态非本人/non-normal）: {e}")
 
+    # 8) @ 验证：回查详情，确认正文末尾随机 @ 已落库 + 渲染 + 触发 AT 通知
+    if normal_ids:
+        await _verify_dynamic_at(client, users[0][0], normal_ids[0])
+
     logger.success(
         f"[动态体系] 动态 {len(normal_ids)} 条（含转发 {len(forward_ids)}），点赞 {like_count} 次，话题 {len(topic_ids)} 个"
     )
@@ -962,7 +1182,7 @@ async def seed_moment(
 async def seed_comment(
     client: SeedClient, users: list[tuple[int, str | None]], normal_ids: list[int]
 ) -> None:
-    """② 评论体系：一级评论 + 楼中楼 + 点赞/点踩 + @ + 举报 + 置顶。"""
+    """② 评论体系：一级评论 + 楼中楼 + 点赞/点踩 + @（每条正文末尾随机 @）+ 举报 + 置顶。"""
     if not normal_ids:
         logger.warning("无可用动态，跳过评论体系。")
         return
@@ -971,19 +1191,26 @@ async def seed_comment(
     comment_count = 0
     action_count = 0
 
-    for dyn_id in normal_ids[: min(10, len(normal_ids))]:
+    for dyn_id in tqdm(
+        normal_ids[: min(10, len(normal_ids))], desc="[评论体系] 动态", unit="条"
+    ):
         # 评论区 up_mid 用动态作者（正常应从动态卡片 author 模块取；seed 从用户池随机取）
         up_mid = random.choice(users)[0]
         commenters = [u for u in users if u[0] != up_mid]
         # 仅当前动态的根评论（楼中楼/点赞/置顶必须限定在同一个评论区）
         dyn_root_rpids: list[str] = []
 
-        # 1) 一级评论（2~3 条）+ 审核通过
+        # 1) 一级评论（2~3 条）+ 审核通过（正文末尾追加随机 @，不 @ 自己）
         for commenter in random.sample(
             commenters, min(random.randint(2, 3), len(commenters))
         ):
             try:
-                rpid = await client.add_comment(commenter[0], dyn_id, up_mid)
+                rpid = await client.add_comment(
+                    commenter[0],
+                    dyn_id,
+                    up_mid,
+                    at_users=_random_at_targets(users, exclude_mid=commenter[0]),
+                )
                 await client.approve_comment(rpid)
             except RuntimeError as e:
                 # 拉黑等业务限制会拒绝评论（seed 随机组合可能命中持久化黑名单），软降级跳过
@@ -1007,6 +1234,7 @@ async def seed_comment(
                         root=root_rpid,
                         parent=parent,
                         message=random.choice(_REPLIES),
+                        at_users=_random_at_targets(users, exclude_mid=replier[0]),
                     )
                     await client.approve_comment(rpid)
                 except RuntimeError as e:
@@ -1023,7 +1251,7 @@ async def seed_comment(
             await client.comment_action(actor[0], rpid, random.choice([1, 2]))
             action_count += 1
 
-        # 4) @ 提及：一级评论带 at_mids + at_name_to_mid
+        # 4) @ 提及：一级评论带 at_mids + at_name_to_mid（显式 @ + 末尾随机 @ 并存）
         if len(commenters) >= 2:
             at_target = commenters[0]
             at_name = at_target[1] or f"user{at_target[0]}"
@@ -1035,6 +1263,7 @@ async def seed_comment(
                     message=f"@{at_name} 这条动态真不错",
                     at_mids=[at_target[0]],
                     at_name_to_mid={at_name: at_target[0]},
+                    at_users=_random_at_targets(users, exclude_mid=commenters[1][0]),
                 )
                 comment_count += 1
             except RuntimeError as e:
@@ -1053,6 +1282,9 @@ async def seed_comment(
                 await client.top_comment(up_mid, dyn_id, dyn_root_rpids[-1])
             except RuntimeError as e:
                 logger.warning(f"评论置顶失败: {e}")
+
+    # 7) @ 验证：回查第一条动态的评论列表，确认随机 @ 已落库 + 渲染 + 触发 AT 通知
+    await _verify_comment_at(client, users[0][0], normal_ids[0])
 
     logger.success(
         f"[评论体系] 评论 {comment_count} 条（含楼中楼），互动 {action_count} 次，@/举报/置顶已覆盖"
@@ -1086,7 +1318,9 @@ async def seed_interact(
 
     # 2) 收藏动态（每人收藏 1~2 条到自己的收藏夹）
     fav_count = 0
-    for i, (mid, _) in enumerate(users[: min(5, len(users))]):
+    for i, (mid, _) in tqdm(
+        enumerate(users[: min(5, len(users))]), desc="[用户级互动] 收藏", unit="人"
+    ):
         fid = folder_ids[i % len(folder_ids)] if folder_ids else None
         for dyn_id in random.sample(normal_ids, min(2, len(normal_ids))):
             try:
@@ -1152,7 +1386,12 @@ async def seed_interact(
     )
 
 
-async def seed_message(client: SeedClient, users: list[tuple[int, str | None]]) -> None:
+async def seed_message(
+    client: SeedClient,
+    users: list[tuple[int, str | None]],
+    count: int,
+    dm_concurrency: int,
+) -> None:
     """④ 消息与管理：私信（撤回/删除全流程）+ 通用计数 + 用户举报 + 封禁 + 头像审核流。"""
     if len(users) < 2:
         logger.warning("用户数不足，跳过消息与管理模块。")
@@ -1384,6 +1623,36 @@ async def seed_message(client: SeedClient, users: list[tuple[int, str | None]]) 
     else:
         logger.warning("[消息与管理] 无额外用户对完成互发（用户数不足或均被陌生人过滤）")
 
+    # ---- 场景 E：批量互发私信填充（每个用户 --full-count 条）----
+    # 每个用户作为发送方，向其他随机用户定向发送 full_count 条私信并 root 审核通过，
+    # 用于压测 msg_dm_index 写扩散 / 会话列表分页；业务拒绝（陌生人过滤 / 拉黑等）软降级跳过。
+    if count > 0 and len(users) >= 2:
+        sem = asyncio.Semaphore(dm_concurrency)
+        others_pool = {u[0]: [v for v in users if v[0] != u[0]] for u in users}
+
+        async def _send_one(sender: tuple[int, str | None]) -> None:
+            async with sem:
+                try:
+                    receiver = random.choice(others_pool[sender[0]])
+                    mk = await client.dm_send(sender[0], receiver[0], receiver[1])
+                    await client.approve_dm(mk)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"批量私信 {sender[0]}→{receiver[0]} 发送失败（跳过）: {e}")
+
+        tasks = [
+            asyncio.create_task(_send_one(u)) for u in users for _ in range(count)
+        ]
+        for f in tqdm(
+            asyncio.as_completed(tasks), total=len(tasks), desc="seed dm bulk"
+        ):
+            try:
+                await f
+            except Exception:  # noqa: BLE001
+                pass
+        logger.success(
+            f"[消息与管理] 批量私信填充完成：{len(users)} 用户 × {count} 条 = {len(tasks)} 条"
+        )
+
     # 2) 通用互动计数：lottery 资源点赞（TInteractionStat）
     for mid, _ in users[: min(2, len(users))]:
         await client.thumb_lottery(mid, random.randint(10000000, 99999999))
@@ -1445,7 +1714,7 @@ async def seed(
                 skip_follow=skip_follow,
             )
         if not skip_message:
-            await seed_message(client, users)
+            await seed_message(client, users, count, moment_concurrency)
 
         logger.success("全互动 seed 执行完成。")
 
@@ -1490,6 +1759,9 @@ VIEW_DISTRIBUTION = [
 ]
 # 话题关联概率（部分动态挂话题，压测 topic_feed 索引）
 TOPIC_LINK_RATIO = 0.5
+# 正文末尾追加随机 @ 的长度上限：动态正文上限 2000 字（MomentPublishService._CONTENT_MAX_LENGTH），
+# 真实动态正文可能已接近上限，超长正文跳过 @，避免触发长度校验导致整条动态灌入失败
+_BULK_AT_CONTENT_MAXLEN = 1900
 
 
 def _raw_conn(db: str) -> dict:
@@ -1645,15 +1917,16 @@ async def fetch_real_dyns(total: int) -> list[tuple]:
     return out[:total]
 
 
-async def fetch_pptr_user_pool(size: int) -> list[int]:
-    """从自有用户系统（pptr Postgres）随机取 size 个真实用户 uid。
+async def fetch_pptr_user_pool(size: int) -> list[tuple[int, str | None]]:
+    """从自有用户系统（pptr Postgres）随机取 size 个真实用户 ``(uid, uname)``。
 
     用作动态作者 / 点赞者 / 浏览者池：外库动态仅保留话题与内容，
     所有者信息统一链接到本地用户系统，保证 Feed 回查 author 信息完整。
+    昵称一并取出，供正文末尾追加随机 @ 使用（动态 AT 节点需要 ``name``）。
     """
     async with new_pptr_session() as s:
         stmt = (
-            select(PptrUserInfo.uid)
+            select(PptrUserInfo.uid, PptrUserDetail.uname)
             .join(
                 PptrUserDetail,
                 col(PptrUserDetail.mid) == col(PptrUserInfo.uid),
@@ -1665,12 +1938,12 @@ async def fetch_pptr_user_pool(size: int) -> list[int]:
             .limit(size)
         )
         rows = (await s.exec(stmt)).all()
-    uids = [int(r) for r in rows]
-    if not uids:
+    users = [(int(uid), uname) for uid, uname in rows]
+    if not users:
         logger.error(
             "pptr 库未取到任何真实用户 uid，无法作为动态作者，请确认 pptr 数据库连接与数据。"
         )
-    return uids
+    return users
 
 
 async def fetch_real_topics() -> list[str]:
@@ -1686,7 +1959,9 @@ async def fetch_real_topics() -> list[str]:
         rows = await cur.fetchall()
     finally:
         conn.close()
-    return [r[0] for r in rows]
+    # 去除首尾空白（含全角/Unicode 空格，MySQL TRIM 不处理但 Python strip 能去），
+    # 与 create_topic 接口对 topicName 的 strip 规范化保持一致，避免幂等复用比对失配。
+    return list(dict.fromkeys(r[0].strip() for r in rows if r[0] and r[0].strip()))
 
 
 async def _load_existing_topics() -> dict[str, int]:
@@ -1727,6 +2002,9 @@ async def _seed_topics(
     sem = asyncio.Semaphore(concurrency)
 
     async def one(name: str) -> int | None:
+        name = name.strip()
+        if not name:
+            return None
         async with sem:
             # 1) 已存在则直接复用，否则创建
             if name in existing:
@@ -1751,26 +2029,45 @@ async def _seed_topics(
                 pass  # 已是 normal（或状态异常），忽略
             return tid
 
-    results = await asyncio.gather(*[one(n) for n in names])
+    tasks = [asyncio.create_task(one(n)) for n in names]
+    results: list[int | None] = []
+    for f in tqdm(
+        asyncio.as_completed(tasks),
+        total=len(tasks),
+        desc="seed topics",
+        unit="个",
+    ):
+        try:
+            results.append(await f)
+        except Exception:  # noqa: BLE001
+            pass
     return [t for t in results if isinstance(t, int)]
 
 
 async def _seed_dynamic(
     client: SeedClient,
     rng: random.Random,
-    author_pool: list[int],
-    likers_pool: list[int],
-    viewers_pool: list[int],
+    user_pool: list[tuple[int, str | None]],
     topic_ids: list[int],
     real: tuple,
     sem: asyncio.Semaphore,
 ) -> None:
-    """单条动态：创建 → 审核通过 → 按分布点赞/浏览（并发）。"""
+    """单条动态：创建 → 审核通过 → 按分布点赞/浏览（并发）。
+
+    正文末尾追加随机 @（不 @ 作者本人），让灌数数据同样覆盖动态 @ 链路；
+    极长正文（已接近 2000 字上限）跳过 @，避免触发长度校验导致整条动态灌入失败。
+    """
     async with sem:
         try:
             _dyn_id, _pub_time, content, _comment_count, _repost_count = real
-            author = rng.choice(author_pool)
-            nodes = [{"type": "WORDS", "text": content}]
+            author, _ = rng.choice(user_pool)
+            nodes: list[dict] = [{"type": "WORDS", "text": content}]
+            if len(content) <= _BULK_AT_CONTENT_MAXLEN:
+                nodes.extend(
+                    _at_nodes(
+                        _random_at_targets(user_pool, exclude_mid=author, rng=rng)
+                    )
+                )
             topic_id = (
                 rng.choice(topic_ids)
                 if topic_ids and rng.random() < TOPIC_LINK_RATIO
@@ -1784,12 +2081,12 @@ async def _seed_dynamic(
             like_target = _sample(LIKE_DISTRIBUTION)
             view_target = _sample(VIEW_DISTRIBUTION)
             tasks = []
-            if like_target > 0 and likers_pool:
-                for u in rng.sample(likers_pool, min(like_target, len(likers_pool))):
-                    tasks.append(client.thumb(u, new_dyn_id))
-            if view_target > 0 and viewers_pool:
-                for u in rng.sample(viewers_pool, min(view_target, len(viewers_pool))):
-                    tasks.append(client.browse(u, new_dyn_id))
+            if like_target > 0 and user_pool:
+                for u in rng.sample(user_pool, min(like_target, len(user_pool))):
+                    tasks.append(client.thumb(u[0], new_dyn_id))
+            if view_target > 0 and user_pool:
+                for u in rng.sample(user_pool, min(view_target, len(user_pool))):
+                    tasks.append(client.browse(u[0], new_dyn_id))
             if tasks:
                 # 单条动态的点赞/浏览并发发起，单条失败不影响整体
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -1827,12 +2124,12 @@ async def run_bulk(args: argparse.Namespace) -> None:
         return
 
     rng = random.Random(20260815)
-    # 作者 / 点赞者 / 浏览者统一取自自有用户系统（pptr Postgres）。
-    author_pool = await fetch_pptr_user_pool(args.users_pool_size)
-    if not author_pool:
+    # 作者 / 点赞者 / 浏览者 / @对象统一取自自有用户系统（pptr Postgres）。
+    user_pool = await fetch_pptr_user_pool(args.users_pool_size)
+    if not user_pool:
         logger.error("pptr 无可用用户 uid，无法映射动态作者，中止")
         sys.exit(1)
-    logger.info(f"自有用户池（pptr）{len(author_pool)} 个，用作作者/点赞者/浏览者")
+    logger.info(f"自有用户池（pptr）{len(user_pool)} 个，用作作者/点赞者/浏览者/@对象")
 
     async with SeedClient(args.base_url, args.admin_mid) as client:
         # 2. 话题：预拉已有话题（直读主库幂等），并发创建 + 审核通过
@@ -1845,17 +2142,15 @@ async def run_bulk(args: argparse.Namespace) -> None:
         )
         logger.info(f"  话题 {len(topic_ids)} 个（含复用已有）")
 
-        # 3. 动态：并发创建 + 审核 + 点赞/浏览
-        logger.info("经 API 灌入动态（含点赞/浏览）…")
+        # 3. 动态：并发创建 + 审核 + 点赞/浏览（正文末尾随机 @）
+        logger.info("经 API 灌入动态（含点赞/浏览/@）…")
         sem = asyncio.Semaphore(args.concurrency)
         tasks = [
             asyncio.create_task(
                 _seed_dynamic(
                     client,
                     rng,
-                    author_pool,
-                    author_pool,
-                    author_pool,
+                    user_pool,
                     topic_ids,
                     real,
                     sem,

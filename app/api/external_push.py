@@ -26,8 +26,8 @@ from app.models import (
     TestPushRequest,
     TestPushResponse,
 )
-from app.services.message.push import PushMessageService
-from app.services.message.push_helper import format_user_label, merge_config
+from app.services.message.external.push import PushMessageService
+from app.services.message.external.push_helper import format_user_label, merge_config
 
 # 「推送」模块挂在消息系统路由 /api/v1/message 之下
 router = APIRouter(prefix="/api/v1/message/push", tags=["push"])

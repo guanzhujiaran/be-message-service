@@ -12,9 +12,9 @@
 """
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
-# 既有循环导入），再按需 import app.mq.rpc_push。
+# 既有循环导入），再按需 import app.mq.rpc_external_push。
 import app.main  # noqa: F401
-from app.mq.rpc_push import _with_label
+from app.mq.rpc_external_push import _with_label
 from bili_common.models import (
     PushRpcMethodName,
     PushRpcSendNowParams,

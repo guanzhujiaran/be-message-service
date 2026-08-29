@@ -65,13 +65,24 @@ from app.models.schemas import (
     EventReportResp,
     EventUserBrief,
 )
-from app.services.user.pptr_user import PptrUserService
-from app.services.message.setting import SettingService
+from app.services.user.follow import FollowService
+from app.services.user.account import PptrUser
+from app.services.message.insite.setting import SettingService
 
 # 每张聚合卡片（aggregate 接口）最多展示的触发者头像数
 _MAX_ACTORS_PER_GROUP = 3
 # msgfeed 单条 users[] 后端返回上限（前端 B 站样式最多展示 2 个，后端多给便于扩展）
 _MAX_USERS_PER_ITEM = 4
+# 命中黑名单即静默的事件类型（2.50.0）：@ 与回复是「点对点」的打扰，
+# 触发者与接收方存在任一向黑名单关系时不投递。注意 **@ 本身仍然允许** ——
+# 动态 AT 节点 / 评论 msg_comment_at 关系照常落库并渲染成 @昵称，
+# 这里只拦「把提醒送进黑名单用户消息中心」这一步。
+# 点赞 / 收藏 / 转发等互动在互动层已按 NOT_BLOCKED 双向拦截；
+# 审核驳回 / 下架 / 举报结果等系统侧通知（actor 为管理员或系统）不在此列。
+_BLOCKED_SILENT_EVENT_TYPES: tuple[EventTypeEnum, ...] = (
+    EventTypeEnum.AT,
+    EventTypeEnum.REPLY,
+)
 # 为了在内存里凑齐每组的头像，单次最多回捞的明细条数（防止大分组撑爆内存）
 _ACTOR_SCAN_LIMIT = 500
 
@@ -231,6 +242,25 @@ def build_dedup_key(
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
+async def report_event_weakly(req: EventReportReq) -> None:
+    """弱依赖事件上报：独立会话投递，失败不影响主事务。
+
+    点赞 / 回复 / @ / 审核驳回 / 举报下架 / 举报结果等互动通知统一走这里，
+    避免每个调用点都重复 ``async with new_session()`` + ``try/except`` 的样板。
+    核心执行仍是对象式 ``BaseEvent.from_req(req).report(session)``。
+    """
+    from app.core.database import new_session
+
+    try:
+        async with new_session() as ns:
+            await BaseEvent.from_req(req).report(ns)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            f"事件上报失败（弱依赖，已忽略）: event_type={req.event_type} mid={req.mid}",
+            exc_info=True,
+        )
+
+
 # ==================== 虚基类 ====================
 
 
@@ -304,7 +334,7 @@ class BaseEvent(ABC):
     async def report(self, session: AsyncSession) -> EventReportResp:
         """上报一条用户行为事件（落库即送达，由接收方轮询读取）。
 
-        顺序：消息设置闸门 → 自赞过滤 → dedup_key 幂等 → 落库。
+        顺序：消息设置闸门 → 自赞过滤 → 黑名单静默 → dedup_key 幂等 → 落库。
         """
         # 闸门一：用户是否愿意接收这类提醒
         accepted = await SettingService.accept_event(session, self.mid, self.event_type)
@@ -315,6 +345,17 @@ class BaseEvent(ABC):
         # 闸门二：不给自己发提醒
         if self.mid == self.actor_mid:
             return EventReportResp(accepted=False, duplicated=False)
+
+        # 闸门三：黑名单静默（2.50.0）——@ / 回复不打扰黑名单用户。
+        # @ 本身仍然允许（动态 AT 节点 / 评论 @ 关系照常落库与渲染），
+        # 这里只拦「提醒投递」这一步；双向任一向拉黑即静默。
+        if self.event_type in _BLOCKED_SILENT_EVENT_TYPES:
+            if await FollowService.is_blocked_relation(session, self.mid, self.actor_mid):
+                logger.debug(
+                    f"用户 {self.mid} 与 {self.actor_mid} 存在黑名单关系，"
+                    f"跳过 {self.event_type} 提醒"
+                )
+                return EventReportResp(accepted=False, duplicated=False)
 
         dedup_key = self.build_dedup_key()
         row = EventMessage(
@@ -482,7 +523,7 @@ class BaseEvent(ABC):
             ).append(row)
 
         actor_mids: set[int] = {r.actor_mid for r in details}
-        user_map = await PptrUserService.get_many(actor_mids)
+        user_map = await PptrUser.get_many(actor_mids)
 
         items: list[EventAggregateItem] = []
         for etype, stype, sid, cnt, unread, latest_id in groups:
@@ -664,7 +705,7 @@ class BaseEvent(ABC):
         for rows in bucket.values():
             for r in rows:
                 actor_mids.add(r.actor_mid)
-        user_map = await PptrUserService.get_many(actor_mids)
+        user_map = await PptrUser.get_many(actor_mids)
         dyn_cache: dict[int, object] = {}
 
         # ---- 评论关系 / 正文 / 点赞态 / 关注态，读取时实时回捞 ----
@@ -844,8 +885,13 @@ class BaseEvent(ABC):
         return int((await session.exec(stmt)).one() or 0)
 
     @classmethod
-    async def count_unread_by_type(cls, session: AsyncSession, mid: int) -> dict[str, int]:
-        """一次查询拿到各类型未读数（前端红点）。"""
+    async def count_unread_by_type(cls, session: AsyncSession, mid: int) -> dict[int, int]:
+        """一次查询拿到各类型未读数（前端红点）。
+
+        键使用 ``int``（即 ``EventTypeEnum.value``）：调用方均以
+        ``EventTypeEnum.LIKE.value`` 等整数取值查表，若用 ``str(etype)`` 作为键会
+        与整数键不匹配，导致点赞 / 回复 / @ 未读数恒为 0。
+        """
         stmt = (
             select(EventMessage.event_type, func.count())
             .where(
@@ -855,7 +901,7 @@ class BaseEvent(ABC):
             )
             .group_by(EventMessage.event_type)
         )
-        return {str(etype): int(cnt) for etype, cnt in (await session.exec(stmt)).all()}
+        return {int(etype): int(cnt) for etype, cnt in (await session.exec(stmt)).all()}
 
     @classmethod
     async def _advance_cursor(
@@ -1036,4 +1082,5 @@ __all__ = [
     "MsgfeedBuildContext",
     "EVENT_REGISTRY",
     "build_dedup_key",
+    "report_event_weakly",
 ]

@@ -11,7 +11,7 @@
 from faststream import AckPolicy
 from faststream.rabbit.fastapi import RabbitMessage
 
-from app.consumers.push import handle_message
+from app.consumers.external_push import handle_message
 from app.core.broker import message_exchange, message_queue
 from app.models import PushMessagePayload
 from app.mq.router import router

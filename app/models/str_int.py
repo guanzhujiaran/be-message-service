@@ -10,6 +10,15 @@ str 或 int，内部归一为 int」处理，避免每个 router / service 手�
 
 OpenAPI schema 表现为 `anyOf[integer, string]`，hey-api 生成的前端 SDK 参数类型
 为 `number | string`，前端封装层可声明 `string` 直接传，不再 422。
+
+⚠️ **路由参数必须用 `Annotated[StrInt, Query(...)]` 形式声明**（2026-08-29）：
+写成默认值形式 `x: StrInt = Query(...)` 时，FastAPI 会**丢掉 BeforeValidator**，
+查询参数的字符串会原样透传给 handler，`if mid <= 0` 直接抛
+`TypeError: '<=' not supported between instances of 'str' and 'int'` → 500
+（HTTP 查询参数在线上永远是字符串，即这类路由任何调用都会 500）。
+两种写法的 OpenAPI schema 完全一致（均为 `anyOf[int, str]`），改写不影响已生成的
+前端 SDK。回归测试见 `tests/test_str_int_route_params.py`。
+路径参数（`x: StrInt`）与 pydantic 模型字段（`x: StrInt = Field(...)`）不受影响。
 """
 
 from typing import Annotated, Union

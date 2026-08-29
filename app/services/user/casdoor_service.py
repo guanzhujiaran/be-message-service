@@ -34,8 +34,8 @@ from app.models.casdoor import (
 )
 from app.models.pptr_db import PptrUserActInfoLog, PptrUserDetail
 from app.models.pptr_user import PptrUserInfo
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import PptrUser
 
 
 class CasdoorError(Exception):
@@ -626,7 +626,7 @@ async def create_local_user_from_casdoor(
                 existing_detail = await _check_email(s)
 
         if existing_detail:
-            existing = await PptrUserService.get_user_profile(
+            existing = await PptrUser.fetch_profile(
                 uid=existing_detail.mid, session=session
             )
             if existing:
@@ -642,13 +642,13 @@ async def create_local_user_from_casdoor(
 
     # 2. 按 username 查重，冲突则自动分配
     final_username = username
-    existing = await PptrUserService.get_user_profile(
+    existing = await PptrUser.fetch_profile(
         user_name=final_username, session=session
     )
     if existing:
         # 尝试 bili_ + username
         final_username = f"bili_{username}"
-        existing = await PptrUserService.get_user_profile(
+        existing = await PptrUser.fetch_profile(
             user_name=final_username, session=session
         )
         if existing:
@@ -667,7 +667,7 @@ async def create_local_user_from_casdoor(
     #    默认昵称统一为「bili_ + uuid」格式：新创建账号一眼可辨，
     #    且天然避免 uname 重复（uuid 全局唯一）；昵称由用户后续手动修改。
     default_uname = f"bili_{_uuid.uuid4().hex[:12]}"
-    uid, created = await PptrUserService.create_user(
+    uid, created = await PptrUser.create(
         user_name=final_username,
         pwd=oauth_token.access_token,
         uname=default_uname,

@@ -56,7 +56,7 @@ async def _bind_engine_per_test():
         autoflush=False,
     )
 
-    # pptr 引擎（供 PptrUserService.get_many 回查创建者信息）需随测试重建，绑定当前 loop
+    # pptr 引擎（供 PptrUser.get_many 回查创建者信息）需随测试重建，绑定当前 loop
     from app.core import database as db_mod_pptr
 
     orig_pptr_engine = db_mod_pptr.pptr_engine

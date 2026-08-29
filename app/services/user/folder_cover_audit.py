@@ -26,8 +26,8 @@ from app.models.schemas.folder_cover_audit import (
     FolderCoverAuditListResp,
     FolderCoverAuditMineResp,
 )
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import PptrUser
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -35,7 +35,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _to_item(row: TFolderCoverAudit, brief) -> FolderCoverAuditItem:
-    """TFolderCoverAudit → 审核队列卡片（brief 来自 PptrUserService.get_many 结果）。"""
+    """TFolderCoverAudit → 审核队列卡片（brief 来自 PptrUser.get_many 结果）。"""
     return FolderCoverAuditItem(
         pk=row.pk,
         folderId=str(row.folderId),
@@ -165,7 +165,7 @@ class FolderCoverAuditService:
         ).all()
 
         mids = {r.mid for r in rows}
-        briefs = await PptrUserService.get_many(list(mids))
+        briefs = await PptrUser.get_many(list(mids))
         items = [_to_item(r, briefs.get(r.mid)) for r in rows]
         return FolderCoverAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
@@ -210,7 +210,7 @@ class FolderCoverAuditService:
 
         # 弱依赖通知：审核通过
         await FolderCoverAuditService._notify_approved(row)
-        briefs = await PptrUserService.get_many([row.mid])
+        briefs = await PptrUser.get_many([row.mid])
         return _to_item(row, briefs.get(row.mid))
 
     # ==================== 管理端：审核驳回 ====================
@@ -244,7 +244,7 @@ class FolderCoverAuditService:
 
         # 弱依赖通知：审核驳回
         await FolderCoverAuditService._notify_rejected(row)
-        briefs = await PptrUserService.get_many([row.mid])
+        briefs = await PptrUser.get_many([row.mid])
         return _to_item(row, briefs.get(row.mid))
 
     # ==================== 内部方法 ====================

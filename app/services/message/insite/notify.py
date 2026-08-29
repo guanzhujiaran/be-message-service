@@ -31,6 +31,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import new_session
 from app.models.db import NotifyCursor, NotifyMessage, NotifyState, UserMessageSetting
+from app.services.message.insite.setting import SettingService
 from app.models.enums import (
     NotifyLevelEnum,
     NotifyStatusEnum,
@@ -154,7 +155,10 @@ class NotifyService:
 
     @staticmethod
     async def create_idempotent(
-        session: AsyncSession, creator_mid: int, req: NotifyCreateReq
+        session: AsyncSession,
+        creator_mid: int,
+        req: NotifyCreateReq,
+        respect_setting: bool = True,
     ) -> tuple[NotifyAdminItem | None, bool]:
         """幂等发布系统通知（2.48.0，MQ 异步发布通道用）。
 
@@ -165,8 +169,13 @@ class NotifyService:
         MQ 是「至少一次投递」，配合本方法的判重即可达到「恰好一次写入」：
         消费者失败重投不会产生重复的欢迎通知。
 
+        `respect_setting=True` 时，单人 CUSTOM 通知会先查用户 `recv_notify` 闸门，
+        用户关闭「系统通知」则跳过写入（返回 `(None, True)` 表示按用户设置跳过，
+        调用方应视为成功而非失败）；欢迎通知等强制送达场景传 `respect_setting=False`。
+
         Returns:
-            `(item, duplicated)`：`item` 为新建或既有通知，`duplicated` 表示是否命中既有。
+            `(item, duplicated)`：`item` 为新建或既有通知，`duplicated` 表示是否命中既有；
+            用户关闭通知时被跳过则 `item=None, duplicated=True`。
         """
         target = (req.target_value or "").strip()
         if (
@@ -174,6 +183,19 @@ class NotifyService:
             and target
             and "," not in target
         ):
+            if respect_setting:
+                try:
+                    target_mid = int(target)
+                except ValueError:
+                    target_mid = None
+                if target_mid is not None and not await SettingService.accept_notify(
+                    session, target_mid
+                ):
+                    logger.debug(
+                        f"用户 {target_mid} 已关闭系统通知（recv_notify=False），"
+                        f"跳过定向通知：{req.title}"
+                    )
+                    return None, True
             existing = (
                 await session.exec(
                     select(NotifyMessage)
@@ -206,9 +228,18 @@ class NotifyService:
 
         使用独立事务写入，与调用方主事务解耦：通知失败不影响主流程（弱依赖）。
         用于「评论 / 私信状态变更」等需要主动告知相关用户的场景。
+
+        发送前先查用户设置 `recv_notify`：用户关闭「系统通知」则直接跳过，
+        不产生站内通知（与 SettingService 的「通知推送」第一道闸门一致）。
         """
         try:
             async with new_session() as s:
+                if not await SettingService.accept_notify(s, mid):
+                    logger.debug(
+                        f"用户 {mid} 已关闭系统通知（recv_notify=False），"
+                        f"跳过发送：{title}"
+                    )
+                    return
                 s.add(
                     NotifyMessage(
                         title=title,
@@ -242,6 +273,7 @@ class NotifyService:
                 await NotifyService.create_idempotent(
                     s,
                     creator_mid=0,
+                    respect_setting=False,
                     req=NotifyCreateReq(
                         title=f"欢迎加入，{nickname}！",
                         content=(

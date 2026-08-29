@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.database import new_pptr_session, new_session, test_pptr_connection
 from app.models.db import (
     CommentAction,
+    CommentAt,
     CommentIndex,
     CommentSubject,
     TMoment,
@@ -29,12 +30,12 @@ from app.models.enums import (
 )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.schemas import CommentAddReq
-from app.services.message.comment import CommentService
-from app.services.message.comment_action import CommentActionService
-from app.services.message.comment_admin import CommentAdminService
-from app.services.message.comment_audit import audit_text
-from app.services.message.comment_read import CommentReadService
-from app.services.user.pptr_user import PptrUserService
+from app.services.comment import CommentService
+from app.services.comment.comment_action import CommentActionService
+from app.services.comment.comment_admin import CommentAdminService
+from app.services.comment.comment_audit import audit_text
+from app.services.comment.comment_read import CommentReadService
+from app.services.user.account import PptrUser
 
 
 @pytest.fixture(autouse=True)
@@ -294,7 +295,7 @@ async def test_at_search() -> None:
             ps.add(PptrUserDetail(mid=_SEARCH_MID, uname="搜索目标用户ABC", sign="", sex=""))
             await ps.commit()
 
-        hits = await PptrUserService.search_by_uname("搜索目标", limit=10)
+        hits = await PptrUser.search_by_uname("搜索目标", limit=10)
         assert any(h.mid == _SEARCH_MID for h in hits)
     finally:
         # 清理 pptr 种子数据（硬删，避免污染其它用例）
@@ -467,9 +468,9 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
     auditing（审核中，暂不可见）与 rejected / hidden（未通过 / 下架）的评论
     一律不投递回复 / @ 通知，避免接收方点开看到「评论不可见」；仅 NORMAL 投递。
     """
+    import app.services.message.insite.events as events_mod
     from app.models.enums import EventTypeEnum
     from app.models.schemas import EventReportReq
-    from app.services.message.event import EventService as EventSvc
 
     # 关掉「先审后发」，保证无敏感词评论直接 NORMAL（与
     # test_author_sees_own_auditing_comment 同理），使状态判定可控
@@ -477,10 +478,10 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
 
     calls: list[EventReportReq] = []
 
-    async def fake_report(session, req: EventReportReq) -> None:
+    async def fake_report(req: EventReportReq) -> None:
         calls.append(req)
 
-    monkeypatch.setattr(EventSvc, "report", fake_report)
+    monkeypatch.setattr(events_mod, "report_event_weakly", fake_report)
 
     oid = _next_oid()
 
@@ -549,9 +550,9 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
     管理端审核通过后，补发回复 + @ 通知，且已投递的 @ 记录标记 `notified=True`，
     再次翻转为 NORMAL 不重复补发。
     """
+    import app.services.message.insite.events as events_mod
     from app.models.enums import EventTypeEnum
     from app.models.schemas import EventReportReq
-    from app.services.message.event import EventService as EventSvc
 
     # 关掉「先审后发」：无敏感词评论（含根评论）直接 NORMAL，作为楼中楼回复目标；
     # 疑似词子评论仍会命中预筛进 AUDITING（与 test_interact_notify_only_for_visible_comment 同理）
@@ -559,10 +560,10 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
 
     calls: list[EventReportReq] = []
 
-    async def fake_report(session, req: EventReportReq) -> None:
+    async def fake_report(req: EventReportReq) -> None:
         calls.append(req)
 
-    monkeypatch.setattr(EventSvc, "report", fake_report)
+    monkeypatch.setattr(events_mod, "report_event_weakly", fake_report)
 
     oid = _next_oid()
 
@@ -624,3 +625,137 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
         assert not any(r.event_type is EventTypeEnum.AT for r in calls), "已投递的@不应重复补发"
     finally:
         await _cleanup(oid, {_AUTHOR, _UP, _VIEWER})
+
+
+async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """2.50.0：黑名单静默——**@ 本身允许**（@ 关系照常落库渲染），但黑名单用户收不到 @ / 回复提醒。
+
+    动态 @（`MomentPublishService._notify_at_batch`）与评论 @ / 回复
+    （`CommentService._notify_at` / `_notify_reply`）共用 `BaseEvent.report` 里
+    的同一道黑名单闸门：接收方与触发者存在**任一向**黑名单关系即不投递。
+    """
+    from sqlmodel import delete
+
+    from app.models.db.event_tbl import EventMessage
+    from app.models.db.follow_tbl import UserFollow
+    from app.models.enums import EventTypeEnum, FollowStatusEnum
+
+    # 关掉先审后发，保证评论直接 NORMAL（通知在 add 内即时投递）
+    monkeypatch.setattr(settings, "comment_pre_audit", False)
+
+    oid = _next_oid()
+    blocked = _AT_USER  # 被 @ 者：与发布者存在黑名单关系
+    control = _STRANGER  # 对照组：无黑名单关系，应正常收到 @ 提醒
+
+    async with new_session() as s:
+        # 发布者 _AUTHOR 拉黑被 @ 者（任一向拉黑即静默）
+        s.add(
+            UserFollow(
+                mid=_AUTHOR, target_mid=blocked, status=FollowStatusEnum.BLOCKED
+            )
+        )
+        await s.commit()
+
+    try:
+        # 1) 被 @ 者先发一条根评论，供楼中楼回复触发 REPLY 通知
+        async with new_session() as s:
+            root_resp = await CommentService.add(
+                s,
+                blocked,
+                CommentAddReq(
+                    oid=str(oid), type=CommentTypeEnum.LOTTERY, message="被@者的根评论"
+                ),
+                uname=f"user{blocked}",
+            )
+            root_rpid = int(root_resp.rpid)
+
+        # 2) 发布者回复它并 @ 两个人（黑名单用户 + 对照组）
+        async with new_session() as s:
+            resp = await CommentService.add(
+                s,
+                _AUTHOR,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=CommentTypeEnum.LOTTERY,
+                    root=str(root_rpid),
+                    parent=str(root_rpid),
+                    message="回复并@你",
+                    at_mids=[blocked, control],
+                ),
+                uname=f"user{_AUTHOR}",
+            )
+            assert resp.state is CommentStateEnum.NORMAL
+            rpid = int(resp.rpid)
+
+        # 3) @ 本身仍然允许：@ 关系照常落库（黑名单只拦提醒，不拦 @）
+        async with new_session() as s:
+            at_rows = (
+                await s.exec(select(CommentAt).where(col(CommentAt.rpid) == rpid))
+            ).all()
+        assert blocked in {r.at_mid for r in at_rows}, "@ 关系应照常落库"
+
+        # 4) 黑名单用户收不到 AT / REPLY 提醒，对照组正常收到 AT
+        async with new_session() as s:
+            blocked_events = (
+                await s.exec(
+                    select(EventMessage).where(
+                        col(EventMessage.mid) == blocked,
+                        col(EventMessage.biz_id) == str(rpid),
+                    )
+                )
+            ).all()
+            control_events = (
+                await s.exec(
+                    select(EventMessage).where(
+                        col(EventMessage.mid) == control,
+                        col(EventMessage.event_type) == EventTypeEnum.AT,
+                        col(EventMessage.biz_id) == str(rpid),
+                    )
+                )
+            ).all()
+        assert blocked_events == [], "黑名单用户不应收到 @ / 回复提醒"
+        assert control_events, "无黑名单关系的被@者应正常收到 @ 提醒"
+
+        # 5) 审核通过的**补偿通道**同样静默：先审后发落 auditing（不投递），
+        #    审核通过时按 msg_comment_at.notified=False 补发，黑名单用户应被同一闸门拦下
+        monkeypatch.setattr(settings, "comment_pre_audit", True)
+        async with new_session() as s:
+            audit_resp = await CommentService.add(
+                s,
+                _AUTHOR,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=CommentTypeEnum.LOTTERY,
+                    root=str(root_rpid),
+                    parent=str(root_rpid),
+                    message="审核后才可见的回复",
+                    at_mids=[blocked],
+                ),
+                uname=f"user{_AUTHOR}",
+            )
+            assert audit_resp.state is CommentStateEnum.AUDITING
+            audit_rpid = int(audit_resp.rpid)
+        async with new_session() as s:
+            await CommentAdminService.set_state(
+                s, audit_rpid, CommentStateEnum.NORMAL, operator_mid=_VIEWER
+            )
+        async with new_session() as s:
+            after = (
+                await s.exec(
+                    select(EventMessage).where(
+                        col(EventMessage.mid) == blocked,
+                        col(EventMessage.biz_id) == str(audit_rpid),
+                    )
+                )
+            ).all()
+        assert after == [], "审核通过补发时同样不应打扰黑名单用户"
+    finally:
+        async with new_session() as s:
+            await s.exec(
+                delete(UserFollow).where(
+                    col(UserFollow.mid) == _AUTHOR,
+                    col(UserFollow.target_mid) == blocked,
+                )
+            )
+            await s.commit()
+        await _cleanup(oid, {_AUTHOR, blocked, control})

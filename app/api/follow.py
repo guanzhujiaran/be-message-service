@@ -5,7 +5,9 @@
 列表接口仅返回 `mid` 与关系建立时间，前端可按 mid 批量回查 pptr 主数据。
 """
 
-from fastapi import APIRouter, Header, Query
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from app.models.str_int import StrInt
 
@@ -120,7 +122,9 @@ async def unblock_user(
 async def get_relation(
     session: SessionDep,
     user: CurrentUser,
-    target_mid: StrInt = Query(..., description="目标用户 mid"),
+    # 注意：`StrInt` 必须走 `Annotated[...]`，写成 `x: StrInt = Query(...)` 时
+    # FastAPI 会丢掉 BeforeValidator，字符串入参会原样透传（见 str_int 模块说明）
+    target_mid: Annotated[StrInt, Query(..., description="目标用户 mid")],
 ) -> StandardResponse[FollowRelationResp]:
     """查询当前用户与 target_mid 的双向关系。
 
@@ -140,38 +144,6 @@ async def get_counts(
 ) -> StandardResponse[FollowCountResp]:
     """获取当前用户的关注数、粉丝数、互相关注数。"""
     data = await FollowService.get_counts(session, user.mid)
-    return StandardResponse(data=data)
-
-
-@router.get(
-    "/stat",
-    response_model=StandardResponse[FollowCountResp],
-    summary="查询指定用户的关注 / 粉丝 / 互相关注数",
-)
-async def get_stat(
-    session: SessionDep,
-    vmid: StrInt = Query(..., description="目标用户 mid（对标 B 站 vmid 参数，StrInt 兼容前端 str 传参）"),
-    x_bili_mid: str | None = Header(default=None),
-) -> StandardResponse[FollowCountResp]:
-    """获取任意用户的关注数、粉丝数、互相关注数（公开接口，无需登录）。
-
-    用于个人空间页展示「关注 / 粉丝」等数据，对标 B 站
-    `https://api.bilibili.com/x/relation/stat?vmid=`。
-    黑名单互访拒绝（本人除外）：与目标存在任一向黑名单关系时返回 403。
-    """
-    if vmid <= 0:
-        return StandardResponse(code=400, msg="mid 不合法")
-    viewer = None
-    if x_bili_mid:
-        try:
-            viewer = int(x_bili_mid)
-        except (TypeError, ValueError):
-            viewer = None
-    if viewer is not None and viewer != vmid:
-        blocked = await FollowService.is_blocked_relation(session, viewer, vmid)
-        if blocked:
-            return StandardResponse(code=403, msg="对方已将你加入黑名单，无法访问其空间")
-    data = await FollowService.get_counts(session, vmid)
     return StandardResponse(data=data)
 
 

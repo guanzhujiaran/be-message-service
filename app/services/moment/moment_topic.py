@@ -6,8 +6,8 @@
 - 话题 Feed 流（P5-T2）：复用 ``MomentFeedService.topic_feed``（见
   ``app/services/moment_feed.py``），以 ``topicId`` 过滤、仅 normal + 未软删。
 - @用户推荐列表（P5-T3）：关注 / 粉丝分组，经 ``FollowService`` 取 mid，
-  再由 ``PptrUserService.get_many`` 只读回查昵称 / 头像（与评论系统一致，不冗余）。
-- @用户搜索（P5-T4）：``PptrUserService.search_by_uname`` 按昵称前缀匹配。
+  再由 ``PptrUser.get_many`` 只读回查昵称 / 头像（与评论系统一致，不冗余）。
+- @用户搜索（P5-T4）：``PptrUser.search_by_uname`` 按昵称前缀匹配。
 - POI LBS 附近 / 关键词搜索（P5-T5 / P5-T6）：MVP **本地模式**，未接外部地图 API，
   基于已发 Moment 的 ``lbsPoi`` 去重聚合返回（含经纬度、使用该 POI 的 Moment 数）。
 """
@@ -38,7 +38,7 @@ from app.models.schemas.moment import (
 )
 from app.core.sharding import generate_topic_id
 from app.services.user.follow import FollowService
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 # POI 面板单页上限
 _POI_PAGE_SIZE = 20
@@ -332,7 +332,7 @@ class MomentTopicService:
         """@用户推荐列表：关注 / 粉丝分组。
 
         关注 / 粉丝的 mid 取自 msg_user_follow（be-message 主库），
-        昵称 / 头像经 PptrUserService.get_many 一次性回查（避免 N+1）。
+        昵称 / 头像经 PptrUser.get_many 一次性回查（避免 N+1）。
         """
         page_size = min(max(1, page_size), 50)
         following_resp = await FollowService.list_following(
@@ -343,7 +343,7 @@ class MomentTopicService:
         )
         following_mids = [it.mid for it in following_resp.items]
         follower_mids = [it.mid for it in followers_resp.items]
-        briefs = await PptrUserService.get_many(following_mids + follower_mids)
+        briefs = await PptrUser.get_many(following_mids + follower_mids)
 
         following = [
             _brief_to_at_item(
@@ -373,7 +373,7 @@ class MomentTopicService:
     ) -> MomentAtSearchResp:
         """@用户搜索：按昵称 / 注册名前缀匹配（走 pptr 真实搜索）。"""
         page_size = min(max(1, page_size), 50)
-        briefs = await PptrUserService.search_by_uname(keyword, limit=page_size)
+        briefs = await PptrUser.search_by_uname(keyword, limit=page_size)
         items = [_brief_to_at_item(b) for b in briefs]
         return MomentAtSearchResp(items=items, hasMore=len(briefs) >= page_size)
 

@@ -3,7 +3,7 @@
 覆盖：
 - 各领域删除服务（`cleanup_*`）按 uid 删除正确：关注关系双向、动态及子表级联、评论、
   举报、收藏等代表性表。
-- `UserDeactivateService.deactivate` 组合编排（先 pptr 后 be-message）。
+- `PptrUser(mid=UID).deactivate()` 组合编排（先 pptr 后 be-message）。
 - 幂等（重复注销 / 已注销用户不报错）、uid 非法抛 ValueError。
 - 全部 cleanup 服务在空库安全执行（验证所有删除 SQL 的表名/字段合法）。
 
@@ -28,7 +28,7 @@ from app.services.cleanup import (
     cleanup_pptr,
     cleanup_report,
 )
-from app.services.user.user_deactivate import UserDeactivateService
+from app.services.user.account import PptrUser
 
 # 独立测试区间（避免与既有用例 / 真实数据冲突）
 UID = 920901
@@ -284,7 +284,7 @@ async def test_deactivate_composes_pptr_and_msg():
         )
         await s.commit()
 
-    await UserDeactivateService.deactivate(UID)
+    await PptrUser(mid=UID).deactivate()
 
     async with new_session() as s:
         row = (
@@ -303,16 +303,16 @@ async def test_deactivate_composes_pptr_and_msg():
 
 async def test_deactivate_idempotent():
     """重复注销（已无数据）不报错。"""
-    await UserDeactivateService.deactivate(UID)
-    await UserDeactivateService.deactivate(UID)  # 第二次仍正常
+    await PptrUser(mid=UID).deactivate()
+    await PptrUser(mid=UID).deactivate()  # 第二次仍正常
 
 
 async def test_deactivate_rejects_invalid_uid():
     """uid 非法（0 / 负数）抛 ValueError。"""
     with pytest.raises(ValueError):
-        await UserDeactivateService.deactivate(0)
+        await PptrUser(mid=0).deactivate()
     with pytest.raises(ValueError):
-        await UserDeactivateService.deactivate(-1)
+        await PptrUser(mid=-1).deactivate()
 
 
 # ==================== MQ 投递 ====================
@@ -321,7 +321,7 @@ async def test_deactivate_rejects_invalid_uid():
 async def test_publish_user_deactivate_calls_broker(monkeypatch):
     """publisher 投递注销消息（monkeypatch broker.publish，验证 payload / routing key）。"""
     from app.core import broker as broker_mod
-    from app.services.message import publisher
+    import app.services.message.infrastructure.publisher as publisher
 
     calls: list[dict] = []
 

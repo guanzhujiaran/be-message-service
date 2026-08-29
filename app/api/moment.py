@@ -35,6 +35,8 @@
 import asyncio
 
 from sqlmodel import select, col, func
+from typing import Annotated
+
 from fastapi import APIRouter, Header, Query, Request
 
 from app.models.str_int import StrInt
@@ -89,14 +91,13 @@ from app.models.schemas.moment import (
     MomentTopicSquareResp,
     MomentTopReq,
     MomentTopResp,
-    MomentUpStatResp,
     MomentTopicDetailResp,
 )
 from app.services.user.follow import FollowService
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
-from app.services.message.publisher import publish_interaction_view
+from app.services.message.infrastructure.publisher import publish_interaction_view
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
 from app.services.interaction_actions import (
     DislikeAction,
@@ -855,38 +856,6 @@ async def poi_search(
     return StandardResponse(data=data)
 
 
-# ==================== 空间统计（对标 B 站 upstat）====================
-
-
-@router.get(
-    "/upstat",
-    response_model=StandardResponse[MomentUpStatResp],
-    summary="查询指定用户的空间统计（动态数 / 获赞数）",
-)
-async def get_upstat(
-    session: SessionDep,
-    vmid: StrInt = Query(..., description="目标用户 mid（对标 B 站 vmid 参数，StrInt 兼容前端 str 传参）"),
-    x_bili_mid: str | None = Header(default=None),
-) -> StandardResponse[MomentUpStatResp]:
-    """获取任意用户对外可见动态的总数与获赞总数（公开接口，无需登录）。
-
-    对标 B 站 `https://api.bilibili.com/x/space/upstat?mid=`，
-    返回该用户 ``dynamic_count``（动态数）与 ``like_count``（获赞数）。
-    黑名单互访拒绝（本人除外）：与目标存在任一向黑名单关系时返回 403。
-    """
-    if vmid <= 0:
-        return StandardResponse(code=400, msg="mid 不合法")
-    viewer = None
-    if x_bili_mid:
-        try:
-            viewer = int(x_bili_mid)
-        except (TypeError, ValueError):
-            viewer = None
-    if viewer is not None and viewer != vmid:
-        blocked = await FollowService.is_blocked_relation(session, viewer, vmid)
-        if blocked:
-            return StandardResponse(
-                code=403, msg="对方已将你加入黑名单，无法访问其空间"
-            )
-    stat = await MomentFeedService.get_upstat(session, vmid)
-    return StandardResponse(data=MomentUpStatResp(mid=vmid, **stat))
+# 空间统计（对标 B 站 upstat）原 `GET /upstat` 端点已于 2.52.0 删除：
+# 统计随 `GET /user/space/info` 的 `upstat` 字段一次返回（见 api/pptr_user_gateway.py）。
+# 服务层 `MomentFeedService.get_upstat` 由该路由复用，保留。

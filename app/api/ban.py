@@ -31,7 +31,7 @@ from app.models.schemas import (
     BanStatusResp,
     UnbanReq,
 )
-from app.services.admin.ban_service import BanService
+from app.services.user.account import UserGovernanceUser
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin-ban"])
 
@@ -91,10 +91,9 @@ async def ban_users(
         needed = _SERVICE_BAN_PERM[missing].value
         return StandardResponse(code=403, msg=f"缺少封禁权限：{needed}（服务 {missing}）")
 
-    count = await BanService.ban_users(
+    count = await UserGovernanceUser(mid=user.mid).ban_users(
         session,
-        operator_mid=user.mid,
-        mids=req.mids,
+        mids=[int(m) for m in req.mids],
         ban_services=req.ban_services,
         reason=req.reason,
         duration_type=req.duration_type,
@@ -124,7 +123,9 @@ async def unban_users(
         needed = _SERVICE_BAN_PERM[missing].value
         return StandardResponse(code=403, msg=f"缺少解封权限：{needed}（服务 {missing}）")
 
-    count = await BanService.unban_users(session, req.mids, req.ban_services)
+    count = await UserGovernanceUser(mid=user.mid).unban_users(
+        session, [int(m) for m in req.mids], req.ban_services
+    )
     return StandardResponse(data=_UnbanRes(lifted_count=count))
 
 
@@ -141,7 +142,7 @@ async def list_bans(
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[BanListResp]:
     """分页查看封禁记录（root 或拥有 `user:ban-view` 权限的管理员）。"""
-    items, total = await BanService.list_bans(
+    items, total = await UserGovernanceUser(mid=user.mid).list_bans(
         session, status=status, page_num=page_num, page_size=page_size
     )
     return StandardResponse(
@@ -159,10 +160,13 @@ async def list_bans(
 async def ban_status(
     session: SessionDep,
     user: Annotated[AuthInfo, Depends(require_permission(UserPermission.USER_BAN_VIEW))],
-    mid: StrInt = Query(..., description="待查询用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    mid: Annotated[
+        StrInt,
+        Query(..., description="待查询用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    ],
 ) -> StandardResponse[BanStatusResp]:
     """查询某用户在各服务的封禁状态（实时计算到期）。"""
-    data = await BanService.get_status(session, mid)
+    data = await UserGovernanceUser(mid=user.mid).get_status(session, int(mid))
     return StandardResponse(data=data)
 
 

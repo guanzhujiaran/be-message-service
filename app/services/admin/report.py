@@ -375,23 +375,19 @@ class ReportService:
 
         独立会话投递：即便事件落库失败，也绝不回滚举报处置主事务。
         """
-        from app.services.message.events import BaseEvent
+        from app.services.message.insite.events import report_event_weakly
 
-        try:
-            async with new_session() as s:
-                await BaseEvent.from_req(
-                    EventReportReq(
-                        mid=dyn.mid,
-                        event_type=EventTypeEnum.HIDE,
-                        source_type=SourceTypeEnum.DYNAMIC,
-                        source_id=str(dyn.dynId),
-                        actor_mid=operator_mid,
-                        content="你的内容因违规被管理员下架",
-                        biz_id=str(dyn.dynId),
-                    ),
-                ).report(s)
-        except Exception:  # noqa: BLE001
-            logger.warning(f"举报下架通知作者失败 dynId={dyn.dynId}，不影响处置结果")
+        await report_event_weakly(
+            EventReportReq(
+                mid=dyn.mid,
+                event_type=EventTypeEnum.HIDE,
+                source_type=SourceTypeEnum.DYNAMIC,
+                source_id=str(dyn.dynId),
+                actor_mid=operator_mid,
+                content="你的内容因违规被管理员下架",
+                biz_id=str(dyn.dynId),
+            )
+        )
 
     @staticmethod
     async def _notify_report_result(rec, admin_mid: int, *, resolved: bool) -> None:
@@ -400,7 +396,7 @@ class ReportService:
         ``resolved=True`` → ``REPORT_RESOLVED``（成立已处理）；``False`` →
         ``REPORT_REJECT``（未通过）。独立会话投递，失败不阻塞举报状态流转。
         """
-        from app.services.message.events import BaseEvent
+        from app.services.message.insite.events import report_event_weakly
 
         event_type = (
             EventTypeEnum.REPORT_RESOLVED if resolved else EventTypeEnum.REPORT_REJECT
@@ -410,24 +406,17 @@ class ReportService:
             if resolved
             else "你提交的举报未通过审核"
         )
-        try:
-            async with new_session() as s:
-                await BaseEvent.from_req(
-                    EventReportReq(
-                        mid=rec.reportMid,
-                        event_type=event_type,
-                        source_type=ReportService._report_source_type(rec),
-                        source_id=str(rec.bizId),
-                        actor_mid=admin_mid,
-                        content=content,
-                        biz_id=str(rec.bizId),
-                    ),
-                ).report(s)
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                f"举报审核结果通知举报人失败 reportMid={rec.reportMid} "
-                f"bizId={rec.bizId} resolved={resolved}"
+        await report_event_weakly(
+            EventReportReq(
+                mid=rec.reportMid,
+                event_type=event_type,
+                source_type=ReportService._report_source_type(rec),
+                source_id=str(rec.bizId),
+                actor_mid=admin_mid,
+                content=content,
+                biz_id=str(rec.bizId),
             )
+        )
 
     @staticmethod
     def _report_source_type(rec) -> SourceTypeEnum:

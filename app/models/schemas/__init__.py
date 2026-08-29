@@ -136,8 +136,10 @@ from app.models.schemas.setting import (
     UserActivityResp,
 )
 from app.models.schemas.space import (
+    SpaceFollowStat,
     SpaceInfoResp,
     SpaceOfficial,
+    SpaceUpStat,
     SpaceVip,
     SpaceVipLabel,
     SpaceVipWrap,
@@ -282,8 +284,10 @@ __all__ = [
     "SystemNotifyItem",
     "SystemNotifyListResp",
     # 用户空间信息
+    "SpaceFollowStat",
     "SpaceInfoResp",
     "SpaceOfficial",
+    "SpaceUpStat",
     "SpaceVip",
     "SpaceVipLabel",
     "SpaceVipWrap",

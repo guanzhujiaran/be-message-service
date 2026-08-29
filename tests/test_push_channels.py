@@ -16,7 +16,7 @@ import asyncio
 import pytest
 
 from app.core.config import settings
-from app.services.message.push import PushMessageService
+from app.services.message.external.push import PushMessageService
 
 
 def _collect_enabled_channels() -> list[str]:

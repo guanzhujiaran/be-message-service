@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.models.db.follow_tbl import UserFollow
 from app.models.enums import FollowStatusEnum
 from app.services.user.follow import FollowService
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 # 测试用的两个用户（黑名单关系测试写入/清理用；未登录相关字段）
 BLOCK_A = 920011
@@ -96,7 +96,7 @@ async def _real_uid() -> int:
 async def test_space_info_existing_user_mapping():
     """真实用户：空间资料字段映射正确，基础字段非空。"""
     uid = await _real_uid()
-    data = await PptrUserService.get_space_info(uid=uid)
+    data = await PptrUser(mid=uid).get_space_info()
     assert data is not None
     assert data.mid == uid
     # name 至少非空（uname 或注册名兜底）
@@ -110,9 +110,45 @@ async def test_space_info_existing_user_mapping():
     assert data.is_self is False
 
 
+async def test_space_info_merges_follow_and_upstat():
+    """2.32.0：`/user/space/info` 一次带出 follow_stat / upstat（不再需要两次额外请求）。
+
+    聚合字段值必须与 `FollowService.get_counts` / `MomentFeedService.get_upstat`
+    单独查询的结果一致（说明确实是同一批数据源，而非零值兜底）。
+    """
+    from app.api.pptr_user_gateway import get_space_info
+    from app.core.database import new_session
+    from app.services.moment.moment_feed import MomentFeedService
+
+    uid = await _real_uid()
+    async with new_session() as s:
+        resp = await get_space_info(session=s, mid=uid, x_bili_mid=None)
+
+    assert int(resp.code) == 0, resp.msg
+    data = resp.data
+    assert data is not None
+    assert data.mid == uid
+    # 聚合结构存在且类型为 int（零值也是合法结果，不做 >0 断言）
+    assert isinstance(data.follow_stat.following_count, int)
+    assert isinstance(data.follow_stat.follower_count, int)
+    assert isinstance(data.follow_stat.mutual_count, int)
+    assert isinstance(data.upstat.dynamic_count, int)
+    assert isinstance(data.upstat.like_count, int)
+
+    # 与原端点同源：值应完全一致
+    async with new_session() as s:
+        counts = await FollowService.get_counts(s, uid)
+        upstat = await MomentFeedService.get_upstat(s, uid)
+    assert data.follow_stat.following_count == counts.following_count
+    assert data.follow_stat.follower_count == counts.follower_count
+    assert data.follow_stat.mutual_count == counts.mutual_count
+    assert data.upstat.dynamic_count == upstat["dynamic_count"]
+    assert data.upstat.like_count == upstat["like_count"]
+
+
 async def test_space_info_not_found_returns_none():
     """不存在的用户：`get_space_info` 返回 None（路由层据此返回 USER_NOT_FOUND）。"""
-    data = await PptrUserService.get_space_info(uid=NON_EXIST)
+    data = await PptrUser(mid=NON_EXIST).get_space_info()
     assert data is None
 
 

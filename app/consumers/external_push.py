@@ -9,8 +9,8 @@ from faststream.rabbit import RabbitMessage
 from loguru import logger
 
 from app.models import PushMessagePayload
-from app.services.message.push import PushMessageService
-from app.services.message.push_helper import merge_config
+from app.services.message.external.push import PushMessageService
+from app.services.message.external.push_helper import merge_config
 
 
 async def handle_message(message: PushMessagePayload, _msg: RabbitMessage) -> None:

@@ -6,7 +6,7 @@
 - 审核驳回：auditStatus→rejected + 写 auditRejectReason；**发驳回事件通知给创建者**
   （EventTypeEnum.AUDIT_REJECT + SourceTypeEnum.DYNAMIC，source_id=`topic_{topicId}`）。
 
-创建者昵称 / 头像经 ``PptrUserService.get_many`` 只读回查（不冗余用户快照）。
+创建者昵称 / 头像经 ``PptrUser.get_many`` 只读回查（不冗余用户快照）。
 """
 
 from datetime import datetime
@@ -25,7 +25,7 @@ from app.models.schemas.moment import (
     MomentTopicAuditItem,
     MomentTopicAuditListResp,
 )
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -33,7 +33,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _to_audit_item(topic: TMomentTopic, creator) -> MomentTopicAuditItem:
-    """TMomentTopic → 话题审核队列卡片（creator 来自 PptrUserService.get_many 结果）。"""
+    """TMomentTopic → 话题审核队列卡片（creator 来自 PptrUser.get_many 结果）。"""
     return MomentTopicAuditItem(
         topicId=topic.topicId,
         creatorMid=topic.creatorMid,
@@ -51,25 +51,20 @@ async def _notify_reject(operator_mid: int, topic: TMomentTopic, reject_reason: 
 
     独立会话投递：即便事件落库失败，也绝不回滚审核主事务。
     """
-    from app.services.message.events import BaseEvent
+    from app.models.schemas import EventReportReq
+    from app.services.message.insite.events import report_event_weakly
 
-    try:
-        from app.models.schemas import EventReportReq
-
-        async with _new_session() as ns:
-            await BaseEvent.from_req(
-                EventReportReq(
-                    mid=topic.creatorMid,
-                    event_type=EventTypeEnum.AUDIT_REJECT,
-                    source_type=SourceTypeEnum.DYNAMIC,
-                    source_id=f"topic_{topic.topicId}",
-                    actor_mid=operator_mid,
-                    content=reject_reason,
-                    biz_id=f"topic_{topic.topicId}",
-                ),
-            ).report(ns)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"话题审核驳回通知投递失败（弱依赖，已忽略）: {e}")
+    await report_event_weakly(
+        EventReportReq(
+            mid=topic.creatorMid,
+            event_type=EventTypeEnum.AUDIT_REJECT,
+            source_type=SourceTypeEnum.DYNAMIC,
+            source_id=f"topic_{topic.topicId}",
+            actor_mid=operator_mid,
+            content=reject_reason,
+            biz_id=f"topic_{topic.topicId}",
+        )
+    )
 
 
 def _new_session():
@@ -113,7 +108,7 @@ class MomentTopicAuditService:
         ).all()
 
         mids = {r.creatorMid for r in rows if r.creatorMid}
-        briefs = await PptrUserService.get_many(list(mids))
+        briefs = await PptrUser.get_many(list(mids))
         items = [_to_audit_item(r, briefs.get(r.creatorMid)) for r in rows]
         return MomentTopicAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
@@ -146,7 +141,7 @@ class MomentTopicAuditService:
         await session.commit()
         await session.refresh(topic)
         logger.info(f"管理员 {operator_mid} 审核通过话题 topicId={topic_id}")
-        briefs = await PptrUserService.get_many([topic.creatorMid]) if topic.creatorMid else {}
+        briefs = await PptrUser.get_many([topic.creatorMid]) if topic.creatorMid else {}
         return _to_audit_item(topic, briefs.get(topic.creatorMid))
 
     @staticmethod
@@ -179,7 +174,7 @@ class MomentTopicAuditService:
         logger.info(f"管理员 {operator_mid} 审核驳回话题 topicId={topic_id}：{reject_reason}")
         # 弱依赖：通知创建者（独立会话，失败不影响审核结果）
         await _notify_reject(operator_mid, topic, reject_reason)
-        briefs = await PptrUserService.get_many([topic.creatorMid]) if topic.creatorMid else {}
+        briefs = await PptrUser.get_many([topic.creatorMid]) if topic.creatorMid else {}
         return _to_audit_item(topic, briefs.get(topic.creatorMid))
 
 

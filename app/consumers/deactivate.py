@@ -1,7 +1,7 @@
 """用户注销 MQ 消费处理。
 
 注销接口只投递消息，真实删除由本 handler 异步执行：
-调用 `UserDeactivateService.deactivate(uid)` 物理删除 pptr 四表 + 彻底清除
+调用 `PptrUser(mid=uid).deactivate()` 物理删除 pptr 四表 + 彻底清除
 be-message 业务数据。
 
 ack 策略（MANUAL）：
@@ -14,14 +14,14 @@ from faststream.rabbit import RabbitMessage
 from loguru import logger
 
 from app.models.schemas import UserDeactivatePayload
-from app.services.user.user_deactivate import UserDeactivateService
+from app.services.user.account import PptrUser
 
 
 async def handle_user_deactivate(payload: UserDeactivatePayload, msg: RabbitMessage) -> None:
     """消费注销消息，执行完整删除流程。"""
     uid = payload.uid
     try:
-        await UserDeactivateService.deactivate(uid)
+        await PptrUser(mid=uid).deactivate()
         logger.info(f"[deactivate] 用户 {uid} 已注销")
     except Exception as e:  # noqa: BLE001
         logger.error(f"[deactivate] 用户 {uid} 注销失败（已 ack，不再重投）: {e}")

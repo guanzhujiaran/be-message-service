@@ -14,7 +14,7 @@
 - 响应 `Content-Type` 必须为图片（`image/*`）；
 - 仅读取头部少量字节即可判断 Content-Type 与大小，不整图驻留内存。
 
-校验通过后由调用方（`/user_info/update` 接口）复用 `PptrUserService.set_user_detail(face=...)`
+校验通过后由调用方（`/user_info/update` 接口）复用 `PptrUser.set_user_detail(face=...)`
 写入 pptr `TUserDetail.avatar`。
 """
 

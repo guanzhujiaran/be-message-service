@@ -70,7 +70,7 @@ dm_content_queue = RabbitQueue(
 )
 
 # 评论三类备用消费者队列（与站内信 / 私信物理隔离）。
-# 当前评论的审核 / 通知已在发布主流程内同步完成（同进程调用 EventService），
+# 当前评论的审核 / 通知已在发布主流程内同步完成（同进程调用 report_event_weakly），
 # 这些队列作为解耦后的备用投递通道与定时补偿入口，按 Phase 3.6 预留。
 comment_notify_queue = RabbitQueue(
     "message_comment_notify_queue",

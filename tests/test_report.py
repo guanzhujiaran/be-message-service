@@ -31,7 +31,7 @@ from app.models.enums import (
     MomentTypeEnum,
 )
 from app.models.schemas import CommentAddReq, ReportCreateReq, ReportReviewReq
-from app.services.message.comment import CommentService
+from app.services.comment import CommentService
 from app.services.admin.report import ReportService
 from bili_common.models.report import ReportBizTypeEnum
 from bili_common.services.report import ReportBaseService

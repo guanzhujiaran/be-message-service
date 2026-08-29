@@ -82,7 +82,7 @@ def test_rpc_create_user_push_only_when_created():
     # created=False：老用户重复登录 / Casdoor 同步，不应再发欢迎通知
     with (
         patch(
-            "app.mq.rpc_pptr_user.PptrUserService.create_user",
+            "app.mq.rpc_pptr_user.PptrUser.create",
             new=AsyncMock(return_value=(12345, False)),
         ),
         patch("app.mq.rpc_pptr_user._push_new_user_notify", new=AsyncMock()) as mock_push,
@@ -93,7 +93,7 @@ def test_rpc_create_user_push_only_when_created():
     # created=True：新用户，发布欢迎通知
     with (
         patch(
-            "app.mq.rpc_pptr_user.PptrUserService.create_user",
+            "app.mq.rpc_pptr_user.PptrUser.create",
             new=AsyncMock(return_value=(12345, True)),
         ),
         patch("app.mq.rpc_pptr_user._push_new_user_notify", new=AsyncMock()) as mock_push,

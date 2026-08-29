@@ -44,8 +44,9 @@ from bili_common.rpc.safe import rpc_safe
 from loguru import logger
 
 from app.core.broker import broker, message_exchange
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService, _level_calc
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import PptrUser
+from app.services.user.account.base import _level_calc
 
 
 async def _push_new_user_notify(
@@ -104,7 +105,7 @@ def _profile_to_dto(info, detail, vip, level) -> PptrUserProfile:
 @rpc_safe
 async def rpc_get_user_info(params: PptrGetUserInfoParams) -> StandardResponse:
     """按 uid 或 user_name 返回完整用户信息（get_user_info）。"""
-    row = await PptrUserService.get_user_profile(
+    row = await PptrUser.fetch_profile(
         uid=params.uid or None, user_name=params.user_name or None
     )
     if not row:
@@ -128,7 +129,7 @@ async def rpc_get_user_info(params: PptrGetUserInfoParams) -> StandardResponse:
 @rpc_safe
 async def rpc_get_user_card(params: PptrGetUserCardParams) -> StandardResponse:
     """按 uid 返回卡片简略信息（get_user_card）。"""
-    row = await PptrUserService.get_user_profile(uid=params.uid)
+    row = await PptrUser.fetch_profile(uid=params.uid)
     if not row:
         return error_response(
             code=404,
@@ -160,7 +161,7 @@ async def rpc_create_user(params: PptrCreateUserParams) -> StandardResponse:
 
     uid 为 0 时由 Postgres 自增；返回真实 uid 与是否新建。
     """
-    uid, created = await PptrUserService.create_user(
+    uid, created = await PptrUser.create(
         uid=params.uid or 0,
         user_name=params.user_name,
         pwd=params.pwd,
@@ -199,8 +200,7 @@ async def rpc_create_user(params: PptrCreateUserParams) -> StandardResponse:
 @rpc_safe
 async def rpc_update_user_info(params: PptrUpdateUserInfoParams) -> StandardResponse:
     """更新用户（update_user_info）：按 uid/user_name 更新 pwd / reg_ip_info_id。"""
-    uid, updated = await PptrUserService.update_user_info(
-        uid=params.uid or 0,
+    uid, updated = await PptrUser(mid=params.uid or 0).update_user_info(
         user_name=params.user_name or "",
         pwd=params.pwd if params.pwd != "" else None,
         reg_ip_info_id=params.reg_ip_info_id,
@@ -219,7 +219,7 @@ async def rpc_update_user_info(params: PptrUpdateUserInfoParams) -> StandardResp
 @rpc_safe
 async def rpc_get_user_level(params: PptrGetUserLevelParams) -> StandardResponse:
     """按 uid 取等级信息（get_user_level），next_exp 由 be-message 按经验配置计算。"""
-    lv = await PptrUserService.get_user_level(params.uid)
+    lv = await PptrUser(mid=params.uid).get_user_level()
     if lv is None:
         return error_response(
             code=404, msg=f"用户不存在 uid={params.uid}", data={"uid": params.uid}
@@ -249,8 +249,7 @@ async def rpc_get_user_level(params: PptrGetUserLevelParams) -> StandardResponse
 @rpc_safe
 async def rpc_set_user_level(params: PptrSetUserLevelParams) -> StandardResponse:
     """原子写入等级经验（set_user_level）。"""
-    ok = await PptrUserService.set_user_level(
-        uid=params.uid,
+    ok = await PptrUser(mid=params.uid).set_user_level(
         current_level=params.current_level,
         current_exp=params.current_exp,
         current_min=params.current_min,
@@ -269,8 +268,7 @@ async def rpc_set_user_level(params: PptrSetUserLevelParams) -> StandardResponse
 @rpc_safe
 async def rpc_set_user_detail(params: PptrSetUserDetailParams) -> StandardResponse:
     """更新用户详情（set_user_detail）。"""
-    ok = await PptrUserService.set_user_detail(
-        uid=params.uid,
+    ok = await PptrUser(mid=params.uid).set_user_detail(
         uname=params.uname,
         face=params.face,
         sign=params.sign,
@@ -292,7 +290,7 @@ async def rpc_set_user_detail(params: PptrSetUserDetailParams) -> StandardRespon
 @rpc_safe
 async def rpc_set_user_role(params: PptrSetUserRoleParams) -> StandardResponse:
     """更新用户角色（set_user_role，root 受保护）。"""
-    ok = await PptrUserService.set_user_role(uid=params.uid, role=params.role)
+    ok = await PptrUser(mid=params.uid).set_user_role(role=params.role)
     return success_response(data=PptrSetResult(uid=params.uid, updated=ok))
 
 
@@ -306,8 +304,8 @@ async def rpc_set_user_role(params: PptrSetUserRoleParams) -> StandardResponse:
 )
 @rpc_safe
 async def rpc_search_users(params: UserSearchParams) -> StandardResponse:
-    """管理端用户搜索（search_users，复用 PptrUserService.search_users）。"""
-    items, has_more = await PptrUserService.search_users(
+    """管理端用户搜索（search_users，复用 PptrUser.search_users）。"""
+    items, has_more = await PptrUser.search_users(
         keyword=params.keyword or "",
         offset=params.offset or 0,
         limit=params.limit or 20,
@@ -326,7 +324,7 @@ async def rpc_search_users(params: UserSearchParams) -> StandardResponse:
 @rpc_safe
 async def rpc_add_exp(params: PptrAddExpParams) -> StandardResponse:
     """增加经验值（add_exp）：业务逻辑在 be-message 侧完成（经验计算 + 升级角色同步）。"""
-    result = await PptrUserService.add_exp(uid=params.uid, exp=params.exp, action_type=params.action_type)
+    result = await PptrUser(mid=params.uid).add_exp(exp=params.exp, action_type=params.action_type)
     return success_response(data=PptrAddExpResult(**result))
 
 
@@ -346,7 +344,7 @@ async def rpc_add_daily_login_exp(
 
     每日幂等（基于 TUserLevel.updatedAt 跨 0 点）+ 经验计算 + 升级角色同步。
     """
-    result = await PptrUserService.add_daily_login_exp(uid=params.uid)
+    result = await PptrUser(mid=params.uid).add_daily_login_exp()
     return success_response(data=PptrAddDailyLoginExpResult(**result))
 
 
@@ -363,8 +361,8 @@ async def rpc_add_username_record(
     params: PptrAddUsernameRecordParams,
 ) -> StandardResponse:
     """记录昵称历史（add_username_record）：由 be-message 直连 pptr Postgres 写入 TUserNameRecord。"""
-    created = await PptrUserService.add_username_record(
-        uid=params.uid, prev_uname=params.prev_uname
+    created = await PptrUser(mid=params.uid).add_username_record(
+        prev_uname=params.prev_uname
     )
     return success_response(
         data=PptrAddUsernameRecordResult(uid=params.uid, created=created)
@@ -385,7 +383,7 @@ async def rpc_get_user_nav(params: PptrGetUserNavParams) -> StandardResponse:
 
     包含等级计算、邮件脱敏，pptr 一次 RPC 调用即拿齐，不再走 HTTP 反向代理。
     """
-    data = await PptrUserService.get_user_nav_data(uid=params.uid)
+    data = await PptrUser(mid=params.uid).get_user_nav_data()
     if data is None:
         return error_response(code=404, msg="用户不存在")
     return success_response(data=data)

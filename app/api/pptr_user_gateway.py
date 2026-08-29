@@ -42,18 +42,21 @@ from app.core.database import SessionDep, new_pptr_session
 from app.dependencies import AdminUser, CurrentUser
 from app.models.str_int import StrInt
 from app.models.schemas import (
+    SpaceFollowStat,
     SpaceInfoResp,
+    SpaceUpStat,
     UserActLogListResp,
     UserExpRecordListResp,
 )
 from app.services.user import casdoor_service
 from app.services.infrastructure import jwt_service
-from app.services.message import publisher
+import app.services.message.infrastructure.publisher as publisher
+from app.services.moment.moment_feed import MomentFeedService
 from app.services.user.avatar_audit import AvatarAuditService
 from app.services.user.avatar_check import verify_avatar_url
 from app.services.user.casdoor_service import CasdoorError
 from app.services.user.follow import FollowService
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 from app.models.schemas.follow import (
     BlockReq,
     FollowListResp,
@@ -151,7 +154,7 @@ async def identify_user(
         raise HTTPException(status_code=401, detail="JWT 载荷缺少 uid")
 
     # 查库取最新身份（JWT 里的 user_name/level/role 可能已过时）
-    profile = await PptrUserService.get_user_profile(uid=int(uid))
+    profile = await PptrUser.fetch_profile(uid=int(uid))
     if profile is None:
         raise HTTPException(status_code=401, detail="用户不存在")
     info, detail, vip, level = profile
@@ -216,9 +219,7 @@ async def get_user_nav(
     client_ip = client_ip_v4 or client_ip_v6 or ""
     client_ua = request.headers.get("user-agent") or ""
 
-    data = await PptrUserService.get_user_nav_data(
-        uid=uid, ip=client_ip, ua=client_ua
-    )
+    data = await PptrUser(mid=uid).get_user_nav_data(ip=client_ip, ua=client_ua)
     if data is None:
         raise HTTPException(status_code=404, detail="用户不存在")
 
@@ -251,7 +252,7 @@ async def get_user_info(user: CurrentUser) -> StandardResponse[dict]:
     - avatar    <- TUserDetail.avatar
     """
     uid = int(user.mid)
-    profile = await PptrUserService.get_user_profile(uid=uid)
+    profile = await PptrUser.fetch_profile(uid=uid)
     if profile is None:
         raise HTTPException(status_code=404, detail="用户不存在")
     info, detail, _vip, _level = profile
@@ -309,8 +310,7 @@ async def update_user_info(
             raise HTTPException(status_code=422, detail=reason)
 
     # 非头像字段即时更新
-    updated = await PptrUserService.set_user_detail(
-        uid=uid,
+    updated = await PptrUser(mid=uid).set_user_detail(
         uname=params.uname or "",
         sign=params.usersign or "",
         sex=params.sex or "保密",
@@ -481,12 +481,12 @@ async def set_user_role(
     if operator_uid == target_uid:
         raise HTTPException(status_code=400, detail="不能修改自己的角色")
 
-    target = await PptrUserService.get_user_profile(uid=target_uid)
+    target = await PptrUser.fetch_profile(uid=target_uid)
     if target is None:
         raise HTTPException(status_code=404, detail="目标用户不存在")
     target_info = target[0]
 
-    ok = await PptrUserService.set_user_role(uid=target_uid, role=params.role)
+    ok = await PptrUser(mid=target_uid).set_user_role(role=params.role)
     if not ok:
         raise HTTPException(
             status_code=400, detail="目标用户角色更新失败（可能受 root 保护）"
@@ -525,7 +525,7 @@ async def search_users(
     if not params.keyword:
         raise HTTPException(status_code=422, detail="keyword 不能为空")
 
-    items, has_more = await PptrUserService.search_users(
+    items, has_more = await PptrUser.search_users(
         params.keyword, offset=params.offset, limit=params.limit
     )
     return StandardResponse(data=PptrUserSearchResult(items=items, has_more=has_more))
@@ -555,8 +555,7 @@ async def get_user_act_log(
     仅返回时间 / IP / UA / 行为类型，不透出 headers 全量 JSON。
     """
     uid = int(user.mid)
-    data = await PptrUserService.list_act_log(
-        uid=uid,
+    data = await PptrUser(mid=uid).list_act_log(
         offset=query["offset"],
         limit=query["limit"],
         days=query["days"],
@@ -579,8 +578,7 @@ async def get_user_exp_record(
     `action_type` 为 int，同时返回其可读名称（对齐 ExpActionType，如 daily_login）。
     """
     uid = int(user.mid)
-    data = await PptrUserService.list_exp_record(
-        uid=uid,
+    data = await PptrUser(mid=uid).list_exp_record(
         offset=query["offset"],
         limit=query["limit"],
         days=query["days"],
@@ -610,7 +608,10 @@ def _resolve_space_viewer(x_bili_mid: str | None) -> int | None:
 )
 async def get_space_info(
     session: SessionDep,
-    mid: StrInt = Query(..., description="目标用户 mid（对标 B 站 acc/info 的 mid 参数，StrInt 兼容前端 str 传参）"),
+    mid: Annotated[
+        StrInt,
+        Query(..., description="目标用户 mid（对标 B 站 acc/info 的 mid 参数，StrInt 兼容前端 str 传参）"),
+    ],
     x_bili_mid: str | None = Header(default=None),
 ) -> StandardResponse[SpaceInfoResp]:
     """返回单个用户的完整空间资料（对标 B 站 `/x/space/wbi/acc/info?mid=`）。
@@ -618,7 +619,11 @@ async def get_space_info(
     - 公开可读（未登录也可访问）；登录时附带 `is_followed` 关注态与黑名单判断；
     - **用户不存在**返回专用错误码 `USER_NOT_FOUND`（而非空数据兜底）；
     - **黑名单互访拒绝**：当前登录用户与目标存在任一向黑名单关系（已拉黑 / 被拉黑）
-      时返回 `403`，拒绝返回空间数据（本人访问自己空间除外）。
+      时返回 `403`，拒绝返回空间数据（本人访问自己空间除外）；
+    - **（2.32.0）聚合统计**：响应内联 `follow_stat`（关注/粉丝/互关数，等价
+      `GET /message/follow/stat`）与 `upstat`（动态数/获赞数，等价
+      `GET /community/upstat`）——前端悬浮用户卡片 / 空间页一次请求即可拿全，
+      无需再并发两个统计端点（3 次 HTTP + 3 次黑名单判定 → 1 次）。
     """
     if mid <= 0:
         return StandardResponse(code=400, msg="mid 不合法")
@@ -630,7 +635,7 @@ async def get_space_info(
         if blocked:
             return StandardResponse(code=403, msg="对方已将你加入黑名单，无法访问其空间")
 
-    data = await PptrUserService.get_space_info(uid=int(mid))
+    data = await PptrUser(mid=int(mid)).get_space_info(session=session)
     if data is None:
         return StandardResponse(
             code=int(ResponseCode.USER_NOT_FOUND), msg="用户不存在", data=None
@@ -641,6 +646,21 @@ async def get_space_info(
         session, viewer, mid
     )
     data.is_self = viewer == mid
+
+    # 聚合统计（2.32.0）：关注/粉丝/互关数 + 空间动态统计一次带出。
+    # 串行执行——同一个 AsyncSession 不支持并发 await（会抛
+    # "This session is provisioning a new connection"）。
+    counts = await FollowService.get_counts(session, int(mid))
+    data.follow_stat = SpaceFollowStat(
+        following_count=counts.following_count,
+        follower_count=counts.follower_count,
+        mutual_count=counts.mutual_count,
+    )
+    upstat = await MomentFeedService.get_upstat(session, int(mid))
+    data.upstat = SpaceUpStat(
+        dynamic_count=int(upstat.get("dynamic_count") or 0),
+        like_count=int(upstat.get("like_count") or 0),
+    )
     return StandardResponse(data=data)
 
 
@@ -686,7 +706,10 @@ async def deactivate_self(user: CurrentUser) -> StandardResponse:
 )
 async def deactivate_user(
     admin: AdminUser,
-    target_mid: StrInt = Query(..., description="目标用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    target_mid: Annotated[
+        StrInt,
+        Query(..., description="目标用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    ],
 ) -> StandardResponse:
     """管理端注销指定用户（root / 管理员）：投递注销消息，异步删除其账号及业务数据。"""
     try:
@@ -757,7 +780,7 @@ async def refresh_token(
     uid = int(user.mid)
 
     # 获取用户最新信息（含 level / role）
-    profile = await PptrUserService.get_user_profile(uid=uid)
+    profile = await PptrUser.fetch_profile(uid=uid)
     if profile is None:
         raise HTTPException(status_code=404, detail="用户不存在")
     info, _detail, _vip, _level = profile

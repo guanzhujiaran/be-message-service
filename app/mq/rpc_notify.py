@@ -34,7 +34,7 @@ from bili_common.rpc.safe import rpc_safe
 from app.core.broker import broker, message_exchange
 from app.core.database import new_session
 from app.models.schemas import NotifyCreateReq
-from app.services.message.notify import NotifyService
+from app.services.message.insite.notify import NotifyService
 
 
 @broker.subscriber(
@@ -69,6 +69,12 @@ async def rpc_publish_notify(params: PublishNotifyParams) -> StandardResponse:
             session, params.creator_mid, req
         )
     if item is None:
+        # 用户关闭了系统通知（recv_notify=False）而被跳过：视为成功而非失败，
+        # 调用方无需重试。duplicated=True 复用既有「未产生新通知」语义。
+        if duplicated:
+            return success_response(
+                data=PublishNotifyResult(notify_id=None, duplicated=True)
+            )
         return error_response(code=500, msg="发布系统通知失败：未返回通知记录")
     return success_response(
         data=PublishNotifyResult(notify_id=item.id, duplicated=duplicated)

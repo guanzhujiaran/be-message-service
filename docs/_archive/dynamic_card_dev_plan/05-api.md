@@ -211,6 +211,10 @@
 | GET | `/moment/upstat` | 空间统计（动态数/获赞数） | `vmid` | 公开 |
 | GET | `/message/follow/stat` | 关注/粉丝/互关数 | `vmid` | 公开 |
 
+> **（2.32.0）聚合统计字段**：`GET /user/space/info` 的响应**已内联**上述两个统计端点的结果（`follow_stat` / `upstat`）。
+> 悬浮用户卡片 / 空间页**应只调 `/user/space/info` 一次**，不再并发调 `/message/follow/stat` + `/community/upstat`（3 次 HTTP + 3 次黑名单判定 → 1 次）。
+> 两个原端点**保留不动**（向后兼容，供只需要单项统计的场景使用）。
+
 **接口：`GET /api/v1/user/space/info?mid=<mid>`**
 
 返回 `StandardResponse{code, msg, data}`，`data` 对标 B 站 acc/info 的 `data` 结构：
@@ -237,7 +241,10 @@
     "pendant": null,
     "nameplate": null,
     "top_photo": null,
-    "is_followed": false
+    "is_followed": false,
+    "is_self": false,
+    "follow_stat": { "following_count": 12, "follower_count": 34, "mutual_count": 5 },
+    "upstat": { "dynamic_count": 7, "like_count": 89 }
   }
 }
 ```
@@ -256,6 +263,10 @@
 | `vip` | `TUserVip` | VIP 信息（type/status/due_date） |
 | `is_followed` | `FollowService.is_following` | 当前登录用户是否关注目标（未登录为 `false`） |
 | `official`/`pendant`/`nameplate`/`top_photo` | —（pptr 无数据源） | 固定为空结构/`null` |
+| `follow_stat` | `FollowService.get_counts`（2.32.0 内联） | `{following_count, follower_count, mutual_count}`，等价于 `GET /message/follow/stat?vmid=mid` 的计数部分（**不含** `mid` 冗余字段） |
+| `upstat` | `MomentFeedService.get_upstat`（2.32.0 内联） | `{dynamic_count, like_count}`，等价于 `GET /community/upstat?vmid=mid` 的统计部分（**不含** `mid` 冗余字段） |
+
+> **（2.32.0）聚合字段语义**：两者均为**只读派生字段**（`default_factory` 提供零值），不计入黑名单判定的额外请求——与 `is_followed` 复用同一个已通过黑名单校验的会话串行补查。原 `/message/follow/stat`、`/community/upstat` 端点语义与响应**完全不变**。
 
 **错误响应**：
 

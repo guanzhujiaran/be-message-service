@@ -9,7 +9,7 @@
 - 时间戳统一用 `TimestampMixin`（datetime + default_factory + onupdate）；
 - JSON 正文用 `sa.JSON()`；枚举列直接用 `sqlalchemy.Enum(...)`（如 `sa_type=Enum(SomeEnum)`），落库为 MySQL 原生 ENUM 存成员名；
 - `mid` 系用户字段仅存 BIGINT，**不建跨库外键**（用户主数据在 pptr Postgres，
-  MySQL 主库惯例不引用，渲染时由 PptrUserService 只读回查）；
+  MySQL 主库惯例不引用，渲染时由 PptrUser 只读回查）；
 - 自引用（TMoment.repostSrcDynId → TMoment.dynId）用 `SET NULL` 软引用；
 - 索引在 `__table_args__` 中显式声明（含命名），DESC 排序用 `text('col DESC')`（MySQL 标识符直接书写，勿加双引号，否则被当作字符串字面量）。
 """

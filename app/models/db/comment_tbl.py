@@ -16,7 +16,7 @@
 
 用户展示信息（昵称 / 头像 / 等级 / 大会员等）**不在本库冗余**：用户主数据只有一份，
 在 pptr 的 Postgres（TUserInfo / TUserDetail / TUserVip / TUserLevel）。渲染评论列表时
-由 `PptrUserService` 直连该库**只读**地批量取回（一次 `WHERE uid IN (...)`），
+由 `PptrUser` 直连该库**只读**地批量取回（一次 `WHERE uid IN (...)`），
 既避免 N+1，也不重复保存用户数据。
 
 **rpid 是雪花 ID（复用 app.core.sharding 的生成器）**：单调递增，因此

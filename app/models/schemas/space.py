@@ -45,8 +45,35 @@ class SpaceVipWrap(SQLModel, AutoStrMixin):
     label: SpaceVipLabel = Field(default_factory=SpaceVipLabel)
 
 
+class SpaceFollowStat(SQLModel, AutoStrMixin):
+    """关注 / 粉丝 / 互关计数（2.32.0：内联自 `GET /api/v1/message/follow/stat`）。
+
+    与 `FollowCountResp` 字段一致，但**不带** `mid`（外层 `SpaceInfoResp.mid` 已冗余），
+    避免同一份数据在响应里重复出现。
+    """
+
+    following_count: int = Field(default=0, description="关注数")
+    follower_count: int = Field(default=0, description="粉丝数")
+    mutual_count: int = Field(default=0, description="互相关注数")
+
+
+class SpaceUpStat(SQLModel, AutoStrMixin):
+    """空间动态统计（2.32.0：内联自 `GET /api/v1/community/upstat`）。
+
+    与 `MomentUpStatResp` 统计字段一致，同样**不带** `mid`。
+    """
+
+    dynamic_count: int = Field(default=0, description="对外可见动态总数")
+    like_count: int = Field(default=0, description="这些动态被点赞的总数")
+
+
 class SpaceInfoResp(SQLModel, AutoStrMixin):
-    """用户空间完整资料（对标 B 站 `/x/space/wbi/acc/info` 的 data）。"""
+    """用户空间完整资料（对标 B 站 `/x/space/wbi/acc/info` 的 data）。
+
+    2.32.0：新增 `follow_stat` / `upstat` 两个**只读派生聚合字段**，把原本需要
+    `/message/follow/stat` + `/community/upstat` 两次额外请求才能拿到的统计
+    一次带出（悬浮用户卡片 / 空间页由 3 次 HTTP 降为 1 次）。两个原端点保留不动。
+    """
 
     mid: int
     name: str = ""
@@ -67,11 +94,16 @@ class SpaceInfoResp(SQLModel, AutoStrMixin):
     top_photo: str | None = None
     is_followed: bool = False
     is_self: bool = False
+    # 2.32.0：聚合统计（一次请求带出，避免前端悬浮卡片 / 空间页多次调用）
+    follow_stat: SpaceFollowStat = Field(default_factory=SpaceFollowStat)
+    upstat: SpaceUpStat = Field(default_factory=SpaceUpStat)
 
 
 __all__ = [
+    "SpaceFollowStat",
     "SpaceInfoResp",
     "SpaceOfficial",
+    "SpaceUpStat",
     "SpaceVip",
     "SpaceVipLabel",
     "SpaceVipWrap",

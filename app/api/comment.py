@@ -35,11 +35,10 @@ from app.models.schemas import (
     CommentTopResp,
     CommentUserBrief,
 )
-from app.services.admin.ban_service import BanService
-from app.services.message.comment import CommentService
-from app.services.message.comment_action import CommentActionService
-from app.services.message.comment_read import CommentReadService
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import CommentAdminUser
+from app.services.comment import CommentService
+from app.services.comment.comment_action import CommentActionService
+from app.services.comment.comment_read import CommentReadService
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/comment", tags=["comment"])
@@ -104,7 +103,7 @@ async def add_comment(
     仅存原始地址。
     """
     # 封禁校验：被封禁「评论」服务的用户禁止发表评论
-    if await BanService.is_banned(session, user.mid, BanServiceEnum.COMMENT.value):
+    if await CommentAdminUser(mid=user.mid).is_banned(session, BanServiceEnum.COMMENT.value):
         return StandardResponse(code=403, msg="该账号已被封禁评论功能，无法发表评论")
 
     ip_v4, ip_v6 = extract_client_ip(
@@ -363,7 +362,7 @@ async def at_search(
 
     走前缀匹配 `keyword%`，对索引友好，不会退化成 `%keyword%` 全表扫描。
     """
-    items = await PptrUserService.search_by_uname(keyword, limit=limit)
+    items = await CommentAdminUser.search_by_uname(keyword, limit=limit)
     return StandardResponse(data=items)
 
 

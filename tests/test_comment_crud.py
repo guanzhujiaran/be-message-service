@@ -37,8 +37,8 @@ from app.models.enums import (
     MomentTypeEnum,
 )
 from app.models.schemas import CommentAddReq
-from app.services.message.comment import CommentService
-from app.services.message.comment_read import CommentReadService
+from app.services.comment import CommentService
+from app.services.comment.comment_read import CommentReadService
 
 
 @pytest.fixture(autouse=True)

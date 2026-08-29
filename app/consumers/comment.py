@@ -3,7 +3,7 @@
 三个队列与发布主流程解耦，作为**备用投递通道 + 定时补偿入口**：
 
 - `message.comment.notify`：回复 / 点赞 / @ 的事件提醒。当前评论发布已在主流程内
-  同步调用 `EventService.report`（同进程，见 app.services.message.comment），此消费者作为
+  同步调用 `report_event_weakly`（同进程，见 app.services.comment），此消费者作为
   解耦后的冗余通道，依赖 `dedup_key` 幂等保证重复投递不刷屏。
 - `message.comment.audit`：异步内容复审（AI 复审 / 超时重试），弱依赖。
 - `message.comment.count`：楼层发号与计数削峰、写倾斜补偿。
@@ -21,8 +21,8 @@ from loguru import logger
 async def handle_comment_notify(payload: dict, msg: RabbitMessage) -> None:
     """评论互动通知的备用投递通道。
 
-    当前评论发布已在主流程内同步调用 `EventService.report`
-    （见 `app.services.message.comment` 的 `_notify_reply` / `_notify_at`），本消费者作为
+    当前评论发布已在主流程内同步调用 `report_event_weakly`
+    （见 `app.services.comment` 的 `_notify_reply` / `_notify_at`），本消费者作为
     解耦后的冗余通道：真实生产者在 Phase 3 尚未接入，这里仅做幂等校验占位，
     依赖 `dedup_key` 保证即便未来双投也不会刷屏。
     """

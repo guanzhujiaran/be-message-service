@@ -17,6 +17,8 @@
 会触发 JS 的 `Number.MAX_SAFE_INTEGER` 精度丢失。
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 from loguru import logger
 
@@ -36,9 +38,9 @@ from app.models.schemas import (
     DmSessionListResp,
 )
 from app.models.str_int import StrInt
-from app.services.message.activity import ActivityService
-from app.services.admin.ban_service import BanService
-from app.services.message.dm import DmService
+from app.services.message.insite.activity import ActivityService
+from app.services.user.account import DmAdminUser
+from app.services.message.dm.dm import DmInbox, DmSessionObject
 
 router = APIRouter(prefix="/api/v1/message/dm", tags=["message-dm"])
 
@@ -66,11 +68,13 @@ async def send_dm(
     若对方关闭了陌生人私信，返回 `filtered=True`：消息只保留在发送方视角。
     """
     # 封禁校验：被封禁「私信」服务的用户禁止发送私信
-    if await BanService.is_banned(session, user.mid, BanServiceEnum.DM.value):
+    if await DmAdminUser(mid=user.mid).is_banned(session, BanServiceEnum.DM.value):
         return StandardResponse(code=403, msg="该账号已被封禁私信功能，无法发送私信")
 
     try:
-        data = await DmService.send(session, user.mid, user.uname or user.user_name, req)
+        data = await DmSessionObject(session, user.mid, req.receiver_mid).send(
+            req, sender_name=user.uname or user.user_name
+        )
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     except Exception as e:  # noqa: BLE001
@@ -92,8 +96,8 @@ async def list_sessions(
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[DmSessionListResp]:
     await ActivityService.touch(session, user.mid)
-    data = await DmService.list_sessions(
-        session, user.mid, relation=relation, page_num=page_num, page_size=page_size
+    data = await DmInbox(session, user.mid).list_sessions(
+        relation=relation, page_num=page_num, page_size=page_size
     )
     return StandardResponse(data=data)
 
@@ -106,7 +110,7 @@ async def list_sessions(
 async def delete_session(
     session: SessionDep, user: RequiredUser, req: DmSessionDeleteReq
 ) -> StandardResponse[DmOperationResp]:
-    affected = await DmService.delete_session(session, user.mid, req.talker_mid)
+    affected = await DmSessionObject(session, user.mid, req.talker_mid).delete()
     return StandardResponse(
         data=DmOperationResp(
             affected=affected, message="已删除会话" if affected else "会话不存在"
@@ -122,7 +126,9 @@ async def delete_session(
 async def list_messages(
     session: SessionDep,
     user: RequiredUser,
-    talker_mid: StrInt = Query(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）"),
+    talker_mid: Annotated[
+        StrInt, Query(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    ],
     cursor: str | None = Query(
         default=None, description="上一页返回的 cursor（本页最小 msgkey），首屏不传"
     ),
@@ -133,12 +139,8 @@ async def list_messages(
     正文按 msgkey 批量回捞分片；若异步落库尚未完成，
     会回落到索引行冗余的摘要（`content_ready=False`），保证会话流始终可读。
     """
-    data = await DmService.list_messages(
-        session,
-        user.mid,
-        talker_mid,
-        cursor=_to_msgkey(cursor),
-        page_size=page_size,
+    data = await DmSessionObject(session, user.mid, talker_mid).fetch_messages(
+        cursor=_to_msgkey(cursor), page_size=page_size
     )
     return StandardResponse(data=data)
 
@@ -153,7 +155,7 @@ async def delete_messages(
     msgkeys = [k for k in (_to_msgkey(m) for m in req.msgkeys) if k is not None]
     if not msgkeys:
         return StandardResponse(code=400, msg="msgkeys 不能为空或格式非法")
-    affected = await DmService.delete_messages(session, user.mid, msgkeys)
+    affected = await DmSessionObject(session, user.mid).delete_messages(msgkeys)
     return StandardResponse(
         data=DmOperationResp(affected=affected, message=f"已删除 {affected} 条消息")
     )
@@ -173,7 +175,7 @@ async def recall_message(
     msgkey = _to_msgkey(req.msgkey)
     if msgkey is None:
         return StandardResponse(code=400, msg="msgkey 格式非法")
-    ok, message = await DmService.recall_message(session, user.mid, msgkey)
+    ok, message = await DmSessionObject(session, user.mid).recall_message(msgkey)
     if not ok:
         return StandardResponse(
             code=400, msg=message, data=DmOperationResp(affected=0, message=message)
@@ -187,8 +189,8 @@ async def recall_message(
 async def ack_session(
     session: SessionDep, user: RequiredUser, req: DmAckReq
 ) -> StandardResponse[DmOperationResp]:
-    affected = await DmService.ack(
-        session, user.mid, req.talker_mid, ack_msgkey=_to_msgkey(req.ack_msgkey)
+    affected = await DmSessionObject(session, user.mid, req.talker_mid).ack(
+        ack_msgkey=_to_msgkey(req.ack_msgkey)
     )
     return StandardResponse(
         data=DmOperationResp(
@@ -199,7 +201,7 @@ async def ack_session(
 
 @router.get("/unread", response_model=StandardResponse[int], summary="私信未读总数")
 async def unread_dm(session: SessionDep, user: RequiredUser) -> StandardResponse[int]:
-    return StandardResponse(data=await DmService.count_unread(session, user.mid))
+    return StandardResponse(data=await DmInbox(session, user.mid).count_unread())
 
 
 __all__ = ["router"]

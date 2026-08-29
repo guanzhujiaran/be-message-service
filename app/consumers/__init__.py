@@ -16,7 +16,7 @@ from app.consumers.comment import (
     handle_comment_notify,
 )
 from app.consumers.dm import handle_dm_content
-from app.consumers.push import handle_message
+from app.consumers.external_push import handle_message
 
 __all__ = [
     "handle_comment_audit",

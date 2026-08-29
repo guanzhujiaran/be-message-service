@@ -17,8 +17,8 @@ from loguru import logger
 from app.core.database import new_session
 from app.models.db import DmContentDeadLetter
 from app.models.schemas import DmContentPayload
-from app.services.message.dm import DmService
-from app.services.message.dm_content import DmContentService
+from app.services.message.dm.dm import mark_content_ready
+from app.services.message.dm.dm_content import DmContentService
 
 
 async def handle_dm_content(payload: DmContentPayload, msg: RabbitMessage) -> None:
@@ -26,7 +26,7 @@ async def handle_dm_content(payload: DmContentPayload, msg: RabbitMessage) -> No
     ok = await DmContentService.write(payload)
     async with new_session() as session:
         if ok:
-            await DmService.mark_content_ready(session, payload.msgkey)
+            await mark_content_ready(session, payload.msgkey)
         else:
             session.add(
                 DmContentDeadLetter(

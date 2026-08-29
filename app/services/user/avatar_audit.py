@@ -26,8 +26,8 @@ from app.models.schemas.avatar_audit import (
     AvatarAuditListResp,
     AvatarAuditMineResp,
 )
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import PptrUser
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -35,7 +35,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _to_item(row: TUserAvatarAudit, brief) -> AvatarAuditItem:
-    """TUserAvatarAudit → 审核队列卡片（brief 来自 PptrUserService.get_many 结果）。"""
+    """TUserAvatarAudit → 审核队列卡片（brief 来自 PptrUser.get_many 结果）。"""
     return AvatarAuditItem(
         pk=row.pk,
         mid=row.mid,
@@ -55,7 +55,7 @@ class AvatarAuditService:
     @staticmethod
     async def _current_avatar(uid: int) -> str | None:
         """读取用户当前公开头像（TUserDetail.avatar），用于记录 oldAvatar。"""
-        profile = await PptrUserService.get_user_profile(uid=uid)
+        profile = await PptrUser.fetch_profile(uid=uid)
         if profile is None:
             return None
         _info, detail, _vip, _level = profile
@@ -165,7 +165,7 @@ class AvatarAuditService:
         ).all()
 
         mids = {r.mid for r in rows}
-        briefs = await PptrUserService.get_many(list(mids))
+        briefs = await PptrUser.get_many(list(mids))
         items = [_to_item(r, briefs.get(r.mid)) for r in rows]
         return AvatarAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
@@ -201,13 +201,13 @@ class AvatarAuditService:
 
         # 尽力写入公开头像（pptr Postgres，独立会话）；失败只告警，不回滚本表状态
         try:
-            await PptrUserService.set_user_detail(uid=row.mid, face=row.newAvatar)
+            await PptrUser(mid=row.mid).set_user_detail(face=row.newAvatar)
         except Exception as e:  # noqa: BLE001
             logger.error(f"审核通过后写入公开头像失败 mid={row.mid} newAvatar={row.newAvatar}: {e}")
 
         # 弱依赖通知：审核通过
         await AvatarAuditService._notify_approved(row)
-        briefs = await PptrUserService.get_many([row.mid])
+        briefs = await PptrUser.get_many([row.mid])
         return _to_item(row, briefs.get(row.mid))
 
     # ==================== 管理端：审核驳回 ====================
@@ -241,7 +241,7 @@ class AvatarAuditService:
 
         # 弱依赖通知：审核驳回
         await AvatarAuditService._notify_rejected(row)
-        briefs = await PptrUserService.get_many([row.mid])
+        briefs = await PptrUser.get_many([row.mid])
         return _to_item(row, briefs.get(row.mid))
 
     # ==================== 内部方法 ====================

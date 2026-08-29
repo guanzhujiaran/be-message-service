@@ -345,3 +345,17 @@
 | P28-T4 | seed_cli.py 超时环境变量化 | 完成 | 2026-08-22 | 新增 `SEED_HTTP_TIMEOUT`（默认 90s，httpx 客户端）与 `SEED_REQ_TIMEOUT`（默认 120s，`_req` 总超时），消除分钟边界 ReadTimeout 误报 |
 | P28-T5 | 回归验证 | 完成 | 2026-08-22 | 内联脚本验证：默认 `sequence_bits=4` 生成 16 个 ID 互不相同/正数/位宽 ≤39（与改造前一致）；`sequence_bits=7` 同一分钟 128 个互不相同/正数/位宽 30；`sequence_bits=3/16` 被 ValueError 拒绝；ruff lint 全绿 |
 
+### Phase 29（2.32.0 空间资料聚合统计 + 悬浮用户卡片数据常驻缓存）
+
+> **背景**：用户卡片悬浮一次需并发 3 个接口（`/user/space/info` + `/message/follow/stat` + `/community/upstat`），
+> 每个都独立走一遍网关鉴权 + 黑名单判定（3 次 `is_blocked_relation` 查询），且数据随组件卸载即丢弃、重复悬浮重复请求。
+
+| 任务 ID | 任务描述 | 状态 | 完成时间 | 说明 |
+|---|---|---|---|---|
+| P29-T1 | 计划书更新 | 完成 | 2026-08-29 | README changelog 新增 2.32.0（MINOR）；05-api §5.9 补充 `follow_stat`/`upstat` 聚合字段说明、响应示例与字段映射表；08-task-records 新增 Phase 29 |
+| P29-T2 | `SpaceInfoResp` 新增聚合字段 | 完成 | 2026-08-29 | `app/models/schemas/space.py` 新增 `SpaceFollowStat`（following_count/follower_count/mutual_count）与 `SpaceUpStat`（dynamic_count/like_count），均 `AutoStrMixin`；`SpaceInfoResp` 追加 `follow_stat` / `upstat` 两个 `default_factory` 字段（**向后兼容**，老客户端不受影响）；schemas `__init__` 同步导出 |
+| P29-T3 | `/user/space/info` 路由层内联统计 | 完成 | 2026-08-29 | `app/api/pptr_user_gateway.py`：`get_space_info` 在黑名单校验通过 + 用户存在后，**串行**补查 `FollowService.get_counts` 与 `MomentFeedService.get_upstat` 并写入聚合字段（串行而非 `asyncio.gather`——同一个 `AsyncSession` 不支持并发 `await`）；原 `/message/follow/stat`、`/community/upstat` 端点保留不动 |
+| P29-T4 | 前端悬浮卡片共享缓存 | 完成 | 2026-08-29 | 新增 `src/composables/useUserCardCache.ts`：模块级 `reactive(new Map<number, UserCardData>())` 跨组件/跨页面常驻 + in-flight Promise 去重（并发悬浮同一 mid 只发一次请求）+ **失败不写缓存**（可重试，修复原「失败后 `loadedMid` 已赋值导致永久不再加载」的 bug）；`MomentCard`（头像悬浮）与 `UserBriefCell`（@ 节点 / 审核列表）改为读共享缓存，单次 `fetchUserSpaceInfo` 映射出全部字段，不再并发 3 个接口 |
+| P29-T5 | `MomentSpaceView` 去重复请求 | 完成 | 2026-08-29 | 空间页 `loadFirst` 移除 `fetchRelationStat` / `fetchUpStat` 两个独立请求，`stats` 直接读 `space/info` 返回的 `follow_stat` / `upstat` |
+| P29-T6 | 单元测试 | 完成 | 2026-08-29 | `tests/test_space_info.py` 新增 `test_space_info_merges_follow_and_upstat`：直调路由函数验证 `code===0` 且聚合字段与实际计数一致 |
+

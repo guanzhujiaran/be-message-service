@@ -5,7 +5,7 @@
 - 审核队列：捞出处于 `auditing` / `rejected` / `hidden` 的私信，人工通过 / 驳回 / 下架 / 恢复。
 - 写扩散：一条私信在 `msg_dm_index` 收发双方各一行，`audit_state` 同步双行，
   保证发送方与接收方视角一致。
-- 可见性：被 `rejected` / `hidden` 的私信在 `DmService.list_messages` 已被过滤，
+- 可见性：被 `rejected` / `hidden` 的私信在 `DmSessionObject.fetch_messages` 已被过滤，
   对用户不可见；`pass` / `restore` 把状态拨回 `normal` 重新可见。
 """
 
@@ -23,10 +23,10 @@ from app.models.schemas import (
     DmSessionContextResp,
     DmStatsResp,
 )
-from app.services.message.comment import summarize_text
-from app.services.message.dm import DmService
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService
+from app.services.comment import summarize_text
+from app.services.message.dm.dm import DmSessionObject
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import DmAdminUser
 from app.utils.audit_source import build_dm_source
 from app.utils.notify_markup import markup_inline_link
 
@@ -86,9 +86,9 @@ class DmAdminService:
                 (r for r in rows if r.owner_mid != r.sender_uid), None
             )
             if receiver_row is not None:
-                sess = await DmService._get_session(
+                sess = await DmSessionObject(
                     session, receiver_row.owner_mid, receiver_row.talker_mid
-                )
+                ).load()
                 if sess is not None:
                     sess.last_msgkey = receiver_row.msgkey
                     sess.last_content_preview = receiver_row.content_preview
@@ -210,7 +210,7 @@ class DmAdminService:
         text: str,
     ) -> None:
         """仅当该会话的最后一条消息正是被处置的这条时，更新预览占位。"""
-        sess = await DmService._get_session(session, owner_mid, talker_mid)
+        sess = await DmSessionObject(session, owner_mid, talker_mid).load()
         if sess is not None and sess.last_msgkey == msgkey:
             sess.last_content_preview = text
             sess.updated_at = datetime.now()
@@ -293,7 +293,7 @@ class DmAdminService:
         """批量把每条私信的发送者信息（直连 pptr）填进 `sender` 字段。"""
         if not items:
             return
-        profiles = await PptrUserService.get_many([it.sender_mid for it in items])
+        profiles = await DmAdminUser.get_many([it.sender_mid for it in items])
         for it in items:
             it.sender = profiles.get(it.sender_mid)
 

@@ -17,7 +17,7 @@ from app.dependencies import MsgAdminUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
 from app.models.schemas import CommentUserBrief
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 router = APIRouter(prefix="/api/v1/message/admin/user", tags=["message-admin-user"])
 
@@ -51,7 +51,7 @@ async def batch_user_info(
     用于审核列表里把作者 `mid` 渲染成具体用户名，并支持悬浮查看详情。
     数据从 pptr Postgres 只读取回；mid 不存在（或已软删）不会报错，仅不出现在返回中。
     """
-    data = await PptrUserService.get_many(mids)
+    data = await PptrUser.get_many(mids)
     return StandardResponse(data=list(data.values()))
 
 
@@ -76,7 +76,7 @@ async def search_users(
     """
     if not getattr(user, "is_root", False):
         raise HTTPException(status_code=403, detail="仅系统管理员(root)可搜索用户")
-    items, has_more = await PptrUserService.search_users(
+    items, has_more = await PptrUser.search_users(
         params.keyword, offset=params.offset, limit=params.limit
     )
     return StandardResponse(data=PptrUserSearchResult(items=items, has_more=has_more))

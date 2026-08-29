@@ -365,17 +365,6 @@ class MomentFeedResp(SQLModel, AutoStrMixin):
     updateNum: int = Field(default=0, description="相对基线的新增条数（recommend 模式恒 0）")
 
 
-class MomentUpStatResp(SQLModel, AutoStrMixin):
-    """空间统计响应（对标 B 站 `/x/space/upstat`）。
-
-    统计某用户对外可见动态的总数与获赞总数。
-    """
-
-    mid: int = Field(description="用户 UID")
-    dynamic_count: int = Field(default=0, description="对外可见动态总数")
-    like_count: int = Field(default=0, description="这些动态被点赞的总数")
-
-
 class MomentDetailResp(MomentFeedItem):
     """动态详情响应（单条完整卡片）。
 

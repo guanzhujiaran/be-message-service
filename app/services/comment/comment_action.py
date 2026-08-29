@@ -24,7 +24,7 @@ from app.models.enums import (
     SourceTypeEnum,
 )
 from app.models.schemas import CommentActionResp, EventReportReq
-from app.services.message.comment import VISIBLE_STATES
+from app.services.comment import VISIBLE_STATES
 
 
 def compute_hot_score(
@@ -143,33 +143,28 @@ class CommentActionService:
 
         独立会话投递：点赞主事务已提交，事件落库失败也不回滚点赞结果。
         """
-        from loguru import logger
-
         from app.core.database import new_session
-        from app.services.message.events import BaseEvent
+        from app.services.message.insite.events import report_event_weakly
 
-        try:
-            async with new_session() as ns:
-                content = (
-                    await ns.exec(
-                        select(CommentContent).where(
-                            col(CommentContent.rpid) == row.rpid
-                        )
+        async with new_session() as ns:
+            content = (
+                await ns.exec(
+                    select(CommentContent).where(
+                        col(CommentContent.rpid) == row.rpid
                     )
-                ).one_or_none()
-                await BaseEvent.from_req(
-                    EventReportReq(
-                        mid=row.mid,
-                        event_type=EventTypeEnum.LIKE,
-                        source_type=SourceTypeEnum.COMMENT,
-                        source_id=str(row.oid),
-                        actor_mid=actor_mid,
-                        content=content.message if content else None,
-                        biz_id=str(row.rpid),
-                    ),
-                ).report(ns)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"点赞通知投递失败（弱依赖，已忽略）: {e}")
+                )
+            ).one_or_none()
+        await report_event_weakly(
+            EventReportReq(
+                mid=row.mid,
+                event_type=EventTypeEnum.LIKE,
+                source_type=SourceTypeEnum.COMMENT,
+                source_id=str(row.oid),
+                actor_mid=actor_mid,
+                content=content.message if content else None,
+                biz_id=str(row.rpid),
+            )
+        )
 
 
 __all__ = ["CommentActionService", "compute_hot_score"]

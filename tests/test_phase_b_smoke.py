@@ -50,14 +50,14 @@ from app.models.schemas import (
     MessageSettingUpdateReq,
     NotifyCreateReq,
 )
-from app.services.message import dm as dm_svc_mod
-from app.services.message import publisher
-from app.services.message.activity import ActivityService
-from app.services.message.dm import DmService
-from app.services.message.event import EventService
-from app.services.message.notify import NotifyService
-from app.services.user.pptr_user import PptrUserService
-from app.services.message.setting import SettingService
+import app.services.message.dm.dm as dm_svc_mod
+import app.services.message.infrastructure.publisher as publisher
+from app.services.message.insite.activity import ActivityService
+from app.services.message.dm.dm import DmInbox, DmSessionObject
+from app.services.message.insite.events import BaseEvent
+from app.services.message.insite.notify import NotifyService
+from app.services.user.account import PptrUser
+from app.services.message.insite.setting import SettingService
 
 
 # 每个测试函数跑在独立的事件循环里；模块级 engine 会绑死在第一个循环上，
@@ -101,7 +101,7 @@ M = {
 }
 
 
-async def _delete_notify(s: AsyncSession, *mids: int) -> None:
+async def _delete_notify(s: SQLModelAsyncSession, *mids: int) -> None:
     """删除指定用户相关的系统通知数据，就地清理，不依赖全局清理。"""
     for stmt in [
         select(NotifyMessage).where(NotifyMessage.creator_mid.in_(mids)),
@@ -114,7 +114,7 @@ async def _delete_notify(s: AsyncSession, *mids: int) -> None:
     await s.commit()
 
 
-async def _delete_event(s: AsyncSession, *mids: int) -> None:
+async def _delete_event(s: SQLModelAsyncSession, *mids: int) -> None:
     """删除指定用户相关的互动事件数据，就地清理。"""
     for stmt in [
         select(EventMessage).where(EventMessage.mid.in_(mids)),
@@ -126,7 +126,7 @@ async def _delete_event(s: AsyncSession, *mids: int) -> None:
     await s.commit()
 
 
-async def _delete_dm(s: AsyncSession, *mids: int) -> None:
+async def _delete_dm(s: SQLModelAsyncSession, *mids: int) -> None:
     """删除指定用户相关的私信数据（会话/索引按 owner 与 talker/sender 双向清理）。"""
     for stmt in [
         select(DmMessageIndex).where(DmMessageIndex.owner_mid.in_(mids)),
@@ -143,7 +143,7 @@ async def _delete_dm(s: AsyncSession, *mids: int) -> None:
     await s.commit()
 
 
-async def _delete_setting(s: AsyncSession, *mids: int) -> None:
+async def _delete_setting(s: SQLModelAsyncSession, *mids: int) -> None:
     """删除指定用户的消息设置数据。"""
     rows = (
         await s.exec(select(UserMessageSetting).where(UserMessageSetting.mid.in_(mids)))
@@ -153,7 +153,7 @@ async def _delete_setting(s: AsyncSession, *mids: int) -> None:
     await s.commit()
 
 
-async def _delete_activity(s: AsyncSession, *mids: int) -> None:
+async def _delete_activity(s: SQLModelAsyncSession, *mids: int) -> None:
     """删除指定用户的活跃度数据。"""
     rows = (await s.exec(select(UserActivity).where(UserActivity.mid.in_(mids)))).all()
     for r in rows:
@@ -306,31 +306,31 @@ async def test_event_aggregation_and_dedup() -> None:
             actor_mid=actor,
         )
         # 同一人对同一来源重复上报 → 去重
-        r1 = await EventService.report(s, req(800001))
-        r2 = await EventService.report(s, req(800001))
+        r1 = await BaseEvent.from_req(req(800001)).report(s)
+        r2 = await BaseEvent.from_req(req(800001)).report(s)
         assert r1.accepted and not r1.duplicated
         assert r2.duplicated, "同人同来源重复上报应去重"
 
         # 不同人对同一来源 → 两条明细，聚合为 count=2
-        await EventService.report(s, req(800002))
+        await BaseEvent.from_req(req(800002)).report(s)
 
-        groups, total = await EventService.aggregate(s, mid, EventTypeEnum.LIKE)
+        groups, total = await BaseEvent.aggregate(s, mid, EventTypeEnum.LIKE)
         assert total == 1, "应聚合成 1 个分组"
         assert groups[0].count == 2, "聚合 count 应为 2"
         assert groups[0].unread_count == 2
 
-        by_type = await EventService.count_unread_by_type(s, mid)
+        by_type = await BaseEvent.count_unread_by_type(s, mid)
         assert by_type.get("like") == 2, "like 未读应为 2"
 
         # 按类型一键已读
-        await EventService.mark_read(
+        await BaseEvent.mark_read(
             s, mid, EventReadReq(event_type=EventTypeEnum.LIKE)  # type: ignore[arg-type]
         )
-        assert await EventService.count_unread(s, mid) == 0
+        assert await BaseEvent.count_unread(s, mid) == 0
 
         # 删除
         rows = (await s.exec(select(EventMessage).where(EventMessage.mid == mid))).all()
-        await EventService.delete(s, mid, [r.id for r in rows])
+        await BaseEvent.delete(s, mid, [r.id for r in rows])
         assert await EventService.count_unread(s, mid) == 0
 
         # 就地清理本测试产生的事件数据
@@ -357,11 +357,9 @@ async def test_dm_write_diffusion_recall_and_stranger(
 
     sender, receiver = M["dm_sender"], M["dm_receiver"]
     async with new_session() as s:
-        resp = await DmService.send(
-            s,
-            sender,
-            "senderName",
+        resp = await DmSessionObject(s, sender, receiver).send(
             DmSendReq(receiver_mid=receiver, content="hello", msg_type=DmMsgTypeEnum.TEXT),
+            sender_name="senderName",
         )
         assert not resp.filtered, "默认应正常送达"
         mk = int(resp.msgkey)
@@ -378,16 +376,16 @@ async def test_dm_write_diffusion_recall_and_stranger(
         assert send_sessions[0].unread_count == 0
 
         # 聊天记录：msgkey 游标翻页，内容缺失回落摘要
-        msgs = await DmService.list_messages(s, receiver, sender)
+        msgs = await DmSessionObject(s, receiver, sender).fetch_messages()
         assert len(msgs.items) == 1
         assert msgs.items[0].content == "hello", "内容缺失应回落为摘要"
 
         # 已读 ack 清零未读
-        await DmService.ack(s, receiver, sender)
-        assert await DmService.count_unread(s, receiver) == 0
+        await DmSessionObject(s, receiver, sender).ack()
+        assert await DmInbox(s, receiver).count_unread() == 0
 
         # 撤回：发送者在时间窗内可撤回，双方状态变 RECALLED
-        ok, msg = await DmService.recall_message(s, sender, mk)
+        ok, msg = await DmSessionObject(s, sender).recall_message(mk)
         assert ok, f"撤回应成功: {msg}"
         after = (
             await s.exec(
@@ -397,12 +395,12 @@ async def test_dm_write_diffusion_recall_and_stranger(
         assert all(r.msg_status is DmMsgStatusEnum.RECALLED for r in after)
 
         # 非发送者不可撤回
-        ok2, _ = await DmService.recall_message(s, receiver, mk)
+        ok2, _ = await DmSessionObject(s, receiver).recall_message(mk)
         assert not ok2, "非发送者不应能撤回"
 
         # 删除：仅自己视角不可见
-        await DmService.delete_messages(s, sender, [mk])
-        my_msgs = await DmService.list_messages(s, sender, receiver)
+        await DmSessionObject(s, sender).delete_messages([mk])
+        my_msgs = await DmSessionObject(s, sender, receiver).fetch_messages()
         assert my_msgs.items == [], "删除后自己视角应看不到"
 
         # 就地清理本测试产生的私信数据（收发双方双向）
@@ -413,15 +411,13 @@ async def test_dm_write_diffusion_recall_and_stranger(
         await SettingService.update(
             s, M["dm_stranger_receiver"], MessageSettingUpdateReq(recv_stranger_dm=False)
         )
-        resp2 = await DmService.send(
-            s,
-            M["dm_stranger_sender"],
-            "stranger",
+        resp2 = await DmSessionObject(s, M["dm_stranger_sender"], M["dm_stranger_receiver"]).send(
             DmSendReq(
                 receiver_mid=M["dm_stranger_receiver"],
                 content="hi",
                 msg_type=DmMsgTypeEnum.TEXT,
             ),
+            sender_name="stranger",
         )
         assert resp2.filtered, "关闭陌生人私信应被过滤"
         recv_sessions = (
@@ -489,8 +485,7 @@ async def test_msg_feed_unread_aggregation() -> None:
         await NotifyService.create(
             s, M["feed_user"], NotifyCreateReq(title="tf", content="cf", publish_now=True)
         )
-        await EventService.report(
-            s,
+        await BaseEvent.from_req(
             EventReportReq(
                 mid=mid,
                 event_type=EventTypeEnum.LIKE,
@@ -498,11 +493,11 @@ async def test_msg_feed_unread_aggregation() -> None:
                 source_id="BVfeed",
                 actor_mid=700001,
             ),
-        )
+        ).report(s)
 
         notify_unread = await NotifyService.unread_count(s, user)
-        event_by_type = await EventService.count_unread_by_type(s, mid)
-        dm_unread = await DmService.count_unread(s, mid)
+        event_by_type = await BaseEvent.count_unread_by_type(s, mid)
+        dm_unread = await DmInbox(s, mid).count_unread()
 
         resp = EventUnreadResp(
             like=event_by_type.get("like", 0),
@@ -533,12 +528,11 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
     async def _no_users(*a, **k):
         return {}
 
-    monkeypatch.setattr(PptrUserService, "get_many", _no_users)
+    monkeypatch.setattr(PptrUser, "get_many", _no_users)
 
     async with new_session() as s:
         # 评论回复场景：source_type=COMMENT(bizType), source_id=oid, biz_id=rpid
-        await EventService.report(
-            s,
+        await BaseEvent.from_req(
             EventReportReq(
                 mid=mid,
                 event_type=EventTypeEnum.REPLY,
@@ -548,20 +542,20 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
                 content="回复内容",
                 biz_id="10000001",
             ),
-        )
+        ).report(s)
 
         # 明细出参带 biz_id
-        items, _total = await EventService.list_detail(
+        items, _total = await BaseEvent.list_detail(
             s, mid, event_type=EventTypeEnum.REPLY
         )
         assert items and items[0].biz_id == "10000001", "list_detail 应透传 biz_id"
 
         # 聚合出参带 biz_id（取组内最新一条）
-        groups, _t = await EventService.aggregate(s, mid, EventTypeEnum.REPLY)
+        groups, _t = await BaseEvent.aggregate(s, mid, EventTypeEnum.REPLY)
         assert groups and groups[0].biz_id == "10000001", "aggregate 应透传 biz_id"
 
         # msgfeed 出参带 resource_id（替代原 biz_id + subject_id）
-        feed = await EventService.list_msgfeed(s, mid, event_type=EventTypeEnum.REPLY)
+        feed = await BaseEvent.list_msgfeed(s, mid, event_type=EventTypeEnum.REPLY)
         assert feed.total.items, "msgfeed 应有聚合条目"
         assert (
             feed.total.items[0].item.resource_id == "10000001"

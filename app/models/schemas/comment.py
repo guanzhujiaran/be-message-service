@@ -372,9 +372,10 @@ class CommentStatsResp(SQLModel, AutoStrMixin):
     total_subjects: int = 0
     today_new: int = 0
     top_authors: list[CommentUserBrief] = Field(default_factory=list)
-    # 各状态评论数（normal / auditing / rejected / hidden / deleted）；
+    # 各状态评论数（以 CommentStateEnum.value 即 1~5 为整数键，
+    # normal / auditing / rejected / hidden / deleted）；
     # total_comments 为该字典中「非 deleted」各项之和，确保驳回等状态被计入总数。
-    state_counts: dict[str, int] = Field(default_factory=dict)
+    state_counts: dict[int, int] = Field(default_factory=dict)
 
 
 __all__ = [

@@ -53,7 +53,7 @@ async def _real_content() -> str:
 async def _bind_engine_per_test():
     """每个测试重建 engine（含 pptr），并按本模块专属 mid 区间预清理，保证幂等可重复。
 
-    审核服务内部会回查 pptr 用户（PptrUserService.get_many），而模块级单例 pptr
+    审核服务内部会回查 pptr 用户（PptrUser.get_many），而模块级单例 pptr
     engine 会绑到首个事件循环，跨 loop 复用会报 "attached to a different loop"，
     因此 pptr engine 也需随测试重建并绑定当前 loop（同 test_moment_feed）。
     """

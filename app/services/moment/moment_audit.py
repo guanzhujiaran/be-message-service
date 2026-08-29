@@ -10,7 +10,7 @@
 接口层直接实例化操作类执行，本模块辅助函数（`_get_any` / `_sync_resource_feed` /
 `_build_audit_log` / `_notify_reject` / `_to_audit_item` / `_safe_author_brief`）继续复用。
 
-作者信息（昵称 / 头像）经 ``PptrUserService.get_many`` 只读回查（与评论 / Feed 一致，
+作者信息（昵称 / 头像）经 ``PptrUser.get_many`` 只读回查（与评论 / Feed 一致，
 不冗余用户快照）。审核操作均为管理员行为，operatorRole 记为 ``admin``。
 """
 
@@ -38,7 +38,7 @@ from app.models.schemas.moment import (
     MomentAuditLogListResp,
 )
 from app.services.moment.moment_stat import MomentStatService
-from app.services.user.pptr_user import PptrUserService
+from app.services.user.account import PptrUser
 
 
 async def _sync_resource_feed(
@@ -85,7 +85,7 @@ async def _get_any(session: AsyncSession, moment_id: int) -> TMoment | None:
 
 
 def _to_audit_item(dyn: TMoment, author) -> MomentAuditItem:
-    """TMoment → 审核队列卡片（author 来自 PptrUserService.get_many 结果）。"""
+    """TMoment → 审核队列卡片（author 来自 PptrUser.get_many 结果）。"""
     return MomentAuditItem(
         dynId=dyn.dynId,
         dynIdStr=str(dyn.dynId),
@@ -110,7 +110,7 @@ async def _safe_author_brief(mid: int):
     此时返回 None 让审核立即完成，避免接口"卡一下"甚至 500。
     """
     try:
-        briefs = await PptrUserService.get_many([mid])
+        briefs = await PptrUser.get_many([mid])
         return briefs.get(mid)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"审核取作者信息失败（弱依赖，已降级）mid={mid}: {e}")
@@ -163,15 +163,11 @@ async def _notify_reject(
 
     独立会话投递：即便事件落库失败，也绝不回滚审核主事务。
     """
-    from app.services.message.events import BaseEvent
+    from app.services.message.insite.events import report_event_weakly
 
-    try:
-        async with _new_session() as ns:
-            await BaseEvent.from_req(
-                _EventReportReq_for_reject(operator_mid, dyn, reject_reason),
-            ).report(ns)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"审核驳回通知投递失败（弱依赖，已忽略）: {e}")
+    await report_event_weakly(
+        _EventReportReq_for_reject(operator_mid, dyn, reject_reason),
+    )
 
 
 def _EventReportReq_for_reject(operator_mid: int, dyn: TMoment, reject_reason: str):
@@ -237,7 +233,7 @@ class MomentAuditService:
         ).all()
 
         mids = {r.mid for r in rows}
-        briefs = await PptrUserService.get_many(list(mids))
+        briefs = await PptrUser.get_many(list(mids))
         items = [_to_audit_item(r, briefs.get(r.mid)) for r in rows]
         return MomentAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
@@ -357,7 +353,7 @@ class MomentAuditService:
     ) -> MomentAuditDetailResp:
         """单条动态审核详情：当前快照（含全部状态）+ 历史流转。"""
         dyn = await _get_any(session, moment_id)
-        briefs = await PptrUserService.get_many([dyn.mid] if dyn else [])
+        briefs = await PptrUser.get_many([dyn.mid] if dyn else [])
         item = (
             _to_audit_item(dyn, briefs.get(dyn.mid)) if dyn is not None else None
         )

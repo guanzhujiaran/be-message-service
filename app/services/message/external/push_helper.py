@@ -1,6 +1,6 @@
 """「推送」模块的业务辅助逻辑。
 
-被 HTTP 接口层（app.api.push）与消费层（app.consumers.push）共同复用：
+被 HTTP 接口层（app.api.external_push）与消费层（app.consumers.external_push）共同复用：
 - merge_config：合并全局环境变量配置与消息内携带的 per-user 配置
 - format_user_label：根据用户信息生成推送标题前缀
 """

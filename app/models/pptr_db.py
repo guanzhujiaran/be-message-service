@@ -8,7 +8,7 @@
 - 列名（`name`）严格对齐数据库真实结构（camelCase 软删/时间戳列原样保留）；
 - Python 属性名与数据库列名完全一致；
 - 原库 `TUserDetail/TUserLevel/TUserVip` 是 `TUserInfo` 的 joined/单表继承子类，
-  此处**拍平为独立表**（各自完整列 + `mid` 关联），与 `PptrUserService` 的
+  此处**拍平为独立表**（各自完整列 + `mid` 关联），与 `PptrUser` 的
   `mid == uid` 关联查询方式一致，规避 SQLModel 对 SQLAlchemy 继承映射的支持缺失。
 """
 

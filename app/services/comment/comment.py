@@ -52,10 +52,10 @@ from app.models.enums import (
 )
 from bili_common.models.report import ReportBizTypeEnum
 from app.models.schemas import CommentAddReq, CommentAddResp, EventReportReq
-from app.services.message.comment_audit import audit_text
+from app.services.comment.comment_audit import audit_text
 from app.services.user.follow import FollowService
 from app.services.moment.moment_stat import MomentStatService
-from app.services.message.notify import NotifyService
+from app.services.message.insite.notify import NotifyService
 from app.utils.audit_source import build_comment_source
 from app.utils.notify_markup import markup_inline_link
 from app.utils.ua_parse import parse_user_agent
@@ -747,29 +747,23 @@ class CommentService:
         全部解析不出来（回复卡片只剩动作文案，正文与「被回复的评论」都不显示），
         且 dedup_key 含 biz_id 时同一个人在同一动态下的多条回复会被误判重复。
         """
-        from loguru import logger
-
-        from app.services.message.events import BaseEvent
+        from app.services.message.insite.events import report_event_weakly
 
         source_type = (
             SourceTypeEnum.DYNAMIC
             if type_ == CommentTypeEnum.DYNAMIC
             else SourceTypeEnum.COMMENT
         )
-        try:
-            async with new_session() as ns:
-                await BaseEvent.from_req(
-                    EventReportReq(
-                        mid=to_mid,
-                        event_type=EventTypeEnum.REPLY,
-                        source_type=source_type,
-                        source_id=str(oid),
-                        actor_mid=actor_mid,
-                        biz_id=str(rpid),
-                    ),
-                ).report(ns)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"回复通知投递失败（弱依赖，已忽略）: {e}")
+        await report_event_weakly(
+            EventReportReq(
+                mid=to_mid,
+                event_type=EventTypeEnum.REPLY,
+                source_type=source_type,
+                source_id=str(oid),
+                actor_mid=actor_mid,
+                biz_id=str(rpid),
+            )
+        )
 
     @staticmethod
     async def _notify_at(
@@ -785,29 +779,23 @@ class CommentService:
         独立会话投递：失败不影响发评主流程。type_=DYNAMIC 时（评论对象为 Moment）
         事件来源标记为 DYNAMIC（P6-T7 一致性）。
         """
-        from loguru import logger
-
-        from app.services.message.events import BaseEvent
+        from app.services.message.insite.events import report_event_weakly
 
         source_type = (
             SourceTypeEnum.DYNAMIC
             if type_ == CommentTypeEnum.DYNAMIC
             else SourceTypeEnum.COMMENT
         )
-        try:
-            async with new_session() as ns:
-                await BaseEvent.from_req(
-                    EventReportReq(
-                        mid=to_mid,
-                        event_type=EventTypeEnum.AT,
-                        source_type=source_type,
-                        source_id=str(oid),
-                        actor_mid=actor_mid,
-                        biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
-                    ),
-                ).report(ns)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"@通知投递失败（弱依赖，已忽略）: {e}")
+        await report_event_weakly(
+            EventReportReq(
+                mid=to_mid,
+                event_type=EventTypeEnum.AT,
+                source_type=source_type,
+                source_id=str(oid),
+                actor_mid=actor_mid,
+                biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
+            )
+        )
 
 
 __all__ = [

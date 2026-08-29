@@ -41,8 +41,8 @@ from app.models.schemas import (
     CommentSubListResp,
     CommentUserBrief,
 )
-from app.services.message.comment import VISIBLE_STATES, CommentService
-from app.services.user.pptr_user import PptrUserService
+from app.services.comment import VISIBLE_STATES, CommentService
+from app.services.user.account import CommentAdminUser
 
 # 正文里 #话题# 的匹配（对齐 B 站：话题名由两个 # 包裹，中间不含 #）
 _TOPIC_PATTERN = re.compile(r"#([^#\n]+)#")
@@ -433,7 +433,7 @@ class CommentReadService:
             mids.update(content.at_mids or [])
         # 用户展示信息统一从 pptr Postgres 只读取回（本服务不再冗余快照）。
         # 一次 IN 查询取齐本页全部 mid，SQL 次数与评论条数无关。
-        profiles = await PptrUserService.get_many(mids)
+        profiles = await CommentAdminUser.get_many(mids)
 
         # ---- ③ 当前登录用户对本页评论的互动态 ----
         actions: dict[int, CommentActionEnum] = {}

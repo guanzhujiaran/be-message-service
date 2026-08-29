@@ -47,7 +47,7 @@ from app.api.moment_feed import router as moment_feed_router
 from app.api.msg_feed import router as msg_feed_router
 from app.api.notify import router as notify_router
 from app.api.pptr_user_gateway import router as pptr_user_gateway_router
-from app.api.push import router as push_router
+from app.api.external_push import router as push_router
 from app.api.report import router as report_router
 from app.api.setting import router as setting_router
 from app.api.user import router as user_router
@@ -57,10 +57,10 @@ from app.core.database import ensure_database, test_pptr_connection
 from app.core.database import test_connection as test_mysql_connection
 from app.core.migration import run_alembic_pptr_upgrade, run_alembic_upgrade
 from app.core.sharding import ensure_current_month_shards
-from app.mq import rpc_notify  # noqa: F401
-from app.mq import rpc_pptr_user  # noqa: F401
-from app.mq import rpc_push  # noqa: F401
-from app.mq.consumers import comment, deactivate, dm, push  # noqa: F401
+from app.mq import rpc_notify
+from app.mq import rpc_pptr_user
+from app.mq import rpc_external_push
+from app.mq.consumers import comment, deactivate, dm, external_push
 from app.mq.router import router as mq_router
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
 
@@ -160,7 +160,7 @@ async def test_service_connectivity():
 
 # ==================== MQ 消费者注册 ====================
 # 消费者注册胶水代码已迁出至 app/mq/consumers/，由顶部的
-# `from app.mq.consumers import comment, dm, push` 触发副作用注册。
+# `from app.mq.consumers import comment, dm, external_push` 触发副作用注册。
 # broker.start() / broker.stop() / start_scheduler() / shutdown_scheduler()
 # 不再在此手动调用——全部由 mq_router 的 lifespan 接管（与 app lifespan 合并）：
 #   1. app lifespan startup：连通性检查 / 迁移 / 分片预热（必须早于 broker.start）
