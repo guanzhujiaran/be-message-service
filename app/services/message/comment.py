@@ -740,10 +740,16 @@ class CommentService:
 
         独立会话投递：即便事件落库失败，也绝不污染「发评」主事务的会话。
         type_=DYNAMIC 时（评论的对象是 Moment）事件来源标记为 DYNAMIC（P6-T7）。
+
+        `biz_id` **恒为评论 rpid**（不随 source_type 变成 oid）：
+        `BaseEvent.list_msgfeed` 是把 `biz_id` 当评论 rpid 去查 `CommentIndex`
+        的，写成 oid 会导致 source_id/root_id/target_id/source_content/target_content
+        全部解析不出来（回复卡片只剩动作文案，正文与「被回复的评论」都不显示），
+        且 dedup_key 含 biz_id 时同一个人在同一动态下的多条回复会被误判重复。
         """
         from loguru import logger
 
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         source_type = (
             SourceTypeEnum.DYNAMIC
@@ -752,18 +758,16 @@ class CommentService:
         )
         try:
             async with new_session() as ns:
-                await EventService.report(
-                    ns,
+                await BaseEvent.from_req(
                     EventReportReq(
                         mid=to_mid,
                         event_type=EventTypeEnum.REPLY,
                         source_type=source_type,
                         source_id=str(oid),
                         actor_mid=actor_mid,
-                        content=message,
-                        biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
+                        biz_id=str(rpid),
                     ),
-                )
+                ).report(ns)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"回复通知投递失败（弱依赖，已忽略）: {e}")
 
@@ -783,7 +787,7 @@ class CommentService:
         """
         from loguru import logger
 
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         source_type = (
             SourceTypeEnum.DYNAMIC
@@ -792,8 +796,7 @@ class CommentService:
         )
         try:
             async with new_session() as ns:
-                await EventService.report(
-                    ns,
+                await BaseEvent.from_req(
                     EventReportReq(
                         mid=to_mid,
                         event_type=EventTypeEnum.AT,
@@ -802,7 +805,7 @@ class CommentService:
                         actor_mid=actor_mid,
                         biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
                     ),
-                )
+                ).report(ns)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"@通知投递失败（弱依赖，已忽略）: {e}")
 

@@ -113,15 +113,10 @@ class NotifyAdminListResp(SQLModel, AutoStrMixin):
     page_size: int = 20
 
 
-class NotifyReadReq(SQLModel, AutoStrMixin):
-    """标记已读请求：传 ids 精确标记，不传则全部标记为已读。"""
+class NotifyDeleteReq(SQLModel, AutoStrMixin):
+    """删除通知请求（仅管理员，逐用户软删）。"""
 
-    notify_ids: list[int] | None = Field(default=None, description="要标记的通知id列表")
-
-
-class NotifyReadResp(SQLModel, AutoStrMixin):
-    affected: int = Field(default=0, description="受影响条数")
-    unread_count: int = Field(default=0, description="操作后的未读数")
+    notify_ids: list[int] | None = Field(default=None, description="要删除的通知id列表")
 
 
 # ==================== 模仿 B 站系统通知接口 ====================
@@ -203,9 +198,8 @@ __all__ = [
     "NotifyCreateReq",
     "NotifyItem",
     "NotifyListResp",
+    "NotifyDeleteReq",
     "NotifyPullResp",
-    "NotifyReadReq",
-    "NotifyReadResp",
     "NotifyUpdateReq",
     "SystemNotifyItem",
     "SystemNotifyListResp",

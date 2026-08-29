@@ -8,6 +8,11 @@
 
 from bili_common.models import IntEnumAutoDoc
 
+# 系统通知枚举已下沉到公共库（`bili_common.models.notify`）：
+# 它们是「系统通知」RPC 契约的一部分（见 `bili_common.rpc.notify`），需与
+# be-gateway / RPA-Browser 等 RPC 客户端共享，此处 re-export 保持存量 import 零改动。
+from bili_common.models.notify import NotifyLevelEnum, NotifyTargetTypeEnum
+
 
 class MessageModuleEnum(IntEnumAutoDoc):
     """消息系统四大模块（对应 routing_key 的第二段）。"""
@@ -21,21 +26,6 @@ class MessageModuleEnum(IntEnumAutoDoc):
 # ==================== 系统通知 ====================
 
 
-class NotifyTargetTypeEnum(IntEnumAutoDoc):
-    """系统通知的目标用户类型（按用户类型推送）。"""
-
-    # 全体用户
-    ALL = 1
-    # 按角色：target_value 为 root / normal
-    ROLE = 2
-    # 按等级：target_value 为最低等级，用户 level >= 该值即命中
-    LEVEL = 3
-    # 仅大会员：命中 vip_status 非空且不为 "0"
-    VIP = 4
-    # 指定用户：target_value 为逗号分隔的 mid 列表
-    CUSTOM = 5
-
-
 class NotifyStatusEnum(IntEnumAutoDoc):
     """系统通知的生命周期状态。"""
 
@@ -45,14 +35,6 @@ class NotifyStatusEnum(IntEnumAutoDoc):
     PUBLISHED = 2
     # 已撤回：管理员撤回，用户侧立即不可见
     REVOKED = 3
-
-
-class NotifyLevelEnum(IntEnumAutoDoc):
-    """通知重要级别，决定推送策略的激进程度。"""
-
-    NORMAL = 1
-    IMPORTANT = 2
-    URGENT = 3
 
 
 # ==================== 事件提醒 ====================

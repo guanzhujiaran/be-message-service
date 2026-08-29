@@ -28,7 +28,7 @@ from sqlalchemy import BIGINT, JSON, Text
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 from bili_common.models.report import ReportBase
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
     CommentActionEnum,

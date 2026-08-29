@@ -24,7 +24,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db.follow import UserFollow
+from app.models.db.follow_tbl import UserFollow
 from app.models.enums import FollowStatusEnum
 from app.models.schemas.follow import (
     FollowCountResp,

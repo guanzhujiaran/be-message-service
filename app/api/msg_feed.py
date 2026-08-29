@@ -17,7 +17,7 @@ from app.models.enums import EventTypeEnum
 from app.models.schemas import EventUnreadResp, UserActivityResp
 from app.services.message.activity import ActivityService
 from app.services.message.dm import DmService
-from app.services.message.event import EventService
+from app.services.message.events import BaseEvent
 from app.services.message.notify import NotifyService
 
 router = APIRouter(prefix="/api/v1/message/msg_feed", tags=["message"])
@@ -30,7 +30,7 @@ async def unread_summary(
     session: SessionDep, user: RequiredUser
 ) -> StandardResponse[EventUnreadResp]:
     """一次返回消息中心所有模块的未读数（前端顶部红点）。"""
-    event_map = await EventService.count_unread_by_type(session, user.mid)
+    event_map = await BaseEvent.count_unread_by_type(session, user.mid)
     notify_unread = await NotifyService.unread_count(session, user)
     dm_unread = await DmService.count_unread(session, user.mid)
 

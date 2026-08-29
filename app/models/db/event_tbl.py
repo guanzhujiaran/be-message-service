@@ -23,7 +23,7 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import EventTypeEnum, SourceTypeEnum
 
@@ -65,7 +65,9 @@ class EventMessage(TimestampMixin, table=True):
     actor_mid: int = Field(sa_type=BIGINT, index=True, description="触发行为的用户mid")
 
     content: str | None = Field(
-        default=None, sa_column=Column(Text), description="事件内容（回复正文 / @上下文）"
+        default=None,
+        sa_column=Column(Text),
+        description="事件内容（回复正文 / @上下文）",
     )
 
     is_read: bool = Field(default=False, index=True, description="是否已读")

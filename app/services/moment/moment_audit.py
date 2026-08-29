@@ -163,14 +163,13 @@ async def _notify_reject(
 
     独立会话投递：即便事件落库失败，也绝不回滚审核主事务。
     """
-    from app.services.message.event import EventService
+    from app.services.message.events import BaseEvent
 
     try:
         async with _new_session() as ns:
-            await EventService.report(
-                ns,
+            await BaseEvent.from_req(
                 _EventReportReq_for_reject(operator_mid, dyn, reject_reason),
-            )
+            ).report(ns)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"审核驳回通知投递失败（弱依赖，已忽略）: {e}")
 

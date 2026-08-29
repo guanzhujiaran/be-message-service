@@ -11,7 +11,7 @@
 from sqlalchemy import BIGINT, PrimaryKeyConstraint, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from bili_common.models.interaction_stat import InteractionStatBase, InteractionViewLogBase
 
 

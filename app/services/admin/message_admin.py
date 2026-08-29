@@ -9,7 +9,7 @@ from bili_common.deps.permissions import sanitize_permissions
 from sqlmodel import func, select
 
 from app.core.database import SessionDep
-from app.models.db.admin import MessageAdmin
+from app.models.db.admin_tbl import MessageAdmin
 
 
 class MessageAdminService:

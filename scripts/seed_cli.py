@@ -48,8 +48,8 @@ from tqdm import tqdm
 
 from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
-from app.models.db.dm import DmMessageIndex, DmSession
-from app.models.db.setting import UserMessageSetting
+from app.models.db.dm_tbl import DmMessageIndex, DmSession
+from app.models.db.setting_tbl import UserMessageSetting
 from app.models.enums import (
     DmMsgStatusEnum,
     DmRelationEnum,

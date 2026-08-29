@@ -51,14 +51,13 @@ async def _notify_reject(operator_mid: int, topic: TMomentTopic, reject_reason: 
 
     独立会话投递：即便事件落库失败，也绝不回滚审核主事务。
     """
-    from app.services.message.event import EventService
+    from app.services.message.events import BaseEvent
 
     try:
         from app.models.schemas import EventReportReq
 
         async with _new_session() as ns:
-            await EventService.report(
-                ns,
+            await BaseEvent.from_req(
                 EventReportReq(
                     mid=topic.creatorMid,
                     event_type=EventTypeEnum.AUDIT_REJECT,
@@ -68,7 +67,7 @@ async def _notify_reject(operator_mid: int, topic: TMomentTopic, reject_reason: 
                     content=reject_reason,
                     biz_id=f"topic_{topic.topicId}",
                 ),
-            )
+            ).report(ns)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"话题审核驳回通知投递失败（弱依赖，已忽略）: {e}")
 

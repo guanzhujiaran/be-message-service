@@ -20,9 +20,9 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import EventMessage, TResourceFeed
-from app.models.db.comment import CommentReport
-from app.models.db.moment import TMoment, TResourceReport
-from app.models.db.report import TUserReport
+from app.models.db.comment_tbl import CommentReport
+from app.models.db.moment_tbl import TMoment, TResourceReport
+from app.models.db.report_tbl import TUserReport
 from app.models.enums import (
     CommentTypeEnum,
     EventTypeEnum,

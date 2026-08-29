@@ -143,22 +143,20 @@ class LikeAction(BaseInteractionAction):
         from app.core.database import new_session
         from app.models.enums import EventTypeEnum, SourceTypeEnum
         from app.models.schemas import EventReportReq
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         try:
             async with new_session() as ns:
-                await EventService.report(
-                    ns,
+                await BaseEvent.from_req(
                     EventReportReq(
                         mid=resource.authorMid,
                         event_type=EventTypeEnum.LIKE,
                         source_type=SourceTypeEnum.DYNAMIC,
                         source_id=str(resource.bizId),
                         actor_mid=self.actor_mid,
-                        content=resource.content,
                         biz_id=str(resource.bizId),
                     ),
-                )
+                ).report(ns)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"点赞通知投递失败（弱依赖，已忽略）: {e}")
 

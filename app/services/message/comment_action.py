@@ -146,7 +146,7 @@ class CommentActionService:
         from loguru import logger
 
         from app.core.database import new_session
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         try:
             async with new_session() as ns:
@@ -157,8 +157,7 @@ class CommentActionService:
                         )
                     )
                 ).one_or_none()
-                await EventService.report(
-                    ns,
+                await BaseEvent.from_req(
                     EventReportReq(
                         mid=row.mid,
                         event_type=EventTypeEnum.LIKE,
@@ -168,7 +167,7 @@ class CommentActionService:
                         content=content.message if content else None,
                         biz_id=str(row.rpid),
                     ),
-                )
+                ).report(ns)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"点赞通知投递失败（弱依赖，已忽略）: {e}")
 

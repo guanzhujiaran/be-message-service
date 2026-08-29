@@ -35,7 +35,7 @@ from app.models.db import (
     TResourceFeed,
     TResourceReport,
 )
-from app.models.db.comment import CommentSubject
+from app.models.db.comment_tbl import CommentSubject
 from app.models.enums import (
     CommentTypeEnum,
     InteractionBizTypeEnum,

@@ -52,6 +52,7 @@ from app.services.message import publisher
 from app.services.message.activity import ActivityService
 from app.services.message.dm_content import DmContentService
 from app.services.user.follow import FollowService
+from app.services.user.pptr_user import CommentUserBrief, PptrUserService
 from app.services.message.notify import NotifyService
 from app.services.message.setting import SettingService
 
@@ -286,6 +287,14 @@ class DmService:
         )
         rows = (await session.exec(stmt)).all()
 
+        # 批量解析对端用户卡片（昵称 + 头像）：DM 库与 pptr 库隔离，get_many 内部自建
+        # 只读会话。一次 WHERE uid IN (...) 取回本页所有对端信息，避免每条会话各自查库；
+        # 优先用实时卡片数据，缺漏时回落到会话快照里存储的 name/avatar。
+        if rows:
+            user_cache = await PptrUserService.get_many([r.talker_mid for r in rows])
+        else:
+            user_cache = {}
+
         # 未读汇总：主列表红点与陌生人红点分开展示
         unread_stmt = (
             select(DmSession.relation, func.sum(DmSession.unread_count))
@@ -298,7 +307,7 @@ class DmService:
         }
 
         return DmSessionListResp(
-            items=[DmService._to_session_item(r) for r in rows],
+            items=[DmService._to_session_item(r, user_cache) for r in rows],
             total=total,
             unread_total=sum(unread_map.values()),
             stranger_unread=unread_map.get(str(DmRelationEnum.STRANGER), 0),
@@ -399,6 +408,24 @@ class DmService:
 
         # 进入会话即视为一次活跃行为
         await ActivityService.touch(session, owner_mid)
+
+        # 进入会话即视为已读：打开聊天时一并清未读，避免「读了但红点不消失」
+        # 还要前端再单独调 /ack。msg_feed/unread 的 dm 未读取自各会话 unread_count，
+        # 此处清零后顶部红点即可同步下降。仅确有未读才写回，避免无谓写库。
+        sess_row = (
+            await session.exec(
+                select(DmSession).where(
+                    DmSession.owner_mid == owner_mid,
+                    DmSession.talker_mid == talker_mid,
+                    DmSession.is_deleted == False,
+                )
+            )
+        ).first()
+        if sess_row is not None and sess_row.unread_count > 0:
+            sess_row.unread_count = 0
+            sess_row.ack_msgkey = sess_row.last_msgkey
+            sess_row.updated_at = datetime.now()
+            await session.commit()
 
         return DmMessageListResp(
             items=items,
@@ -602,11 +629,15 @@ class DmService:
         session.add(row)
 
     @staticmethod
-    def _to_session_item(row: DmSession) -> DmSessionItem:
+    def _to_session_item(
+        row: DmSession, user_cache: dict[int, CommentUserBrief]
+    ) -> DmSessionItem:
+        uc = user_cache.get(row.talker_mid)
         return DmSessionItem(
             talker_mid=row.talker_mid,
-            talker_name=row.talker_name,
-            talker_avatar=row.talker_avatar,
+            # 优先用实时用户卡片，缺漏时回落到会话快照里存储的 name/avatar
+            talker_name=(uc.uname if uc else None) or row.talker_name,
+            talker_avatar=(uc.avatar if uc else None) or row.talker_avatar,
             session_key=row.session_key,
             last_msgkey=str(row.last_msgkey) if row.last_msgkey else None,
             last_content_preview=row.last_content_preview,

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core.config import settings
-from app.models.db.follow import UserFollow
+from app.models.db.follow_tbl import UserFollow
 from app.models.enums import FollowStatusEnum
 from app.services.user.follow import FollowService
 from app.services.user.pptr_user import PptrUserService

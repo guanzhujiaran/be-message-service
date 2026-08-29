@@ -26,7 +26,7 @@ from app.models.schemas import (
     EventReportResp,
 )
 from app.services.message.activity import ActivityService
-from app.services.message.event import EventService
+from app.services.message.events import BaseEvent
 
 router = APIRouter(prefix="/api/v1/message/event", tags=["message-event"])
 
@@ -46,7 +46,7 @@ async def report_event(
 
     本接口面向内部服务调用（不要求登录态），mid 由请求体显式指定。
     """
-    data = await EventService.report(session, req)
+    data = await BaseEvent.from_req(req).report(session)
     return StandardResponse(data=data)
 
 
@@ -65,7 +65,7 @@ async def aggregate_event(
 ) -> StandardResponse[EventAggregateResp]:
     """按来源实体聚合的提醒卡片列表（消息中心首页）。"""
     await ActivityService.touch(session, user.mid)
-    items, total = await EventService.aggregate(
+    items, total = await BaseEvent.aggregate(
         session,
         user.mid,
         event_type=event_type,
@@ -97,7 +97,7 @@ async def list_event(
     - `data.total.items`：本页聚合条目（每条含完整 users[] + item + counts）；
     - `data.total.cursor`：翻页游标（is_end / id / time）。
     """
-    resp = await EventService.list_msgfeed(
+    resp = await BaseEvent.list_msgfeed(
         session,
         user.mid,
         event_type=event_type,
@@ -120,7 +120,7 @@ async def read_event(
     - 传 `event_type` → 该类型一键已读；
     - 再加 `source_type + source_id` → 只清掉某一张聚合卡片。
     """
-    data = await EventService.mark_read(session, user.mid, req)
+    data = await BaseEvent.mark_read(session, user.mid, req)
     return StandardResponse(data=data)
 
 
@@ -130,7 +130,7 @@ async def delete_event(
 ) -> StandardResponse[int]:
     if not req.event_ids:
         return StandardResponse(code=400, msg="event_ids 不能为空")
-    affected = await EventService.delete(session, user.mid, req.event_ids)
+    affected = await BaseEvent.delete(session, user.mid, req.event_ids)
     return StandardResponse(data=affected)
 
 
@@ -139,7 +139,7 @@ async def delete_event(
 )
 async def unread_event(session: SessionDep, user: RequiredUser) -> StandardResponse[dict]:
     """一次查询返回 like / reply / at 的未读数，供前端渲染红点。"""
-    data = await EventService.count_unread_by_type(session, user.mid)
+    data = await BaseEvent.count_unread_by_type(session, user.mid)
     return StandardResponse(
         data={
             "like": data.get(EventTypeEnum.LIKE.value, 0),

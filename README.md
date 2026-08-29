@@ -190,11 +190,15 @@ MYSQL_MESSAGE_URL='mysql+aiomysql://root:<pwd>@127.0.0.1:10000/BiliMessageDB?cha
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/notify/pull` | 拉取增量通知（`cursor` / `limit`），服务端同步推进游标，重复调用不重复 |
-| GET | `/notify/list` | 分页查看历史（`page_num` / `page_size` / `only_unread`），不推进游标 |
+| GET | `/notify/pull` | 拉取增量通知（`cursor` / `limit`），服务端同步推进游标，重复调用不重复；**读取即已读** |
+| GET | `/notify/list` | 分页查看历史（`page_num` / `page_size`），不推进游标；**读取即已读** |
 | GET | `/notify/unread` | 未读数 |
-| POST | `/notify/read` | 标记已读（`notify_ids` 为空=全部已读） |
-| POST | `/notify/delete` | 删除（仅自己不可见） |
+| GET | `/notify/system` | B 站风格系统通知列表；**读取即已读** |
+| POST | `/notify/delete` | 删除（仅管理员，逐用户软删） |
+
+> **读取即已读**：`/pull` / `/list` / `/system` 在返回前把本页命中的通知批量置为已读（幂等 upsert），
+> 前端无需再调用任何「标记已读」接口，`POST /notify/read` 已删除。
+> 出参 `is_read` 是本次读取**前**的快照，可据此高亮「本次新到」。
 | POST | `/notify/admin/create` | 发布通知（管理员）：`target_type` = all/role/level/vip/custom；`publish_now=false` 存草稿 |
 | POST | `/notify/admin/update/{id}` | 修改通知（管理员） |
 | POST | `/notify/admin/revoke/{id}` | 撤回通知（管理员），用户侧立即不可见 |

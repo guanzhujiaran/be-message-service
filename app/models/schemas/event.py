@@ -3,18 +3,34 @@
 设计原则（与 Phase L2 一致）：
 - **触发者只存 mid**：昵称 / 头像不冗余上报、不冗余落库，读取时按 mid 回查用户服务补全；
 - **原资源只存 id**：`source_id` / `source_type` / `biz_id` 定位原资源，
-  标题 / 封面 / 跳转链接（即 `title` / `image` / `uri`）读取时实时回捞原资源补全，
+  标题 / 封面（即 `title` / `image`）读取时实时回捞原资源补全，
   不在事件表冗余存储快照，省空间也更不易过期；
+- **跳转 uri 不在此拼接**：业务由 `business` + `type` 表达，uri 由前端按这两个字段
+  自行决定；`business_name` 作为 computed field 给出 `business` 的文字名称；
 - `content` / `desc` 仅承载事件自身正文（回复正文 / @上下文 / 审核驳回原因），与原资源区分。
 """
 
 from datetime import datetime
 from typing import Optional
 
+from pydantic import computed_field
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import EventTypeEnum, SourceTypeEnum
 from app.models.schemas.base import AutoStrMixin
+
+# source_type（即 msgfeed item 的 business）→ 文字业务名称。
+# 跳转 uri 不再由后端拼接，前端按 business + type 自行决定业务与跳转；
+# 这里只额外给出可读的业务名，前端据此展示「对动态 / 对评论」的提醒。
+_BUSINESS_NAME: dict[SourceTypeEnum, str] = {
+    SourceTypeEnum.VIDEO: "视频",
+    SourceTypeEnum.DYNAMIC: "动态",
+    SourceTypeEnum.ARTICLE: "专栏",
+    SourceTypeEnum.COMMENT: "评论",
+    SourceTypeEnum.LOTTERY: "抽奖",
+    SourceTypeEnum.OTHER: "其他",
+}
+_DEFAULT_BUSINESS_NAME = "其他"
 
 
 class EventUserBrief(SQLModel):
@@ -67,7 +83,8 @@ class EventReportResp(SQLModel, AutoStrMixin):
 class EventItem(SQLModel, AutoStrMixin):
     """明细列表中的一条事件。
 
-    `title` / `image` / `uri` 读取时按 source_id 实时回捞原资源补全（见 Phase L2），不冗余存储；
+    `title` / `image` 读取时按 source_id 实时回捞原资源补全（见 Phase L2），不冗余存储；
+    跳转 uri **不在此拼接**，由前端按 business + type 自行决定；
     触发者仅保留 `actor_mid`，昵称 / 头像读取时按 mid 回查用户服务。
     """
 
@@ -80,7 +97,6 @@ class EventItem(SQLModel, AutoStrMixin):
     )
     title: str | None = None
     image: str | None = None
-    uri: str | None = None
     actor_mid: int
     desc: str | None = None
     is_read: bool = False
@@ -103,7 +119,6 @@ class EventAggregateItem(SQLModel, AutoStrMixin):
     )
     title: str | None = None
     image: str | None = None
-    uri: str | None = None
     count: int = Field(default=0, description="该分组下的事件总数")
     unread_count: int = Field(default=0, description="该分组下的未读数")
     actors: list[EventUserBrief] = Field(
@@ -121,8 +136,12 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
     target_content）读取时按 source_id（rpid）实时回捞评论表补全（见 Phase L2），
     不冗余存储，仅靠 resource_id + resource_type 唯一定位原资源。
 
-    `title` / `desc` / `image` / `uri` 同样读取时按 source_type + source_id 实时回捞
+    `title` / `desc` / `image` 同样读取时按 source_type + source_id 实时回捞
     原资源补全，不冗余存储快照。
+
+    **跳转 uri 不在此拼接**：`business`（source_type）+ `type`（event_type）已足够
+    定位业务，uri 由前端按这两个字段自行决定。`business_name` 是 `business` 的
+    文字形式（computed field），供前端直接展示「对动态 / 对评论」的提醒。
     """
 
     item_id: int
@@ -136,10 +155,26 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
     title: str = ""
     desc: str = ""
     image: str = ""
-    uri: str = ""
     source_content: str = ""
     target_content: str = ""
+    # 触发评论是否处于「非正常状态」（被删 / 未过审 / 驳回 / 下架 / 待审）：
+    # True 时 source_content / target_content 为空，前端展示「该评论已被删除」占位。
+    comment_deleted: bool = False
     ctime: int
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def business_name(self) -> str:
+        """`business`（source_type）的文字名称，如「动态」/「评论」/「抽奖」。
+
+        前端据此直接展示这是对哪种实体的提醒，无需自行维护 business→文案 的映射。
+        未知 / 缺省 business 统一回落「其他」。
+        """
+        try:
+            st = SourceTypeEnum(self.business)
+        except ValueError:
+            return _DEFAULT_BUSINESS_NAME
+        return _BUSINESS_NAME.get(st, _DEFAULT_BUSINESS_NAME)
 
 
 class EventMsgfeedItem(SQLModel, AutoStrMixin):

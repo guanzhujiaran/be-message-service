@@ -13,7 +13,7 @@ from datetime import datetime
 from sqlalchemy import BIGINT
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 
 
 class UserMessageSetting(TimestampMixin, table=True):

@@ -8,6 +8,18 @@
 「把 handler 绑定到队列」的注册胶水。
 """
 
-from app.mq.consumers import comment, deactivate, dm, interaction_view, push
+from app.mq.consumers import (
+    comment,
+    deactivate,
+    dm,
+    interaction_view,
+    push,
+)
 
-__all__ = ["comment", "deactivate", "dm", "interaction_view", "push"]
+__all__ = [
+    "comment",
+    "deactivate",
+    "dm",
+    "interaction_view",
+    "push",
+]

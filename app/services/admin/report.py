@@ -19,9 +19,9 @@ from sqlmodel import col, select
 from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
 from app.models.db import TResourceFeed
-from app.models.db.comment import CommentReport, CommentIndex
-from app.models.db.moment import TMoment, TResourceReport
-from app.models.db.report import TUserReport
+from app.models.db.comment_tbl import CommentReport, CommentIndex
+from app.models.db.moment_tbl import TMoment, TResourceReport
+from app.models.db.report_tbl import TUserReport
 from app.models.enums import (
     CommentStateEnum,
     EventTypeEnum,
@@ -375,12 +375,11 @@ class ReportService:
 
         独立会话投递：即便事件落库失败，也绝不回滚举报处置主事务。
         """
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         try:
             async with new_session() as s:
-                await EventService.report(
-                    s,
+                await BaseEvent.from_req(
                     EventReportReq(
                         mid=dyn.mid,
                         event_type=EventTypeEnum.HIDE,
@@ -390,7 +389,7 @@ class ReportService:
                         content="你的内容因违规被管理员下架",
                         biz_id=str(dyn.dynId),
                     ),
-                )
+                ).report(s)
         except Exception:  # noqa: BLE001
             logger.warning(f"举报下架通知作者失败 dynId={dyn.dynId}，不影响处置结果")
 
@@ -401,7 +400,7 @@ class ReportService:
         ``resolved=True`` → ``REPORT_RESOLVED``（成立已处理）；``False`` →
         ``REPORT_REJECT``（未通过）。独立会话投递，失败不阻塞举报状态流转。
         """
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         event_type = (
             EventTypeEnum.REPORT_RESOLVED if resolved else EventTypeEnum.REPORT_REJECT
@@ -413,8 +412,7 @@ class ReportService:
         )
         try:
             async with new_session() as s:
-                await EventService.report(
-                    s,
+                await BaseEvent.from_req(
                     EventReportReq(
                         mid=rec.reportMid,
                         event_type=event_type,
@@ -424,7 +422,7 @@ class ReportService:
                         content=content,
                         biz_id=str(rec.bizId),
                     ),
-                )
+                ).report(s)
         except Exception:  # noqa: BLE001
             logger.warning(
                 f"举报审核结果通知举报人失败 reportMid={rec.reportMid} "

@@ -50,24 +50,22 @@ from app.services.user.pptr_user import PptrUserService, _level_calc
 
 async def _push_new_user_notify(
     *, user_name: str, uid: int, uname: str = ""
-) -> None:
-    """创建新用户后推送站内系统消息（写入 msg_notify，站内信）。
+) -> bool:
+    """新建用户后发布「欢迎注册」系统通知（写入 msg_notify，站内信）。
 
-    定位：**站内系统消息**，不经 PushMe / PushPlus 等第三方渠道。采用
-    `NotifyService.send_to_user` 的 CUSTOM 定向投放，独立事务写入；
-    弱依赖：失败仅记日志，不阻断调用方 RPC 返回。
+    委托 `NotifyService.send_welcome` 统一实现（Casdoor 登录注册通道共用同一逻辑），
+    避免 OAuth 通道漏发欢迎消息。弱依赖，失败仅记 ERROR 告警，不阻断创建用户 RPC。
+
+    Returns:
+        bool: 是否发布成功。
     """
+    nickname = uname or user_name
     try:
-        await NotifyService.send_to_user(
-            mid=uid,
-            title=f"[新用户注册] {user_name}",
-            content=(
-                f"新用户注册成功：user_name={user_name} uid={uid} "
-                f"uname={uname or '-'}"
-            ),
-        )
+        await NotifyService.send_welcome(uid, nickname)
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"创建用户后推送站内系统消息失败（弱依赖，已忽略）: {e}")
+        logger.error(f"新建用户 {uid} 的欢迎系统通知发布失败（弱依赖，已忽略）: {e}")
+        return False
+    return True
 
 
 def _profile_to_dto(info, detail, vip, level) -> PptrUserProfile:
@@ -180,10 +178,13 @@ async def rpc_create_user(params: PptrCreateUserParams) -> StandardResponse:
         ip=params.ip,
         ua=params.ua,
     )
-    # 创建新用户后推送一条站内系统消息（写入 msg_notify，弱依赖、不阻断 RPC 返回）
-    await _push_new_user_notify(
-        user_name=params.user_name, uid=uid, uname=params.uname or ""
-    )
+    # 新建用户后发布一条「欢迎注册」系统通知（写入 msg_notify，弱依赖、不阻断 RPC 返回）。
+    # 仅 created=True 时发布：create_user 对已存在用户是 upsert（Casdoor 登录每次都会调用），
+    # 不该给老用户反复发欢迎通知。
+    if created:
+        await _push_new_user_notify(
+            user_name=params.user_name, uid=uid, uname=params.uname or ""
+        )
     return success_response(data=PptrCreateUserResult(uid=uid, created=created))
 
 

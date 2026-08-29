@@ -16,7 +16,7 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text
 from sqlmodel import Column, Field, SQLModel, UniqueConstraint
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import NotifyLevelEnum, NotifyStatusEnum, NotifyTargetTypeEnum
 

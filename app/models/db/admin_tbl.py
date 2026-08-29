@@ -9,7 +9,7 @@
 from sqlalchemy import BIGINT, JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 
 
 class MessageAdmin(TimestampMixin, table=True):

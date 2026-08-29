@@ -57,6 +57,7 @@ from app.core.database import ensure_database, test_pptr_connection
 from app.core.database import test_connection as test_mysql_connection
 from app.core.migration import run_alembic_pptr_upgrade, run_alembic_upgrade
 from app.core.sharding import ensure_current_month_shards
+from app.mq import rpc_notify  # noqa: F401
 from app.mq import rpc_pptr_user  # noqa: F401
 from app.mq import rpc_push  # noqa: F401
 from app.mq.consumers import comment, deactivate, dm, push  # noqa: F401

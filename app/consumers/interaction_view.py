@@ -22,28 +22,14 @@ import asyncio
 from faststream.rabbit import RabbitMessage
 from loguru import logger
 
+from app.consumers.retry import DEFAULT_MAX_RETRIES, retry_count
 from app.core.database import new_session
 from app.models.enums import InteractionBizTypeEnum
 from app.models.schemas import InteractionViewPayload
 from app.services.interaction_actions import get_action
 
 #: 浏览统计最大重试次数（requeue 重投超过该次数则 ack 丢弃）
-MAX_VIEW_RETRIES = 3
-
-
-def _retry_count(msg: RabbitMessage) -> int:
-    """从 RabbitMQ `x-death` 消息头统计该消息已重投次数。
-
-    RabbitMQ 规范：消息被 requeue 后 headers 注入 `x-death`（数组），
-    每项含 `count`（在该队列被拒绝/重投的次数）。无 x-death = 未重投过。
-    """
-    try:
-        headers = msg.raw_message.headers or {}
-        x_death = headers.get("x-death") or []
-        counts = [int(d.get("count", 0)) for d in x_death if isinstance(d, dict)]
-        return max(counts) if counts else 0
-    except Exception:  # noqa: BLE001
-        return 0
+MAX_VIEW_RETRIES = DEFAULT_MAX_RETRIES
 
 
 async def handle_interaction_view(payload: InteractionViewPayload, msg: RabbitMessage) -> None:
@@ -74,7 +60,7 @@ async def handle_interaction_view(payload: InteractionViewPayload, msg: RabbitMe
             raise
         except Exception as e:  # noqa: BLE001
             await session.rollback()
-            retries = _retry_count(msg)
+            retries = retry_count(msg)
             if retries >= MAX_VIEW_RETRIES:
                 logger.error(
                     f"[interaction_view] 消费失败已达最大重试 {MAX_VIEW_RETRIES} 次，ack 丢弃 "

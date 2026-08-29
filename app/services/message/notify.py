@@ -13,6 +13,11 @@ N 条冗余行，对小设备是灾难；而通知的读取频率远低于私信
 2. 已读状态表 `(mid, notify_id)` 唯一索引：并发标记已读天然幂等。
 3. 通知本体的 `dispatched` 标记：定时推送任务只处理未投递过的通知，
    投递成功后立刻置位，任务重入不会重复推送。
+
+**已读不需要前端单独调用**：`pull` / `list_for_user` 在返回前会把本页命中的
+通知批量置为已读（读取即已读），对外不再暴露 `POST /notify/read`。
+出参的 `is_read` 是**本次读取前**的快照，前端据此高亮「本次新到」；
+落库状态已是已读，下次读取即为 true。
 """
 
 from datetime import datetime
@@ -36,7 +41,6 @@ from app.models.schemas import (
     NotifyCreateReq,
     NotifyItem,
     NotifyPullResp,
-    NotifyReadResp,
     NotifyUpdateReq,
 )
 
@@ -134,10 +138,60 @@ class NotifyService:
         await session.commit()
         await session.refresh(row)
         logger.info(
-            f"管理员 {creator_mid} 发布通知 id={row.id} "
-            f"target={row.target_type}:{row.target_value} status={row.status}"
+            f"管理员 {creator_mid} 发布通知 >>>\n"
+            f"  id={row.id}\n"
+            f"  title={row.title!r}\n"
+            f"  content={row.content!r}\n"
+            f"  target_type={row.target_type} ({NotifyTargetTypeEnum(row.target_type).name})\n"
+            f"  target_value={row.target_value!r}\n"
+            f"  level={row.level} ({NotifyLevelEnum(row.level).name})\n"
+            f"  status={row.status} ({NotifyStatusEnum(row.status).name})\n"
+            f"  jump_url={row.jump_url!r}\n"
+            f"  publish_at={row.publish_at}\n"
+            f"  expire_at={row.expire_at}"
         )
         return NotifyService._to_admin_item(row)
+
+    @staticmethod
+    async def create_idempotent(
+        session: AsyncSession, creator_mid: int, req: NotifyCreateReq
+    ) -> tuple[NotifyAdminItem | None, bool]:
+        """幂等发布系统通知（2.48.0，MQ 异步发布通道用）。
+
+        仅对 **CUSTOM + 单个 mid** 的定向通知生效：以 `(target_value, title)`
+        判重，命中既有通知则原样返回（`duplicated=True`），不重复写入。
+        面向全体 / 角色 / 等级 / VIP 的通知本就一条对多人，不走判重，直接 `create`。
+
+        MQ 是「至少一次投递」，配合本方法的判重即可达到「恰好一次写入」：
+        消费者失败重投不会产生重复的欢迎通知。
+
+        Returns:
+            `(item, duplicated)`：`item` 为新建或既有通知，`duplicated` 表示是否命中既有。
+        """
+        target = (req.target_value or "").strip()
+        if (
+            req.target_type == NotifyTargetTypeEnum.CUSTOM
+            and target
+            and "," not in target
+        ):
+            existing = (
+                await session.exec(
+                    select(NotifyMessage)
+                    .where(
+                        NotifyMessage.target_type == NotifyTargetTypeEnum.CUSTOM,
+                        NotifyMessage.target_value == target,
+                        NotifyMessage.title == req.title,
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if existing is not None:
+                logger.info(
+                    f"系统通知幂等命中，跳过重复发布 id={existing.id} "
+                    f"target={target} title={req.title}"
+                )
+                return NotifyService._to_admin_item(existing), True
+        return await NotifyService.create(session, creator_mid, req), False
 
     @staticmethod
     async def send_to_user(
@@ -171,6 +225,39 @@ class NotifyService:
                 await s.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"向用户 {mid} 发送系统通知失败（弱依赖，已忽略）: {e}")
+
+    @staticmethod
+    async def send_welcome(mid: int, nickname: str) -> None:
+        """向新注册用户发送欢迎注册系统通知（幂等，弱依赖）。
+
+        由两条注册通道共用：RPC `create_user`（be-gateway 后台注册）与
+        Casdoor 登录回调 `create_local_user_from_casdoor`（OAuth 首次注册），
+        避免 OAuth 通道漏发欢迎消息（表现为「注销后重新 CASDOOR 登录无欢迎消息」）。
+
+        走 `create_idempotent` 幂等判重：重复调用（RPC 重试、注销后重注册）不会
+        给用户发两条一样的欢迎通知。失败仅告警，不阻断主流程。
+        """
+        try:
+            async with new_session() as s:
+                await NotifyService.create_idempotent(
+                    s,
+                    creator_mid=0,
+                    req=NotifyCreateReq(
+                        title=f"欢迎加入，{nickname}！",
+                        content=(
+                            f"Hi，{nickname}！欢迎加入 BilibiliExplosion，"
+                            f"你的账号（uid={mid}）已创建成功。\n"
+                            "在这里你可以发布动态、关注感兴趣的作者、参与评论互动，"
+                            "快去发布第一条动态吧～"
+                        ),
+                        target_type=NotifyTargetTypeEnum.CUSTOM,
+                        target_value=str(mid),
+                        level=NotifyLevelEnum.NORMAL,
+                        publish_now=True,
+                    ),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"向用户 {mid} 发送欢迎注册通知失败（弱依赖，已忽略）: {e}")
 
     @staticmethod
     async def update(
@@ -236,6 +323,9 @@ class NotifyService:
         游标语义：只返回 `id > cursor` 的通知。cursor 未显式传入时使用
         服务端为该用户持久化的 `last_notify_id`，因此即使客户端丢失本地状态，
         也不会把老通知重新拉一遍。
+
+        返回前会把本批通知自动置为已读（读取即已读），出参 `unread_count`
+        为标记后的剩余未读数。
         """
         cursor_row = await NotifyService._get_or_create_cursor(session, user.mid)
         effective_cursor = cursor if cursor is not None else cursor_row.last_notify_id
@@ -275,6 +365,9 @@ class NotifyService:
             for r in rows
         ]
 
+        # 读取即已读：本批通知在返回前批量置为已读（幂等 upsert）
+        await NotifyService._mark_read_ids(session, user.mid, [i.id for i in items])
+
         # 推进服务端游标（只增不减，避免并发拉取导致游标回退）
         new_cursor = max([effective_cursor, *[i.id for i in items]]) if items else effective_cursor
         cursor_row.last_notify_id = max(cursor_row.last_notify_id, new_cursor)
@@ -295,9 +388,15 @@ class NotifyService:
         user: AuthInfo,
         page_num: int = 1,
         page_size: int = 20,
-        only_unread: bool = False,
     ) -> tuple[list[NotifyItem], int]:
-        """分页查看历史通知（与 pull 不同，不推进游标）。"""
+        """分页查看历史通知（与 pull 不同，不推进游标）。
+
+        返回前会把本页通知自动置为已读（读取即已读）。出参 `is_read` 是读取前的
+        快照，前端据此高亮「本次新到」；落库状态已是已读。
+
+        不再提供 `only_unread` 过滤：读取即已读会让「未读」结果集在翻页过程中
+        持续收缩（第 1 页读掉的条目从第 2 页候选里消失），offset 分页必然跳条。
+        """
         state = NotifyState
         join_cond = and_(state.notify_id == NotifyMessage.id, state.mid == user.mid)
 
@@ -306,10 +405,6 @@ class NotifyService:
             _target_condition(user),
             or_(state.is_deleted.is_(None), state.is_deleted == False),
         ]
-        if only_unread:
-            base_conditions.append(
-                or_(state.is_read.is_(None), state.is_read == False)
-            )
 
         count_stmt = (
             select(func.count())
@@ -343,6 +438,10 @@ class NotifyService:
             )
             for n, is_read, read_at in rows
         ]
+
+        # 读取即已读：本页通知在返回前批量置为已读（幂等 upsert）
+        await NotifyService._mark_read_ids(session, user.mid, [i.id for i in items])
+
         return items, total
 
     @staticmethod
@@ -365,31 +464,24 @@ class NotifyService:
         return int((await session.exec(stmt)).one() or 0)
 
     @staticmethod
-    async def mark_read(
-        session: AsyncSession, user: AuthInfo, notify_ids: list[int] | None = None
-    ) -> NotifyReadResp:
-        """标记已读。
+    async def _mark_read_ids(
+        session: AsyncSession, mid: int, notify_ids: list[int]
+    ) -> int:
+        """把指定通知批量置为已读，返回受影响条数。
 
-        `notify_ids` 为空时标记全部可见通知为已读。
+        仅供「读取即已读」内部调用（供 `pull` / `list_for_user` 在返回前调用）。
         写入走 `INSERT ... ON DUPLICATE KEY UPDATE`，配合 (mid, notify_id) 唯一索引，
-        重复调用不会产生脏数据。
+        重复读取不会产生脏数据。
         """
-        if notify_ids is None:
-            stmt = select(NotifyMessage.id).where(
-                _visible_condition(), _target_condition(user)
-            )
-            notify_ids = [i for i in (await session.exec(stmt)).all() if i is not None]
-
-        if not notify_ids:
-            return NotifyReadResp(
-                affected=0, unread_count=await NotifyService.unread_count(session, user)
-            )
+        ids = {nid for nid in notify_ids if nid}
+        if not ids:
+            return 0
 
         now = datetime.now()
         insert_stmt = mysql_insert(NotifyState.__table__).values(
             [
                 {
-                    "mid": user.mid,
+                    "mid": mid,
                     "notify_id": nid,
                     "is_read": True,
                     "read_at": now,
@@ -397,7 +489,7 @@ class NotifyService:
                     "created_at": now,
                     "updated_at": now,
                 }
-                for nid in set(notify_ids)
+                for nid in ids
             ]
         )
         insert_stmt = insert_stmt.on_duplicate_key_update(
@@ -405,11 +497,7 @@ class NotifyService:
         )
         await session.exec(insert_stmt)  # type: ignore[call-overload]
         await session.commit()
-
-        return NotifyReadResp(
-            affected=len(set(notify_ids)),
-            unread_count=await NotifyService.unread_count(session, user),
-        )
+        return len(ids)
 
     @staticmethod
     async def delete_for_user(

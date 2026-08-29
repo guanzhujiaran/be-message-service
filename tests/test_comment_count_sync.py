@@ -15,7 +15,7 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import CommentIndex, CommentSubject
-from app.models.db.moment import TMoment
+from app.models.db.moment_tbl import TMoment
 from app.models.enums import (
     CommentStateEnum,
     CommentTypeEnum,

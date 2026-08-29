@@ -4,8 +4,9 @@
 
 - **管理员**（role=root）：发布 / 修改 / 撤回通知，可按用户类型（全体 / 角色 /
   等级 / 大会员 / 指定 mid）投放，支持定时发布与过期时间。
-- **普通用户**：定时拉取增量（游标语义，天然避免重复消费）、分页查看历史、
-  标记已读。
+- **普通用户**：定时拉取增量（游标语义，天然避免重复消费）、分页查看历史。
+  **读取即已读**：`/pull` / `/list` / `/system` 在返回前自动把本页通知置为已读，
+  因此不提供（也不需要）单独的「标记已读」接口。
 - **系统通知不允许普通用户删除**：每条系统通知（如审核驳回告知）对所有用户
   一致可见，用户侧只能标记已读，删除只能由管理员在管理界面（撤回）进行。
   因此 `/notify/delete` 已收敛为仅管理员可用，普通用户调用会被拒绝。
@@ -26,10 +27,9 @@ from app.models.schemas import (
     NotifyAdminItem,
     NotifyAdminListResp,
     NotifyCreateReq,
+    NotifyDeleteReq,
     NotifyListResp,
     NotifyPullResp,
-    NotifyReadReq,
-    NotifyReadResp,
     NotifyUpdateReq,
     SystemNotifyItem,
     SystemNotifyListResp,
@@ -55,6 +55,9 @@ async def pull_notify(
     只返回 `id > cursor` 的通知，拉取后服务端会推进游标，
     因此**重复调用不会拿到重复数据**（即使客户端丢了本地游标）。
     每次拉取同时记一次用户活跃，用于后续推送策略分流。
+
+    本批通知在返回时即被自动标记为已读（读取即已读），响应的 `unread_count`
+    是标记后的剩余未读数。
     """
     await ActivityService.touch(session, user.mid)
     data = await NotifyService.pull(session, user, cursor=cursor, limit=limit)
@@ -69,11 +72,13 @@ async def list_notify(
     user: RequiredUser,
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    only_unread: bool = Query(default=False, description="仅看未读"),
 ) -> StandardResponse[NotifyListResp]:
-    """分页查看历史通知（不推进拉取游标）。"""
+    """分页查看历史通知（不推进拉取游标），返回前本页通知自动置为已读。
+
+    出参 `is_read` 是本次读取前的快照，可据此高亮「本次新到」的通知。
+    """
     items, total = await NotifyService.list_for_user(
-        session, user, page_num=page_num, page_size=page_size, only_unread=only_unread
+        session, user, page_num=page_num, page_size=page_size
     )
     return StandardResponse(
         data=NotifyListResp(
@@ -116,20 +121,9 @@ async def system_notify_bili(
     )
 
 
-
-
-@router.post("/read", response_model=StandardResponse[NotifyReadResp], summary="标记通知已读")
-async def read_notify(
-    session: SessionDep, user: RequiredUser, req: NotifyReadReq
-) -> StandardResponse[NotifyReadResp]:
-    """标记已读：传 notify_ids 精确标记，不传则全部已读。写入幂等。"""
-    data = await NotifyService.mark_read(session, user, req.notify_ids)
-    return StandardResponse(data=data)
-
-
 @router.post("/delete", response_model=StandardResponse[int], summary="删除通知（仅管理员，逐用户软删）")
 async def delete_notify(
-    session: SessionDep, admin: AdminUser, req: NotifyReadReq
+    session: SessionDep, admin: AdminUser, req: NotifyDeleteReq
 ) -> StandardResponse[int]:
     """仅管理员可调用。
 
@@ -158,6 +152,12 @@ async def create_notify(
 
     `publish_now=False` 存为草稿；`publish_at` 为未来时间即定时发布，
     到点后由后台任务自动投递推送（活跃用户实时推、非活跃用户批量推）。
+
+    与对外 RPC `message.notify.rpc.publish_notify`（见 `app.mq.rpc_notify`）落到
+    同一个执行体 `NotifyService.create`：HTTP 面向管理员浏览器侧、RPC 面向其它
+    服务端系统，二者不再有各自的实现副本。差别仅在是否满足幂等——管理端是人工
+    显式操作，不做 `(target_value, title)` 判重；RPC 走 `create_idempotent`，
+    便于调用方超时重试而不重复打扰用户。
     """
     data = await NotifyService.create(session, admin.mid, req)
     return StandardResponse(data=data)

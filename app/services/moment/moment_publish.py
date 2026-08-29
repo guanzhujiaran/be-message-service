@@ -780,7 +780,7 @@ class MomentPublishService:
 
         独立会话投递：即便事件落库失败，也绝不回滚发布主事务。
         """
-        from app.services.message.event import EventService
+        from app.services.message.events import BaseEvent
 
         targets: set[int] = set()
         for n in nodes or []:
@@ -802,8 +802,7 @@ class MomentPublishService:
                     briefs.get(actor_mid).uname if briefs.get(actor_mid) else None
                 )
                 for tmid in targets:
-                    await EventService.report(
-                        ns,
+                    await BaseEvent.from_req(
                         EventReportReq(
                             mid=tmid,
                             event_type=EventTypeEnum.AT,
@@ -812,7 +811,7 @@ class MomentPublishService:
                             actor_mid=actor_mid,
                             biz_id=str(moment_id),
                         ),
-                    )
+                    ).report(ns)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"@通知投递失败（弱依赖，已忽略）: {e}")
 

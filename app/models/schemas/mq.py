@@ -7,6 +7,9 @@
 - `message.dm.notify`   → 私信到达后的提醒推送
 - `message.event.push`  → 事件提醒的实时推送
 - `message.notify.push` → 系统通知的推送投递
+
+系统通知的**发布**不走 MQ：对外走 `message.notify.rpc.publish_notify` RPC
+（契约见 `bili_common.rpc.notify`），对内由各业务直接调用服务层。
 """
 
 from sqlmodel import Field, SQLModel

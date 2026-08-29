@@ -173,20 +173,24 @@ async def test_notify_cursor_dedup_and_visibility() -> None:
         assert len(r1.items) == 1, "首次 pull 应返回新通知"
         assert r1.items[0].id == created.id
         assert r1.cursor == created.id, "游标应推进到通知 id"
-        assert r1.unread_count == 1
+        # 读取即已读：出参 is_read 是读取前的快照（未读），落库后未读数归零
+        assert r1.items[0].is_read is False, "出参 is_read 应为读取前的快照"
+        assert r1.unread_count == 0, "读取即已读：拉取后未读数应为 0"
 
         # 第二次拉取（不传 cursor）：游标已推进，不应重复返回 → 去重生效
         r2 = await NotifyService.pull(s, user)
         assert r2.items == [], "游标去重：二次 pull 不应重复返回"
-
-        # 全部已读后未读数归零
-        await NotifyService.mark_read(s, user, None)
         assert await NotifyService.unread_count(s, user) == 0
 
-        # 删除后：仅看未读列表为空
+        # 再次分页查看：落库状态已是已读
+        items, total = await NotifyService.list_for_user(s, user)
+        assert total == 1
+        assert items[0].is_read is True, "读取即已读：二次查看应为已读"
+
+        # 删除后：列表中不再出现
         await NotifyService.delete_for_user(s, user, [created.id])
-        items, total = await NotifyService.list_for_user(s, user, only_unread=True)
-        assert total == 0, "删除后仅看未读应为空"
+        items, total = await NotifyService.list_for_user(s, user)
+        assert total == 0, "删除后列表应为空"
 
         # 就地清理本测试产生的通知数据
         await _delete_notify(s, M["notify_user"])

@@ -26,7 +26,7 @@ Postgres，渲染关注列表时由 `PptrUserService` 直连只读批量回查�
 from sqlalchemy import BIGINT, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import FollowStatusEnum
 

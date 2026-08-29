@@ -22,7 +22,7 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text, UniqueConstraint, text
 from sqlmodel import Field, Index, PrimaryKeyConstraint
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import InteractionBizTypeEnum
 

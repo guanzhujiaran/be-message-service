@@ -34,6 +34,7 @@ from app.models.casdoor import (
 )
 from app.models.pptr_db import PptrUserActInfoLog, PptrUserDetail
 from app.models.pptr_user import PptrUserInfo
+from app.services.message.notify import NotifyService
 from app.services.user.pptr_user import PptrUserService
 
 
@@ -686,6 +687,12 @@ async def create_local_user_from_casdoor(
             act_info="reg",
             session=session,
         )
+
+    # 5. 首次注册（created=True）时发送欢迎注册通知：Casdoor 登录此前直接调 create_user，
+    #    绕过了 RPC create_user 里的欢迎通知逻辑，导致 OAuth 注册漏发欢迎消息
+    #    （表现为「注销后重新 CASDOOR 登录无欢迎消息」）。弱依赖，失败不影响主流程。
+    if created:
+        await NotifyService.send_welcome(uid, default_uname or final_username)
 
     logger.info(f"[Casdoor] 成功创建本地用户: {final_username}, uid: {uid}")
     return LocalUserResult(

@@ -13,7 +13,7 @@ from sqlmodel import select
 
 from app.core.database import SessionDep
 from app.dependencies.user import get_current_user
-from app.models.db.admin import MessageAdmin
+from app.models.db.admin_tbl import MessageAdmin
 
 
 async def msg_admin_user(

@@ -20,7 +20,7 @@ from sqlalchemy import BIGINT, JSON, Text, UniqueConstraint, text
 from sqlmodel import Field, ForeignKeyConstraint, Index, PrimaryKeyConstraint
 from bili_common.models.report import ReportBase
 
-from app.models.db.base import TimestampMixin
+from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
     InteractionBizTypeEnum,

@@ -13,7 +13,7 @@ from sqlalchemy import String, cast, func, or_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db.ban import UserBan
+from app.models.db.ban_tbl import UserBan
 from app.models.enums import BanDurationTypeEnum, BanServiceEnum, BanStatusEnum
 from app.models.schemas.ban import BanItem, BanServiceStatus, BanStatusResp
 
