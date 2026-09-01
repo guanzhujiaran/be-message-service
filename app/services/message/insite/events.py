@@ -709,10 +709,15 @@ class BaseEvent(ABC):
         dyn_cache: dict[int, object] = {}
 
         # ---- 评论关系 / 正文 / 点赞态 / 关注态，读取时实时回捞 ----
-        # 只处理 REPLY 类型（且来源非 DYNAMIC）的 biz_id（触发评论 rpid）。
+        # 只处理 REPLY 类型的 biz_id（触发评论 rpid）：
+        # `CommentService._notify_reply` 自 2.50.0 起 biz_id 恒为评论 rpid
+        # （不再随 source_type 变成动态 oid），因此 REPLY+DYNAMIC（动态评论
+        # 的回复）组合同样需要回捞 CommentIndex 才能解析正文与楼层关系；
+        # 历史脏数据（biz_id 写成动态 oid）回捞不到时，由 ReplyEvent 的
+        # else 分支兜底标记删除态，不影响其余字段。
         reply_biz_ids: set[str] = set()
         for etype, stype, sid, _cnt, _unread, _latest_id in groups:
-            if etype != EventTypeEnum.REPLY or stype == SourceTypeEnum.DYNAMIC:
+            if etype != EventTypeEnum.REPLY:
                 continue
             for r in bucket.get((etype, stype, sid), []):
                 if r.biz_id:

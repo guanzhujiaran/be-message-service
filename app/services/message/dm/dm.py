@@ -37,9 +37,11 @@ POST /dm/send
 """
 
 from datetime import datetime
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import case
+from sqlalchemy.exc import OperationalError
 from sqlmodel import col, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -87,6 +89,21 @@ def _preview(content: str, msg_type: DmMsgTypeEnum) -> str:
         return "[图片]"
     text = content.replace("\n", " ").strip()
     return text[:_PREVIEW_LEN]
+
+
+# 私信写扩散落库的死锁重试上限：批量并发私信时，不同会话行的并发插入会触发
+# MySQL gap lock / 插入意图锁交互导致死锁（1213，事务被回滚）。死锁是瞬时的，
+# 按同一 msgkey 回滚重试即可成功（不会产生重复消息），超过上限才抛错。
+_DM_DEADLOCK_RETRIES = 3
+
+
+def _is_deadlock(e: Exception) -> bool:
+    """MySQL 死锁（错误码 1213）：并发写扩散被回滚，事务可安全重试。"""
+    orig = getattr(e, "orig", None)
+    if orig is None:
+        return False
+    args = getattr(orig, "args", None)
+    return bool(args and args[0] == 1213)
 
 
 # ==================== 共享底层查询 ====================
@@ -275,51 +292,33 @@ class DmSessionObject:
                 f"用户 {receiver_mid} 关闭陌生人私信，来自 {sender_mid} 的消息被过滤"
             )
 
-        # ---- 2. 写扩散：索引行 ----
-        owners: list[int] = [sender_mid] if filtered else [sender_mid, receiver_mid]
-        for owner in owners:
-            self.session.add(
-                DmMessageIndex(
-                    owner_mid=owner,
-                    talker_mid=receiver_mid if owner == sender_mid else sender_mid,
+        # ---- 2 + 3. 写扩散落库（索引行 + 会话行）----
+        # 批量并发私信时，不同会话行的并发插入会触发 MySQL 死锁（1213，
+        # gap lock / 插入意图锁交互，事务被 MySQL 回滚）。死锁是瞬时的，
+        # 捕获后按**同一 msgkey** 回滚重试即可成功，不会产生重复消息。
+        for attempt in range(_DM_DEADLOCK_RETRIES + 1):
+            try:
+                await self._persist_dm(
+                    req=req,
+                    sender_name=sender_name,
                     session_key=session_key,
                     msgkey=msgkey,
-                    sender_uid=sender_mid,
-                    msg_type=req.msg_type,
-                    msg_status=DmMsgStatusEnum.NORMAL,
                     msg_ts=msg_ts,
-                    content_preview=preview,
-                    content_ready=False,
+                    preview=preview,
+                    is_auditing=is_auditing,
                     audit_state=audit_state,
+                    is_stranger=is_stranger,
+                    filtered=filtered,
                 )
-            )
-
-        # ---- 3. 写扩散：会话行（主动发起方视角永远是普通会话）----
-        await self._upsert_owner_row(
-            msgkey=msgkey,
-            preview=preview,
-            msg_ts=msg_ts,
-            sender_uid=sender_mid,
-            incr_unread=False,
-            talker_name=req.receiver_name,
-            talker_avatar=req.receiver_avatar,
-            relation=DmRelationEnum.NORMAL,
-        )
-        if not filtered:
-            await self._upsert_peer_row(
-                msgkey=msgkey,
-                preview="[私信审核中]" if is_auditing else preview,
-                msg_ts=msg_ts,
-                sender_uid=sender_mid,
-                # 审核中：先不发未读红点，待管理端通过后再在 set_state 里补
-                incr_unread=not is_auditing,
-                talker_name=sender_name,
-                talker_avatar=None,
-                relation=(
-                    DmRelationEnum.STRANGER if is_stranger else DmRelationEnum.NORMAL
-                ),
-            )
-        await self.session.commit()
+                break
+            except OperationalError as e:
+                if not _is_deadlock(e) or attempt >= _DM_DEADLOCK_RETRIES:
+                    raise
+                await self.session.rollback()
+                logger.warning(
+                    f"私信发送写扩散死锁（{sender_mid}→{receiver_mid}），"
+                    f"回滚重试 {attempt + 1}/{_DM_DEADLOCK_RETRIES}"
+                )
 
         # 进入审核态：弱依赖地通知发送者（不影响发送主流程）
         if is_auditing:
@@ -360,6 +359,96 @@ class DmSessionObject:
             filtered=filtered,
             content_async=content_async,
         )
+
+    async def _persist_dm(
+        self,
+        *,
+        req: DmSendReq,
+        sender_name: str | None,
+        session_key: str,
+        msgkey: int,
+        msg_ts: int,
+        preview: str,
+        is_auditing: bool,
+        audit_state: DmAuditStateEnum,
+        is_stranger: bool,
+        filtered: bool,
+    ) -> None:
+        """索引行 + 会话行写扩散落库（一个事务）。
+
+        独立成方法以支持死锁（MySQL 1213）回滚重试：`send` 捕获死锁后
+        ``session.rollback()`` 再按**同一 msgkey** 重调本方法，
+        重试不会产生重复消息。
+        """
+        sender_mid = self.owner_mid
+        receiver_mid = self.talker_mid
+
+        # ---- 2. 写扩散：索引行 ----
+        owners: list[int] = [sender_mid] if filtered else [sender_mid, receiver_mid]
+        for owner in owners:
+            self.session.add(
+                DmMessageIndex(
+                    owner_mid=owner,
+                    talker_mid=receiver_mid if owner == sender_mid else sender_mid,
+                    session_key=session_key,
+                    msgkey=msgkey,
+                    sender_uid=sender_mid,
+                    msg_type=req.msg_type,
+                    msg_status=DmMsgStatusEnum.NORMAL,
+                    msg_ts=msg_ts,
+                    content_preview=preview,
+                    content_ready=False,
+                    audit_state=audit_state,
+                )
+            )
+
+        # ---- 3. 写扩散：会话行（主动发起方视角永远是普通会话）----
+        # 统一按「owner_mid 小者先行」的顺序 upsert 收发双方视角行：
+        # 并发双向发送（A→B 与 B→A）若都以发送方视角先行，会以相反顺序
+        # 获取 (A,B) / (B,A) 两行的锁，形成写扩散死锁（MySQL 1213）。
+        # 按固定顺序取锁可消除该模式的死锁；各视角行的参数语义保持不变。
+        session_rows: list[tuple[int, Any, dict]] = [
+            (
+                sender_mid,
+                self._upsert_owner_row,
+                {
+                    "msgkey": msgkey,
+                    "preview": preview,
+                    "msg_ts": msg_ts,
+                    "sender_uid": sender_mid,
+                    "incr_unread": False,
+                    "talker_name": req.receiver_name,
+                    "talker_avatar": req.receiver_avatar,
+                    "relation": DmRelationEnum.NORMAL,
+                },
+            )
+        ]
+        if not filtered:
+            session_rows.append(
+                (
+                    receiver_mid,
+                    self._upsert_peer_row,
+                    {
+                        "msgkey": msgkey,
+                        "preview": "[私信审核中]" if is_auditing else preview,
+                        "msg_ts": msg_ts,
+                        "sender_uid": sender_mid,
+                        # 审核中：先不发未读红点，待管理端通过后再在 set_state 里补
+                        "incr_unread": not is_auditing,
+                        "talker_name": sender_name,
+                        "talker_avatar": None,
+                        "relation": (
+                            DmRelationEnum.STRANGER
+                            if is_stranger
+                            else DmRelationEnum.NORMAL
+                        ),
+                    },
+                )
+            )
+        session_rows.sort(key=lambda r: r[0])  # owner_mid 小者先行，统一锁顺序
+        for _owner_mid, upsert_fn, params in session_rows:
+            await upsert_fn(**params)
+        await self.session.commit()
 
     async def _fallback_write_content(self, payload: DmContentPayload) -> None:
         """MQ 不可用时的降级：同步写分片，再失败则进死信表等待补偿。"""
@@ -689,10 +778,17 @@ class DmSessionObject:
         同时读到 None、都执行 INSERT，命中 uq_dm_session_owner_talker 抛 1062
         (Duplicate entry)，整条发送失败。改用 MySQL 原子 upsert 后，重复发送同一
         会话由数据库层去重（唯一键冲突即转 UPDATE），彻底消除并发竞态。
+
+        注意：`ins` 必须持有 ``values()`` **之后**的实例，UPDATE 里的 ``ins.inserted``
+        才与 ``ON DUPLICATE KEY UPDATE`` 内部持有的 ``inserted_alias`` 是同一对象
+        （``on_duplicate_key_update`` 是 generative 方法，会把实例复制一份；
+        若像 ``mysql_insert(t).values(...).on_duplicate_key_update(ins.inserted.x)``
+        那样在**原始实例**上引用 ``inserted``，SQLAlchemy 2.0.51 在 MySQL 8.0.20+
+        下无法把 ``inserted.x`` 替换为行别名 ``new.x``，生成 ``AS new ... inserted.x``
+        的非法 SQL，MySQL 9.x 报 `Unknown column 'inserted.updated_at'`）。
         """
         now = datetime.now()
-        ins = mysql_insert(DmSession.__table__)
-        stmt = ins.values(
+        ins = mysql_insert(DmSession.__table__).values(
             owner_mid=owner_mid,
             talker_mid=talker_mid,
             session_key=make_session_key(owner_mid, talker_mid),
@@ -707,7 +803,8 @@ class DmSessionObject:
             is_deleted=False,
             created_at=now,
             updated_at=now,
-        ).on_duplicate_key_update(
+        )
+        stmt = ins.on_duplicate_key_update(
             # 仅当本次提供了姓名/头像才覆盖，避免把已有展示信息刷成 NULL
             talker_name=func.coalesce(ins.inserted.talker_name, DmSession.talker_name),
             talker_avatar=func.coalesce(

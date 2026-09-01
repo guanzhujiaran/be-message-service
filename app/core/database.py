@@ -37,6 +37,12 @@ engine = create_async_engine(
     echo=settings.mysql_echo,
     future=True,
     connect_args=_connect_args,
+    # 高并发写扩散（私信会话 upsert / 评论计数等）在 REPEATABLE-READ 下会因
+    # INSERT ... ON DUPLICATE KEY UPDATE 的 gap lock / 插入意图锁交互触发
+    # 死锁（1213）。READ COMMITTED 不做 gap 锁，插入死锁概率大幅下降，
+    # 是 MySQL 官方推荐的高并发 OLTP 隔离级别；本项目事务均为短事务、
+    # 写操作走数据库侧原子自增，不存在依赖可重复读快照的业务逻辑。
+    isolation_level="READ COMMITTED",
 )
 
 async_session_maker: async_sessionmaker[AsyncSession] = async_sessionmaker(
