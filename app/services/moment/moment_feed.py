@@ -34,16 +34,15 @@ from app.models.db import (
     TInteractionStat,
     TResourceFeed,
     TResourceReport,
-)
+    )
 from app.models.db.comment_tbl import CommentSubject
 from app.models.enums import (
-    CommentTypeEnum,
     InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
-)
+    )
 from app.models.schemas.moment import (
     MomentContentNode,
     MomentDetailResp,
@@ -56,13 +55,13 @@ from app.models.schemas.moment import (
     MomentModule,
     MomentTopicFeedResp,
     MomentTopicRef,
-)
+    )
 from app.services.moment.edgerank import (
     TOPIC_FEED_PROFILE,
     EdgeRankExtra,
     build_moment_counts,
     compute_moment_score,
-)
+    )
 from app.services.moment.feed_engine import FeedCandidate, ResourceReportCount, rank_feed
 from app.services.user.follow import FollowService
 from app.services.user.account import PptrUser
@@ -490,7 +489,7 @@ async def _load_comment_subjects(
         await session.exec(
             select(CommentSubject).where(
                 col(CommentSubject.oid).in_(moment_ids),
-                col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+                col(CommentSubject.type) == InteractionBizTypeEnum.DYNAMIC,
             )
         )
     ).all()
@@ -906,14 +905,14 @@ class MomentFeedService:
             ).all()
             author_q = {int(r.mid): r for r in aq_rows}
 
-        # 2.37.0：pending 举报数（resourceType=dynamic 按 bizId 统计，通用降权；2.44.0 为 ResourceReportCount 实体）
+        # 2.37.0：pending 举报数（bizType=dynamic 按 bizId 统计，通用降权；2.44.0 为 ResourceReportCount 实体）
         report_counts: dict[int, ResourceReportCount] = {}
         if cand_ids:
             rp_rows = (
                 await session.exec(
                     select(TResourceReport.bizId, func.count())
                     .where(
-                        col(TResourceReport.resourceType)
+                        col(TResourceReport.bizType)
                         == int(InteractionBizTypeEnum.DYNAMIC),
                         col(TResourceReport.bizId).in_(cand_ids),
                         col(TResourceReport.auditStatus) == "pending",
@@ -1407,7 +1406,7 @@ class MomentFeedService:
         """点赞明细列表（按 TMomentLike.created_at 倒序）。
 
         数据源：``TMomentLike``（mid/dynId/created_at）。无 status 字段，
-        任意点赞都算（与 ``interaction_actions.LikeAction`` 写入保持一致）。
+        任意点赞都算（与 ``interaction_actions`` 的 like 写入保持一致）。
         关联 ``PptrUser.get_many`` 取作者简要（uname/face）。
         """
         page_num = max(1, page_num)

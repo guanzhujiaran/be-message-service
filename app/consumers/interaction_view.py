@@ -26,7 +26,7 @@ from app.consumers.retry import DEFAULT_MAX_RETRIES, retry_count
 from app.core.database import new_session
 from app.models.enums import InteractionBizTypeEnum
 from app.models.schemas import InteractionViewPayload
-from app.services.interaction_actions import get_action
+from app.services.interaction_actions import get_biz
 
 #: 浏览统计最大重试次数（requeue 重投超过该次数则 ack 丢弃）
 MAX_VIEW_RETRIES = DEFAULT_MAX_RETRIES
@@ -49,11 +49,9 @@ async def handle_interaction_view(payload: InteractionViewPayload, msg: RabbitMe
 
     async with new_session() as session:
         try:
-            # 2.47.0：按 biz_type 分发到对应浏览上报操作类（每个类声明自己的 _biz_type）
-            action = get_action("view", biz_type)(
-                session, actor_mid=payload.mid, biz_id=biz_id
-            )
-            await action.run()
+            # 2.48.0：以资源为主体，直接取资源实例调用 view()
+            biz = get_biz(biz_type, session, biz_id, payload.mid)
+            await biz.view()
             await session.commit()
         except asyncio.CancelledError:
             # 服务关停：不 rollback / 不 nack，上抛交由框架处理

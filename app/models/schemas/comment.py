@@ -14,7 +14,7 @@ from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    CommentTypeEnum,
+    InteractionBizTypeEnum,
     MomentReportReasonEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
@@ -61,7 +61,7 @@ class CommentItem(SQLModel, AutoStrMixin):
 
     rpid: str = Field(description="评论id（字符串）")
     oid: str = Field(description="所属业务实体id（字符串）")
-    type: CommentTypeEnum
+    type: InteractionBizTypeEnum
 
     mid: int = Field(description="发布者mid")
     member: CommentUserBrief | None = Field(
@@ -133,7 +133,7 @@ class CommentAddReq(SQLModel, AutoStrMixin):
     """发表评论。"""
 
     oid: str = Field(description="业务实体id（字符串）")
-    type: CommentTypeEnum = Field(description="业务实体类型")
+    type: InteractionBizTypeEnum = Field(description="业务实体类型")
     root: str = Field(default="0", description="根评论rpid；发一级评论传 '0'")
     parent: str = Field(default="0", description="父评论rpid；发一级评论传 '0'")
     message: str = Field(
@@ -220,7 +220,7 @@ class CommentCountResp(SQLModel, AutoStrMixin):
     """评论区计数。"""
 
     oid: str
-    type: CommentTypeEnum
+    type: InteractionBizTypeEnum
     root_count: int = 0
     all_count: int = 0
     state: CommentSubjectStateEnum = CommentSubjectStateEnum.NORMAL
@@ -266,7 +266,7 @@ class CommentTopReq(SQLModel, AutoStrMixin):
     """置顶 / 取消置顶（内容作者或管理员）。"""
 
     oid: str = Field(description="业务实体id（字符串）")
-    type: CommentTypeEnum = Field(description="业务实体类型")
+    type: InteractionBizTypeEnum = Field(description="业务实体类型")
     rpid: str = Field(description="要置顶 / 取消置顶的评论id（字符串，必须是根评论）")
     top: bool = Field(default=True, description="True 置顶 / False 取消置顶")
 
@@ -313,7 +313,7 @@ class CommentAuditItem(SQLModel, AutoStrMixin):
 
     rpid: str
     oid: str
-    type: CommentTypeEnum
+    type: InteractionBizTypeEnum
     mid: int
     message: str
     state: CommentStateEnum

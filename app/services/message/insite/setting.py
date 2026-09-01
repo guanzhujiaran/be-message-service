@@ -16,7 +16,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import UserMessageSetting
-from app.models.enums import EventTypeEnum
 from app.models.schemas import MessageSettingResp, MessageSettingUpdateReq
 
 # 默认设置：用户从未配置过时的兜底值（全部开启）
@@ -28,14 +27,6 @@ _DEFAULTS: dict[str, bool] = {
     "recv_notify": True,
     "push_enabled": True,
 }
-
-# 事件类型 → 设置字段的映射
-_EVENT_FIELD_MAP: dict[EventTypeEnum, str] = {
-    EventTypeEnum.LIKE: "recv_like",
-    EventTypeEnum.REPLY: "recv_reply",
-    EventTypeEnum.AT: "recv_at",
-}
-
 
 class SettingService:
     """消息设置读写。"""
@@ -97,14 +88,18 @@ class SettingService:
 
     @staticmethod
     async def accept_event(
-        session: AsyncSession, mid: int, event_type: EventTypeEnum
+        session: AsyncSession, mid: int, setting_gate: "str | None"
     ) -> bool:
-        """判断用户是否接收该类型的事件提醒。"""
+        """判断用户是否接收该类型的事件提醒。
+
+        闸门字段 ``setting_gate`` 由对应 handler 类的类属性给出（已下沉到 insite
+        events 的处理器，不再读底层枚举）；为 ``None`` 表示系统侧通知（无用户开关，
+        恒投递）。调用方（``BaseEvent.report``）直接传入 ``self.setting_gate``。
+        """
         row = await SettingService.get_or_create(session, mid)
-        field = _EVENT_FIELD_MAP.get(event_type)
-        if field is None:
+        if setting_gate is None:
             return True
-        return bool(getattr(row, field, True))
+        return bool(getattr(row, setting_gate, True))
 
     @staticmethod
     async def accept_stranger_dm(session: AsyncSession, mid: int) -> bool:

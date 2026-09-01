@@ -4,7 +4,7 @@
 - 管理端待审核列表：auditStatus=auditing 按创建时间倒序分页。
 - 审核通过：auditStatus→normal + pubTime=now()；**不发通知**。
 - 审核驳回：auditStatus→rejected + 写 auditRejectReason；**发驳回事件通知给创建者**
-  （EventTypeEnum.AUDIT_REJECT + SourceTypeEnum.DYNAMIC，source_id=`topic_{topicId}`）。
+  （InteractionActionTypeEnum.AUDIT_REJECT + InteractionBizTypeEnum.DYNAMIC，source_id=`topic_{topicId}`）。
 
 创建者昵称 / 头像经 ``PptrUser.get_many`` 只读回查（不冗余用户快照）。
 """
@@ -17,14 +17,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TMomentTopic
 from app.models.enums import (
-    EventTypeEnum,
+    InteractionActionTypeEnum,
     MomentTopicAuditStatusEnum,
-    SourceTypeEnum,
-)
+    InteractionBizTypeEnum,
+    )
 from app.models.schemas.moment import (
     MomentTopicAuditItem,
     MomentTopicAuditListResp,
-)
+    )
 from app.services.user.account import PptrUser
 
 
@@ -57,8 +57,8 @@ async def _notify_reject(operator_mid: int, topic: TMomentTopic, reject_reason: 
     await report_event_weakly(
         EventReportReq(
             mid=topic.creatorMid,
-            event_type=EventTypeEnum.AUDIT_REJECT,
-            source_type=SourceTypeEnum.DYNAMIC,
+            event_type=InteractionActionTypeEnum.AUDIT_REJECT,
+            source_type=InteractionBizTypeEnum.DYNAMIC,
             source_id=f"topic_{topic.topicId}",
             actor_mid=operator_mid,
             content=reject_reason,

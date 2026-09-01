@@ -532,7 +532,6 @@ async def test_comprehensive_feed_report_penalty(monkeypatch):
             TResourceReport(
                 bizType="dynamic",
                 bizId=a,
-                resourceType=int(InteractionBizTypeEnum.DYNAMIC),
                 accusedMid=E_MID,
                 reportMid=E_MID2,
                 reasonType=1,

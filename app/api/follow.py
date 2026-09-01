@@ -14,6 +14,7 @@ from app.models.str_int import StrInt
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser
 from app.models import StandardResponse
+from app.models.enums import InteractionBizTypeEnum
 from app.models.schemas import (
     BlockReq,
     FollowCountResp,
@@ -22,6 +23,7 @@ from app.models.schemas import (
     FollowRelationResp,
     FollowReq,
 )
+from app.services.interaction_actions.base_biz import get_biz
 from app.services.user.follow import FollowService
 
 router = APIRouter(prefix="/api/v1/message/follow", tags=["message-follow"])
@@ -45,7 +47,8 @@ async def follow_user(
     - 若对方已拉黑你，则拒绝关注。
     """
     try:
-        data = await FollowService.follow(session, user.mid, req.target_mid)
+        biz = get_biz(InteractionBizTypeEnum.USER, session, req.target_mid, user.mid)
+        data = await biz.follow()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)
@@ -65,7 +68,8 @@ async def unfollow_user(
     幂等：未关注时也返回成功。
     """
     try:
-        data = await FollowService.unfollow(session, user.mid, req.target_mid)
+        biz = get_biz(InteractionBizTypeEnum.USER, session, req.target_mid, user.mid)
+        data = await biz.unfollow()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)
@@ -86,7 +90,8 @@ async def block_user(
     - **同时删除对方对自己的 `following` 记录**，使对方不再是自己的粉丝。
     """
     try:
-        data = await FollowService.block(session, user.mid, req.target_mid)
+        biz = get_biz(InteractionBizTypeEnum.USER, session, req.target_mid, user.mid)
+        data = await biz.block()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)
@@ -105,7 +110,8 @@ async def unblock_user(
     仅删除 `blocked` 记录；若存在 `following` 记录则保留。幂等：未拉黑时也返回成功。
     """
     try:
-        data = await FollowService.unblock(session, user.mid, req.target_mid)
+        biz = get_biz(InteractionBizTypeEnum.USER, session, req.target_mid, user.mid)
+        data = await biz.unblock()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)

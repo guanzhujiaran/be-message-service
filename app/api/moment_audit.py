@@ -16,7 +16,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import RootUser
 from app.models import StandardResponse
-from app.models.enums import MomentAuditStatusEnum
+from app.models.enums import InteractionBizTypeEnum, MomentAuditStatusEnum
 from app.models.str_int import StrInt
 from app.models.schemas.moment import (
     MomentAuditActionReq,
@@ -26,10 +26,7 @@ from app.models.schemas.moment import (
     MomentAuditRejectReq,
     MomentAuditStatisticsResp,
 )
-from app.services.interaction_actions.dynamic.audit import (
-    AuditApproveAction,
-    AuditRejectAction,
-)
+from app.services.interaction_actions import get_biz
 from app.services.moment.moment_audit import MomentAuditService
 
 router = APIRouter(prefix="/api/v1/community/audit", tags=["moment-audit"])
@@ -110,9 +107,8 @@ async def audit_approve(
     req: MomentAuditActionReq,
 ) -> StandardResponse[MomentAuditDetailResp]:
     try:
-        item = await AuditApproveAction(
-            session, actor_mid=user.mid, biz_id=req.dynId, remark=req.remark
-        ).run()
+        biz = get_biz(InteractionBizTypeEnum.DYNAMIC, session, req.dynId, user.mid)
+        item = await biz.audit_approve(remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     return StandardResponse(
@@ -131,13 +127,8 @@ async def audit_reject(
     req: MomentAuditRejectReq,
 ) -> StandardResponse[MomentAuditDetailResp]:
     try:
-        item = await AuditRejectAction(
-            session,
-            actor_mid=user.mid,
-            biz_id=req.dynId,
-            reject_reason=req.rejectReason,
-            remark=req.remark,
-        ).run()
+        biz = get_biz(InteractionBizTypeEnum.DYNAMIC, session, req.dynId, user.mid)
+        item = await biz.audit_reject(reject_reason=req.rejectReason, remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     return StandardResponse(

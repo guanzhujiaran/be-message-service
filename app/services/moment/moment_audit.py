@@ -6,7 +6,7 @@
 - 审核记录流水查询（P6-T4）：按 dynId / 操作员 / 时间段过滤。
 
 **审核通过 / 驳回已迁移**为 `interaction_actions/dynamic/audit.py` 的
-`AuditApproveAction` / `AuditRejectAction`（DAC：`acl_scope=[AUDITOR_ONLY]`），
+`DynamicBiz.audit_approve` / `audit_reject`（DAC：`acl_scope=[AUDITOR_ONLY]`），
 接口层直接实例化操作类执行，本模块辅助函数（`_get_any` / `_sync_resource_feed` /
 `_build_audit_log` / `_notify_reject` / `_to_audit_item` / `_safe_author_brief`）继续复用。
 
@@ -22,21 +22,20 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TMoment, TMomentAuditLog, TResourceFeed
 from app.models.enums import (
-    EventTypeEnum,
+    InteractionActionTypeEnum,
     InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-    SourceTypeEnum,
-)
+    )
 from app.models.schemas.moment import (
     MomentAuditDetailResp,
     MomentAuditItem,
     MomentAuditListResp,
     MomentAuditLogItem,
     MomentAuditLogListResp,
-)
+    )
 from app.services.moment.moment_stat import MomentStatService
 from app.services.user.account import PptrUser
 
@@ -175,8 +174,8 @@ def _EventReportReq_for_reject(operator_mid: int, dyn: TMoment, reject_reason: s
 
     return EventReportReq(
         mid=dyn.mid,
-        event_type=EventTypeEnum.AUDIT_REJECT,
-        source_type=SourceTypeEnum.DYNAMIC,
+        event_type=InteractionActionTypeEnum.AUDIT_REJECT,
+        source_type=InteractionBizTypeEnum.DYNAMIC,
         source_id=str(dyn.dynId),
         actor_mid=operator_mid,
         content=reject_reason,

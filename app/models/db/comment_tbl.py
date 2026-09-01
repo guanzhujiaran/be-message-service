@@ -34,7 +34,7 @@ from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    CommentTypeEnum,
+    InteractionBizTypeEnum,
     MomentReportReasonEnum,
 )
 
@@ -51,8 +51,8 @@ class CommentSubject(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
 
     oid: int = Field(sa_type=BIGINT, index=True, description="业务实体id")
-    type: CommentTypeEnum = Field(
-        sa_type=SAEnum(CommentTypeEnum),
+    type: InteractionBizTypeEnum = Field(
+        sa_type=SAEnum(InteractionBizTypeEnum),
         description="业务实体类型，与 oid 共同唯一定位评论区",
     )
 
@@ -111,8 +111,8 @@ class CommentIndex(TimestampMixin, table=True):
     )
 
     oid: int = Field(sa_type=BIGINT, index=True, description="所属评论区的业务实体id")
-    type: CommentTypeEnum = Field(
-        sa_type=SAEnum(CommentTypeEnum), description="所属评论区类型"
+    type: InteractionBizTypeEnum = Field(
+        sa_type=SAEnum(InteractionBizTypeEnum), description="所属评论区类型"
     )
     mid: int = Field(sa_type=BIGINT, index=True, description="评论发布者mid")
 
@@ -250,8 +250,8 @@ class CommentAt(TimestampMixin, table=True):
 
     rpid: int = Field(sa_type=BIGINT, index=True, description="评论id")
     oid: int = Field(sa_type=BIGINT, description="所属评论区的业务实体id")
-    type: CommentTypeEnum = Field(
-        sa_type=SAEnum(CommentTypeEnum), description="所属评论区类型"
+    type: InteractionBizTypeEnum = Field(
+        sa_type=SAEnum(InteractionBizTypeEnum), description="所属评论区类型"
     )
     from_mid: int = Field(sa_type=BIGINT, description="发起@的用户mid")
     at_mid: int = Field(sa_type=BIGINT, index=True, description="被@的用户mid")

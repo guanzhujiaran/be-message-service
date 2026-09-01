@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import EventTypeEnum
+from app.models.enums import InteractionActionTypeEnum
 from app.models.schemas import EventUnreadResp, UserActivityResp
 from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm import DmInbox
@@ -35,9 +35,9 @@ async def unread_summary(
     dm_unread = await DmInbox(session, user.mid).count_unread()
 
     data = EventUnreadResp(
-        like=event_map.get(EventTypeEnum.LIKE.value, 0),
-        reply=event_map.get(EventTypeEnum.REPLY.value, 0),
-        at=event_map.get(EventTypeEnum.AT.value, 0),
+        like=event_map.get(InteractionActionTypeEnum.LIKE.value, 0),
+        reply=event_map.get(InteractionActionTypeEnum.REPLY.value, 0),
+        at=event_map.get(InteractionActionTypeEnum.AT.value, 0),
         notify=notify_unread,
         dm=dm_unread,
     )

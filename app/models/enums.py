@@ -6,12 +6,17 @@
 序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
 
+from enum import Enum
+
 from bili_common.models import IntEnumAutoDoc
 
-# 系统通知枚举已下沉到公共库（`bili_common.models.notify`）：
-# 它们是「系统通知」RPC 契约的一部分（见 `bili_common.rpc.notify`），需与
-# be-gateway / RPA-Browser 等 RPC 客户端共享，此处 re-export 保持存量 import 零改动。
+# 业务资源类型唯一真相源收口到 bili-common 的 `InteractionBizTypeEnum`，be-message 侧
+# 直接复用（含 bizType / source_type 两个语义维度）；互动操作类型收口到 bili-common 的
+# `InteractionActionTypeEnum`（动作维度，与资源维度明确区分），本模块仅 re-export。
+from bili_common.models.interaction import InteractionBizTypeEnum, InteractionActionTypeEnum
 from bili_common.models.notify import NotifyLevelEnum, NotifyTargetTypeEnum
+# 举报相关枚举（原因 / 审核状态）统一收口到 bili-common，be-message 侧直接复用，不再重定义：
+from bili_common.models.report import ReportReasonEnum, ReportAuditStatusEnum
 
 
 class MessageModuleEnum(IntEnumAutoDoc):
@@ -38,32 +43,8 @@ class NotifyStatusEnum(IntEnumAutoDoc):
 
 
 # ==================== 事件提醒 ====================
-
-
-class EventTypeEnum(IntEnumAutoDoc):
-    """用户行为事件类型（点赞 / 回复 / @提及 / 审核驳回 / 举报下架）。"""
-
-    LIKE = 1
-    REPLY = 2
-    AT = 3
-    AUDIT_REJECT = 4
-    # 2.38.0：内容因举报被管理员下架（通知资源作者，资源无作者时不发）
-    HIDE = 5
-    # 2.40.0：举报未通过审核 / 举报成立已处理（通知举报人）
-    REPORT_REJECT = 6
-    REPORT_RESOLVED = 7
-
-
-class SourceTypeEnum(IntEnumAutoDoc):
-    """事件来源实体类型，与 source_id 共同构成聚合分组键。"""
-
-    VIDEO = 1
-    DYNAMIC = 2
-    ARTICLE = 3
-    COMMENT = 4
-    LOTTERY = 5
-    OTHER = 6
-
+# 互动操作类型已收口到 bili-common 的 `InteractionActionTypeEnum`（动作维度，与
+# `InteractionBizTypeEnum` 资源维度明确区分），本模块仅 re-export，详见 bili-common。
 
 # ==================== 私信 ====================
 
@@ -118,20 +99,6 @@ class DmAuditStateEnum(IntEnumAutoDoc):
 
 
 # ==================== 评论系统 ====================
-
-
-class CommentTypeEnum(IntEnumAutoDoc):
-    """评论区所属的业务实体类型，与 oid 共同唯一定位一个评论区。"""
-
-    # 用户动态
-    DYNAMIC = 1
-    # 专栏 / 图文
-    ARTICLE = 2
-    # 抽奖活动
-    LOTTERY = 3
-    # 站内反馈（承接原 Node 端 feedback 场景）
-    FEEDBACK = 4
-    OTHER = 5
 
 
 class CommentSubjectStateEnum(IntEnumAutoDoc):
@@ -309,29 +276,14 @@ class MomentFoldTypeEnum(IntEnumAutoDoc):
     OVER_FREQ_FOLD = 2
 
 
-class MomentReportReasonEnum(IntEnumAutoDoc):
-    """Moment 举报原因类型。"""
+# 举报原因类型直接复用 bili-common 的 `ReportReasonEnum`（统一举报原因：1-6 与历史
+# MomentReportReasonEnum 取值一致，且额外含 AD/FLAME 等）。不再单独定义，避免与通用
+# 举报枚举取值漂移。
+MomentReportReasonEnum = ReportReasonEnum
 
-    # 不实信息
-    FAKE_INFO = 1
-    # 违法违规
-    ILLEGAL = 2
-    # 人身攻击
-    PERSONAL_ATTACK = 3
-    # 色情低俗
-    PORN = 4
-    # 诈骗
-    FRAUD = 5
-    # 其他
-    OTHER = 6
-
-
-class MomentReportAuditStatusEnum(IntEnumAutoDoc):
-    """Moment 举报处理状态。"""
-
-    PENDING = 1
-    RESOLVED = 2
-    REJECTED = 3
+# 举报审核状态直接复用 bili-common 的 `ReportAuditStatusEnum`（PENDING/RESOLVED/REJECTED
+# 取值一致）。不再单独定义。
+MomentReportAuditStatusEnum = ReportAuditStatusEnum
 
 
 class MomentAuditLogActionEnum(IntEnumAutoDoc):
@@ -352,8 +304,8 @@ class MomentAuditLogOperatorRoleEnum(IntEnumAutoDoc):
     ADMIN = 2
 
 
-# 互动资源类型枚举统一收口到 bili-common（2.18.0 去重），此处 re-export 保持兼容
-from bili_common.models.interaction import InteractionBizTypeEnum  # noqa: E402
+# 互动资源类型枚举（`InteractionBizTypeEnum`）与举报枚举（`ReportReasonEnum` /
+# `ReportAuditStatusEnum`）均已收口到 bili-common，本文件仅复用 / 定义 be-message 专属枚举。
 
 
 # ==================== 用户关注关系 ====================
@@ -400,8 +352,37 @@ class FolderCoverAuditStatusEnum(IntEnumAutoDoc):
     REJECTED = 3
 
 
+# ==================== 前端路由名（跳转契约）====================
+
+
+class FrontendRouteEnum(str, Enum):
+    """前端路由名（跳转契约的唯一真相源，见计划书 §2.10）。
+
+    **值必须等于前端 `Vue3FrontEndDemoExercise/src/router/index.ts` 里路由的 `name`**
+    （部分路由的 name 取自 `src/models/router/index.ts::RouteName` 枚举，其值为中文，此处照抄）。
+
+    后端下发跳转目标时**只给路由名**（`route:{name}?{query}`），不写任何站内路径，
+    因此路径只在前端路由表里存在一份，前端改路径不必同步后端。
+
+    新增跳转点：先在这里加成员 → 前端加/改对应路由，两侧 name 对齐即可。
+    """
+
+    # 抽奖卡片详情（RouteName.LOTTERY_CARD_DETAIL）→ /app/lot-data/card-detail
+    LOTTERY_CARD_DETAIL = "抽奖卡片详情"
+    # 动态详情 → /app/moment/detail/:momentId
+    MOMENT_DETAIL = "MOMENT_DETAIL"
+    # 私信审核（管理端）→ /app/admin/message-dm
+    ADMIN_MESSAGE_DM = "ADMIN_MESSAGE_DM"
+
+    @classmethod
+    def from_name(cls, name: str) -> "FrontendRouteEnum":
+        """按路由名取成员，未知名抛 ``ValueError``（供校验兜底使用）。"""
+        return cls(name)
+
+
 __all__ = [
     "AvatarAuditStatusEnum",
+    "FrontendRouteEnum",
     "FolderCoverAuditStatusEnum",
     "BanDurationTypeEnum",
     "BanServiceEnum",
@@ -411,13 +392,12 @@ __all__ = [
     "CommentSortEnum",
     "CommentStateEnum",
     "CommentSubjectStateEnum",
-    "CommentTypeEnum",
     "DmAuditStateEnum",
     "DmMsgStatusEnum",
     "DmMsgTypeEnum",
     "DmRelationEnum",
     "DmSessionTypeEnum",
-    "EventTypeEnum",
+    "InteractionActionTypeEnum",
     "ExpActionType",
     "FollowStatusEnum",
     "InteractionBizTypeEnum",
@@ -433,5 +413,4 @@ __all__ = [
     "NotifyLevelEnum",
     "NotifyStatusEnum",
     "NotifyTargetTypeEnum",
-    "SourceTypeEnum",
 ]

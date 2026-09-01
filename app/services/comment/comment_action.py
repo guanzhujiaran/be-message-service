@@ -20,9 +20,9 @@ from app.exceptions import CommentNotInteractiveException
 from app.models.db import CommentAction, CommentContent, CommentIndex
 from app.models.enums import (
     CommentActionEnum,
-    EventTypeEnum,
-    SourceTypeEnum,
-)
+    InteractionActionTypeEnum,
+    InteractionBizTypeEnum,
+    )
 from app.models.schemas import CommentActionResp, EventReportReq
 from app.services.comment import VISIBLE_STATES
 
@@ -157,8 +157,8 @@ class CommentActionService:
         await report_event_weakly(
             EventReportReq(
                 mid=row.mid,
-                event_type=EventTypeEnum.LIKE,
-                source_type=SourceTypeEnum.COMMENT,
+                event_type=InteractionActionTypeEnum.LIKE,
+                source_type=InteractionBizTypeEnum.COMMENT,
                 source_id=str(row.oid),
                 actor_mid=actor_mid,
                 content=content.message if content else None,

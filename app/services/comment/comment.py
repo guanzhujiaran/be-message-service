@@ -39,18 +39,16 @@ from app.models.db import (
     CommentIndex,
     CommentReport,
     CommentSubject,
-)
+    )
 from app.models.enums import (
     CommentAttrBit,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    CommentTypeEnum,
-    EventTypeEnum,
+    InteractionBizTypeEnum,
+    InteractionActionTypeEnum,
     MomentReportReasonEnum,
     NotifyLevelEnum,
-    SourceTypeEnum,
-)
-from bili_common.models.report import ReportBizTypeEnum
+    )
 from app.models.schemas import CommentAddReq, CommentAddResp, EventReportReq
 from app.services.comment.comment_audit import audit_text
 from app.services.user.follow import FollowService
@@ -192,7 +190,7 @@ class CommentService:
 
     @staticmethod
     async def get_subject(
-        session: AsyncSession, oid: int, type_: CommentTypeEnum
+        session: AsyncSession, oid: int, type_: InteractionBizTypeEnum
     ) -> CommentSubject | None:
         stmt = select(CommentSubject).where(
             CommentSubject.oid == oid, CommentSubject.type == type_
@@ -203,7 +201,7 @@ class CommentService:
     async def get_or_create_subject(
         session: AsyncSession,
         oid: int,
-        type_: CommentTypeEnum,
+        type_: InteractionBizTypeEnum,
         up_mid: int = 0,
     ) -> CommentSubject:
         """取评论区，不存在则惰性创建。
@@ -327,7 +325,7 @@ class CommentService:
                 subject_values["root_count"] = col(CommentSubject.root_count) + 1
             # 评论对象是 Moment（type=DYNAMIC）时，回写动态统计 commentCount +1
             # （与评论区冗余计数口径一致：仅对外可见的 NORMAL 评论计入）
-            if req.type is CommentTypeEnum.DYNAMIC:
+            if req.type is InteractionBizTypeEnum.DYNAMIC:
                 await MomentStatService.ensure_stat_row(session, oid)
                 await MomentStatService.incr_stat(session, oid, "commentCount", 1)
         await session.exec(  # type: ignore[call-overload]
@@ -473,7 +471,7 @@ class CommentService:
 
         独立事务写入，与审核主流程解耦：通知失败不影响审核结果本身。
         """
-        source = build_comment_source(oid, CommentTypeEnum(ctype), rpid)
+        source = build_comment_source(oid, InteractionBizTypeEnum(ctype), rpid)
         source_link = markup_inline_link(source.label, source.url or source.external_url)
 
         lines = [f"您在{source_link}发布的评论未通过审核，已被驳回。"]
@@ -611,7 +609,7 @@ class CommentService:
                     .values(**subject_values)
                 )
             # 删除的是 Moment 评论（DYNAMIC）且曾计入 → 回写动态统计 commentCount -1
-            if was_visible and row.type is CommentTypeEnum.DYNAMIC:
+            if was_visible and row.type is InteractionBizTypeEnum.DYNAMIC:
                 await MomentStatService.ensure_stat_row(session, row.oid)
                 await MomentStatService.decr_stat(
                     session, row.oid, "commentCount", floor_zero=True
@@ -635,7 +633,7 @@ class CommentService:
         session: AsyncSession,
         mid: int,
         oid: int,
-        type_: CommentTypeEnum,
+        type_: InteractionBizTypeEnum,
         rpid: int,
         *,
         is_admin: bool = False,
@@ -716,7 +714,7 @@ class CommentService:
             session,
             viewer_mid,
             ReportCreateReq(
-                bizType=ReportBizTypeEnum.COMMENT.value,
+                bizType=InteractionBizTypeEnum.COMMENT.value,
                 bizId=rpid,
                 reasonType=int(reason_type),
                 reasonDesc=reason_desc,
@@ -734,7 +732,7 @@ class CommentService:
         to_mid: int,
         message: str,
         actor_uname: str | None = None,
-        type_: "CommentTypeEnum" = CommentTypeEnum.OTHER,
+        type_: "InteractionBizTypeEnum | None" = None,
     ) -> None:
         """弱依赖：通知被回复者。
 
@@ -750,14 +748,14 @@ class CommentService:
         from app.services.message.insite.events import report_event_weakly
 
         source_type = (
-            SourceTypeEnum.DYNAMIC
-            if type_ == CommentTypeEnum.DYNAMIC
-            else SourceTypeEnum.COMMENT
+            InteractionBizTypeEnum.DYNAMIC
+            if type_ == InteractionBizTypeEnum.DYNAMIC
+            else InteractionBizTypeEnum.COMMENT
         )
         await report_event_weakly(
             EventReportReq(
                 mid=to_mid,
-                event_type=EventTypeEnum.REPLY,
+                event_type=InteractionActionTypeEnum.REPLY,
                 source_type=source_type,
                 source_id=str(oid),
                 actor_mid=actor_mid,
@@ -772,7 +770,7 @@ class CommentService:
         rpid: int,
         to_mid: int,
         actor_uname: str | None = None,
-        type_: "CommentTypeEnum" = CommentTypeEnum.OTHER,
+        type_: "InteractionBizTypeEnum | None" = None,
     ) -> None:
         """弱依赖：通知被 @ 者。
 
@@ -782,18 +780,18 @@ class CommentService:
         from app.services.message.insite.events import report_event_weakly
 
         source_type = (
-            SourceTypeEnum.DYNAMIC
-            if type_ == CommentTypeEnum.DYNAMIC
-            else SourceTypeEnum.COMMENT
+            InteractionBizTypeEnum.DYNAMIC
+            if type_ == InteractionBizTypeEnum.DYNAMIC
+            else InteractionBizTypeEnum.COMMENT
         )
         await report_event_weakly(
             EventReportReq(
                 mid=to_mid,
-                event_type=EventTypeEnum.AT,
+                event_type=InteractionActionTypeEnum.AT,
                 source_type=source_type,
                 source_id=str(oid),
                 actor_mid=actor_mid,
-                biz_id=str(oid) if source_type is SourceTypeEnum.DYNAMIC else str(rpid),
+                biz_id=str(oid) if source_type is InteractionBizTypeEnum.DYNAMIC else str(rpid),
             )
         )
 

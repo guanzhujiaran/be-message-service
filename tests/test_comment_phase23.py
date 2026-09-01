@@ -20,14 +20,14 @@ from app.models.db import (
     CommentIndex,
     CommentSubject,
     TMoment,
-)
+    )
 from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
-    CommentTypeEnum,
+    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-)
+    )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
@@ -151,7 +151,7 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
         await session.exec(
             select(CommentSubject).where(
                 col(CommentSubject.oid) == oid,
-                col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+                col(CommentSubject.type) == InteractionBizTypeEnum.DYNAMIC,
             )
         )
     ).one_or_none()
@@ -170,7 +170,7 @@ async def _add(session, mid, oid, *, message="测试评论", up_mid=0, root="0",
             mid,
             CommentAddReq(
                 oid=str(oid),
-                type=CommentTypeEnum.DYNAMIC,
+                type=InteractionBizTypeEnum.DYNAMIC,
                 root=root,
                 parent=parent,
                 message=message,
@@ -234,14 +234,14 @@ async def test_sub_preview_and_reply_list() -> None:
         assert preview == 3, "预览条数配置应保持 3"
 
         async with new_session() as s:
-            listing = await CommentReadService.list_main(s, oid, CommentTypeEnum.DYNAMIC, viewer_mid=None)
+            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
             assert len(listing.items) == 1
             root_item = listing.items[0]
             assert len(root_item.replies) == preview, "预览应截断到 preview_count"
             assert root_item.replies[0].message == "回复0"
 
             # 展开接口：total=5，分页取前 2 条
-            sub = await CommentReadService.get_sub_list(s, int(root), oid, CommentTypeEnum.DYNAMIC, page_num=1, page_size=2)
+            sub = await CommentReadService.get_sub_list(s, int(root), oid, InteractionBizTypeEnum.DYNAMIC, page_num=1, page_size=2)
             assert sub.total == 5
             assert len(sub.items) == 2
     finally:
@@ -257,17 +257,17 @@ async def test_top_pin_permission() -> None:
 
         # 陌生人无权置顶
         async with new_session() as s:
-            assert not await CommentService.set_top(s, _STRANGER, oid, CommentTypeEnum.DYNAMIC, int(root), top=True)
+            assert not await CommentService.set_top(s, _STRANGER, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=True)
         # UP 主置顶
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, CommentTypeEnum.DYNAMIC, int(root), top=True)
-            listing = await CommentReadService.list_main(s, oid, CommentTypeEnum.DYNAMIC, viewer_mid=None)
+            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=True)
+            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
             assert listing.top is not None and listing.top.rpid == root
             assert listing.top.is_top is True
         # UP 主取消置顶
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, CommentTypeEnum.DYNAMIC, int(root), top=False)
-            listing2 = await CommentReadService.list_main(s, oid, CommentTypeEnum.DYNAMIC, viewer_mid=None)
+            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=False)
+            listing2 = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
             assert listing2.top is None
     finally:
         await _cleanup(oid, {_AUTHOR, _UP, _STRANGER})
@@ -364,13 +364,13 @@ async def test_sensitive_word_audit() -> None:
     try:
         async with new_session() as s:
             resp = await CommentService.add(
-                s, _AUTHOR, CommentAddReq(oid=str(oid), type=CommentTypeEnum.DYNAMIC, message="这是诈骗内容"),
+                s, _AUTHOR, CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.DYNAMIC, message="这是诈骗内容"),
                 uname="u",
             )
             assert resp.state is CommentStateEnum.REJECTED
             assert resp.need_audit is True
         async with new_session() as s:
-            listing = await CommentReadService.list_main(s, oid, CommentTypeEnum.DYNAMIC, viewer_mid=None)
+            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
             assert listing.total == 0, "拒审评论不应出现在列表"
             detail = await CommentReadService.get_detail(s, int(resp.rpid))
             assert detail is None, "拒审评论详情不可见"
@@ -398,7 +398,7 @@ async def test_author_sees_own_auditing_comment(
             normal_resp = await CommentService.add(
                 s,
                 _AUTHOR,
-                CommentAddReq(oid=str(oid), type=CommentTypeEnum.LOTTERY, message="一条正常评论"),
+                CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.LOTTERY, message="一条正常评论"),
                 uname=f"user{_AUTHOR}",
             )
             assert normal_resp.state is CommentStateEnum.NORMAL
@@ -409,7 +409,7 @@ async def test_author_sees_own_auditing_comment(
                 _AUTHOR,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.LOTTERY,
+                    type=InteractionBizTypeEnum.LOTTERY,
                     message="这个链接加微信看广告",
                 ),
                 uname=f"user{_AUTHOR}",
@@ -420,7 +420,7 @@ async def test_author_sees_own_auditing_comment(
         # 作者视角：能看到自己审核中的评论，带 auditing 标识；计数只算 NORMAL
         async with new_session() as s:
             own = await CommentReadService.list_main(
-                s, oid, CommentTypeEnum.LOTTERY, viewer_mid=_AUTHOR
+                s, oid, InteractionBizTypeEnum.LOTTERY, viewer_mid=_AUTHOR
             )
             assert own.total == 1, "计数应只统计 NORMAL 评论"
             assert own.all_count == 1
@@ -433,14 +433,14 @@ async def test_author_sees_own_auditing_comment(
         # 他人视角 / 匿名视角：看不到审核中的评论
         async with new_session() as s:
             other = await CommentReadService.list_main(
-                s, oid, CommentTypeEnum.LOTTERY, viewer_mid=_VIEWER
+                s, oid, InteractionBizTypeEnum.LOTTERY, viewer_mid=_VIEWER
             )
             other_rpids = [it.rpid for it in other.items]
             assert audit_rpid not in other_rpids, "他人不应看到作者审核中的评论"
             assert normal_rpid in other_rpids
 
             anon = await CommentReadService.list_main(
-                s, oid, CommentTypeEnum.LOTTERY, viewer_mid=None
+                s, oid, InteractionBizTypeEnum.LOTTERY, viewer_mid=None
             )
             anon_rpids = [it.rpid for it in anon.items]
             assert audit_rpid not in anon_rpids, "匿名不应看到审核中的评论"
@@ -469,7 +469,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
     一律不投递回复 / @ 通知，避免接收方点开看到「评论不可见」；仅 NORMAL 投递。
     """
     import app.services.message.insite.events as events_mod
-    from app.models.enums import EventTypeEnum
+    from app.models.enums import InteractionActionTypeEnum
     from app.models.schemas import EventReportReq
 
     # 关掉「先审后发」，保证无敏感词评论直接 NORMAL（与
@@ -491,7 +491,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
             # LOTTERY 类型避开 DYNAMIC 的 MomentStat 外键关联
             # （测试 oid 没有对应的 TMoment 父行），与
             # test_author_sees_own_auditing_comment 保持一致
-            type=CommentTypeEnum.LOTTERY,
+            type=InteractionBizTypeEnum.LOTTERY,
             root=str(root_rpid),
             parent=str(root_rpid),
             message=message,
@@ -507,7 +507,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
                 _UP,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.LOTTERY,
+                    type=InteractionBizTypeEnum.LOTTERY,
                     message="根评论",
                 ),
                 uname=f"user{_UP}",
@@ -520,8 +520,8 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
                 s, _AUTHOR, _build(root_rpid, "正常回复内容"), uname=f"user{_AUTHOR}"
             )
             assert resp.state is CommentStateEnum.NORMAL
-        assert any(r.event_type is EventTypeEnum.REPLY for r in calls), "NORMAL 应投递回复通知"
-        assert any(r.event_type is EventTypeEnum.AT for r in calls), "NORMAL 应投递@通知"
+        assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), "NORMAL 应投递回复通知"
+        assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "NORMAL 应投递@通知"
         calls.clear()
 
         # 2) REJECTED 评论（高危词 + 回复 + @）：不投递互动通知
@@ -551,7 +551,7 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
     再次翻转为 NORMAL 不重复补发。
     """
     import app.services.message.insite.events as events_mod
-    from app.models.enums import EventTypeEnum
+    from app.models.enums import InteractionActionTypeEnum
     from app.models.schemas import EventReportReq
 
     # 关掉「先审后发」：无敏感词评论（含根评论）直接 NORMAL，作为楼中楼回复目标；
@@ -575,7 +575,7 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
                 _UP,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.LOTTERY,
+                    type=InteractionBizTypeEnum.LOTTERY,
                     message="根评论",
                 ),
                 uname=f"user{_UP}",
@@ -589,7 +589,7 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
                 _AUTHOR,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.LOTTERY,
+                    type=InteractionBizTypeEnum.LOTTERY,
                     root=str(root_rpid),
                     parent=str(root_rpid),
                     message="这个链接加微信看广告",
@@ -607,8 +607,8 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
                 s, rpid, CommentStateEnum.NORMAL, note="内容合规", operator_mid=_VIEWER
             )
             assert ok
-        assert any(r.event_type is EventTypeEnum.REPLY for r in calls), "审核通过应补发回复通知"
-        assert any(r.event_type is EventTypeEnum.AT for r in calls), "审核通过应补发@通知"
+        assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), "审核通过应补发回复通知"
+        assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "审核通过应补发@通知"
         calls.clear()
 
         # 3) 下架后再次恢复 NORMAL：@ 已投递（notified=True）不再重复补发；
@@ -622,7 +622,7 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
             await CommentAdminService.set_state(
                 s, rpid, CommentStateEnum.NORMAL, operator_mid=_VIEWER
             )
-        assert not any(r.event_type is EventTypeEnum.AT for r in calls), "已投递的@不应重复补发"
+        assert not any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "已投递的@不应重复补发"
     finally:
         await _cleanup(oid, {_AUTHOR, _UP, _VIEWER})
 
@@ -638,7 +638,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
 
     from app.models.db.event_tbl import EventMessage
     from app.models.db.follow_tbl import UserFollow
-    from app.models.enums import EventTypeEnum, FollowStatusEnum
+    from app.models.enums import InteractionActionTypeEnum, FollowStatusEnum
 
     # 关掉先审后发，保证评论直接 NORMAL（通知在 add 内即时投递）
     monkeypatch.setattr(settings, "comment_pre_audit", False)
@@ -663,7 +663,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 s,
                 blocked,
                 CommentAddReq(
-                    oid=str(oid), type=CommentTypeEnum.LOTTERY, message="被@者的根评论"
+                    oid=str(oid), type=InteractionBizTypeEnum.LOTTERY, message="被@者的根评论"
                 ),
                 uname=f"user{blocked}",
             )
@@ -676,7 +676,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 _AUTHOR,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.LOTTERY,
+                    type=InteractionBizTypeEnum.LOTTERY,
                     root=str(root_rpid),
                     parent=str(root_rpid),
                     message="回复并@你",
@@ -708,7 +708,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 await s.exec(
                     select(EventMessage).where(
                         col(EventMessage.mid) == control,
-                        col(EventMessage.event_type) == EventTypeEnum.AT,
+                        col(EventMessage.event_type) == InteractionActionTypeEnum.AT,
                         col(EventMessage.biz_id) == str(rpid),
                     )
                 )
@@ -725,7 +725,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 _AUTHOR,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.LOTTERY,
+                    type=InteractionBizTypeEnum.LOTTERY,
                     root=str(root_rpid),
                     parent=str(root_rpid),
                     message="审核后才可见的回复",

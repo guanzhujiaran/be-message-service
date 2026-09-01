@@ -24,16 +24,13 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import EventMessage, TMoment, TInteractionStat, TResourceFeed
 from app.models.enums import (
-    EventTypeEnum,
+    InteractionActionTypeEnum,
     InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
 )
-from app.services.interaction_actions.dynamic.audit import (
-    AuditApproveAction,
-    AuditRejectAction,
-)
+from app.services.interaction_actions import get_biz
 from app.services.moment.moment_audit import MomentAuditService
 from seed_biliopus import fetch_real_dyns
 
@@ -243,9 +240,7 @@ async def test_approve_sets_normal_and_pubtime():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
         )
-        item = await AuditApproveAction(
-            s, actor_mid=ADMIN_MID, biz_id=did, remark="ok"
-        ).run()
+        item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve(remark="ok")
         assert item.auditStatus == MomentAuditStatusEnum.NORMAL.value
         assert item.pubTime is not None
 
@@ -269,7 +264,7 @@ async def test_approve_forward_increments_src_repost_count():
             repost_src_dyn_id=src,
         )
 
-        await AuditApproveAction(s, actor_mid=ADMIN_MID, biz_id=fwd).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, fwd, ADMIN_MID).audit_approve()
         assert await _get_repost_count(s, src) == 6  # 触发点①：+1
 
 
@@ -278,7 +273,7 @@ async def test_approve_does_not_fire_reject_event():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
         )
-        await AuditApproveAction(s, actor_mid=ADMIN_MID, biz_id=did).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve()
 
     # 审核通过禁止发通知：AUDIT_REJECT 事件不应产生
     async with new_session() as s2:
@@ -286,7 +281,7 @@ async def test_approve_does_not_fire_reject_event():
             await s2.exec(
                 select(EventMessage).where(
                     EventMessage.mid == A_MID,
-                    EventMessage.event_type == EventTypeEnum.AUDIT_REJECT,
+                    EventMessage.event_type == InteractionActionTypeEnum.AUDIT_REJECT,
                 )
             )
         ).all()
@@ -301,9 +296,9 @@ async def test_reject_sets_rejected_and_reason():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
         )
-        item = await AuditRejectAction(
-            s, actor_mid=ADMIN_MID, biz_id=did, reject_reason="违规内容", remark="r"
-        ).run()
+        item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
+            reject_reason="违规内容", remark="r"
+        )
         assert item.auditStatus == MomentAuditStatusEnum.REJECTED.value
 
         dyn = (
@@ -318,9 +313,9 @@ async def test_reject_fires_audit_reject_event_to_author():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
         )
-        await AuditRejectAction(
-            s, actor_mid=ADMIN_MID, biz_id=did, reject_reason="违规内容"
-        ).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
+            reject_reason="违规内容"
+        )
 
     # 弱依赖事件：应投递给作者（接收者 mid = 作者）
     async with new_session() as s2:
@@ -328,7 +323,7 @@ async def test_reject_fires_audit_reject_event_to_author():
             await s2.exec(
                 select(EventMessage).where(
                     EventMessage.mid == A_MID,
-                    EventMessage.event_type == EventTypeEnum.AUDIT_REJECT,
+                    EventMessage.event_type == InteractionActionTypeEnum.AUDIT_REJECT,
                 )
             )
         ).all()
@@ -349,9 +344,9 @@ async def test_reject_forward_normal_decrements_src_repost_count():
             repost_src_dyn_id=src,
         )
 
-        await AuditRejectAction(
-            s, actor_mid=ADMIN_MID, biz_id=fwd, reject_reason="撤回"
-        ).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, fwd, ADMIN_MID).audit_reject(
+            reject_reason="撤回"
+        )
         assert await _get_repost_count(s, src) == 4  # 触发点②：-1
 
 
@@ -368,9 +363,9 @@ async def test_reject_auditing_forward_no_decrement():
             repost_src_dyn_id=src,
         )
 
-        await AuditRejectAction(
-            s, actor_mid=ADMIN_MID, biz_id=fwd, reject_reason="撤回"
-        ).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, fwd, ADMIN_MID).audit_reject(
+            reject_reason="撤回"
+        )
         assert await _get_repost_count(s, src) == 5  # 未触发
 
 
@@ -416,9 +411,9 @@ async def test_reject_normal_word_moment_reverts():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.NORMAL
         )
-        item = await AuditRejectAction(
-            s, actor_mid=ADMIN_MID, biz_id=did, reject_reason="误过审，撤回"
-        ).run()
+        item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
+            reject_reason="误过审，撤回"
+        )
         assert item.auditStatus == MomentAuditStatusEnum.REJECTED.value
 
         dyn = (
@@ -455,7 +450,7 @@ async def test_log_list_records_transition():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
         )
-        await AuditApproveAction(s, actor_mid=ADMIN_MID, biz_id=did).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve()
 
         resp = await MomentAuditService.log_list(s, dyn_id=did)
         actions = [it.actionType for it in resp.items]
@@ -471,9 +466,9 @@ async def test_detail_returns_snapshot_and_logs():
         did = await _seed_moment(
             s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
         )
-        await AuditRejectAction(
-            s, actor_mid=ADMIN_MID, biz_id=did, reject_reason="违规"
-        ).run()
+        await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
+            reject_reason="违规"
+        )
 
         detail = await MomentAuditService.detail(s, did)
         assert detail.item is not None

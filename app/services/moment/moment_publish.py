@@ -32,9 +32,9 @@ from app.models.db import (
     TMomentTopic,
     TMomentTopicRel,
     TResourceFeed,
-)
+    )
 from app.models.enums import (
-    EventTypeEnum,
+    InteractionActionTypeEnum,
     InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
@@ -42,8 +42,7 @@ from app.models.enums import (
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
-    SourceTypeEnum,
-)
+    )
 from app.models.schemas import EventReportReq
 from app.models.schemas.moment import (
     MomentAttachRef,
@@ -54,7 +53,7 @@ from app.models.schemas.moment import (
     MomentRepostReq,
     MomentTopicRef,
     MomentTopReq,
-)
+    )
 from app.services.user.account import PptrUser
 
 # 业务上限（MVP）
@@ -803,8 +802,8 @@ class MomentPublishService:
             await report_event_weakly(
                 EventReportReq(
                     mid=tmid,
-                    event_type=EventTypeEnum.AT,
-                    source_type=SourceTypeEnum.DYNAMIC,
+                    event_type=InteractionActionTypeEnum.AT,
+                    source_type=InteractionBizTypeEnum.DYNAMIC,
                     source_id=str(moment_id),
                     actor_mid=actor_mid,
                     biz_id=str(moment_id),

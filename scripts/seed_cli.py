@@ -60,14 +60,11 @@ from app.models.db.setting_tbl import UserMessageSetting
 from app.models.enums import (
     DmMsgStatusEnum,
     DmRelationEnum,
-    EventTypeEnum,
-    SourceTypeEnum,
-    NotifyTargetTypeEnum,
-    CommentTypeEnum,
-    BanDurationTypeEnum,
+    InteractionActionTypeEnum,
     InteractionBizTypeEnum,
-)
-from bili_common.models.report import ReportBizTypeEnum
+    NotifyTargetTypeEnum,
+    BanDurationTypeEnum,
+    )
 from app.models.pptr_db import PptrUserDetail, PptrUserInfo
 
 # ---------------------------------------------------------------------------
@@ -499,7 +496,7 @@ class SeedClient:
                 "/api/v1/report",
                 mid,
                 {
-                    "bizType": ReportBizTypeEnum.DYNAMIC,
+                    "bizType": InteractionBizTypeEnum.DYNAMIC,
                     "bizId": dyn_id,
                     "reasonType": _REPORT_REASON_TYPE,
                     "reasonDesc": "seed 举报动态",
@@ -541,7 +538,7 @@ class SeedClient:
         targets = list(at_users or [])
         body: dict = {
             "oid": str(dyn_id),
-            "type": CommentTypeEnum.DYNAMIC,
+            "type": InteractionBizTypeEnum.DYNAMIC,
             "root": root,
             "parent": parent,
             "message": f"{raw_message}{_at_text_suffix(targets)}",
@@ -605,7 +602,7 @@ class SeedClient:
             lambda: self._post(
                 "/api/v1/comment/top",
                 mid,
-                {"oid": str(dyn_id), "type": CommentTypeEnum.DYNAMIC, "rpid": rpid, "top": True},
+                {"oid": str(dyn_id), "type": InteractionBizTypeEnum.DYNAMIC, "rpid": rpid, "top": True},
             ),
             f"comment top mid={mid} rpid={rpid}",
         )
@@ -618,7 +615,7 @@ class SeedClient:
                 mid,
                 {
                     "oid": str(dyn_id),
-                    "type": CommentTypeEnum.DYNAMIC,
+                    "type": InteractionBizTypeEnum.DYNAMIC,
                     "page_size": page_size,
                 },
             ),
@@ -626,7 +623,7 @@ class SeedClient:
         )
 
     async def event_list(
-        self, mid: int, event_type: EventTypeEnum, page_size: int = 50
+        self, mid: int, event_type: InteractionActionTypeEnum, page_size: int = 50
     ) -> dict:
         """互动提醒列表（msgfeed 聚合），用于验证 @ 通知是否触达被 @ 用户。"""
         return await self._req(
@@ -732,7 +729,7 @@ class SeedClient:
     async def report_event(
         self,
         receiver_mid: int,
-        event_type: EventTypeEnum,
+        event_type: InteractionActionTypeEnum,
         dyn_id: int,
         actor_mid: int,
         actor_name: str | None,
@@ -747,7 +744,7 @@ class SeedClient:
                     {
                         "mid": receiver_mid,
                         "event_type": event_type,
-                        "source_type": SourceTypeEnum.DYNAMIC,
+                        "source_type": InteractionBizTypeEnum.DYNAMIC,
                         "source_id": str(dyn_id),
                         "actor_mid": actor_mid,
                         "content": random.choice(_COMMENTS),
@@ -868,7 +865,7 @@ class SeedClient:
                 "/api/v1/report",
                 mid,
                 {
-                    "bizType": ReportBizTypeEnum.USER,
+                    "bizType": InteractionBizTypeEnum.USER,
                     "bizId": target_mid,
                     "reasonType": _REPORT_REASON_TYPE,
                     "reasonDesc": "seed 举报用户空间",
@@ -956,7 +953,7 @@ async def _verify_at_event(client: SeedClient, at_mid: int, resource_id: str) ->
     ② 消息设置闸门（用户关闭 @ 提醒）；③ 幂等去重。
     """
     try:
-        data = await client.event_list(at_mid, EventTypeEnum.AT)
+        data = await client.event_list(at_mid, InteractionActionTypeEnum.AT)
     except RuntimeError as e:
         logger.warning(f"[@通知] 被@用户 {at_mid} 的 AT 事件列表查询失败: {e}")
         return
@@ -1366,7 +1363,7 @@ async def seed_interact(
     # 4) 事件通知（like / reply / at 三类）
     target_mid = others[0][0] if others else hub[0]
     actor = hub
-    for event_type in (EventTypeEnum.LIKE, EventTypeEnum.REPLY, EventTypeEnum.AT):
+    for event_type in (InteractionActionTypeEnum.LIKE, InteractionActionTypeEnum.REPLY, InteractionActionTypeEnum.AT):
         await client.report_event(
             target_mid,
             event_type,

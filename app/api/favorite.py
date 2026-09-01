@@ -31,7 +31,7 @@ from app.models.schemas.favorite import (
     FavoriteSettingResp,
 )
 from app.services.moment.interaction import BeMessageInteractionStatService as InteractionStatService
-from app.services.interaction_actions import get_favorite_action
+from app.services.interaction_actions import get_biz
 from app.services.interaction_actions.folder import FavoriteFolderAction
 
 router = APIRouter(prefix="/api/v1/favorite", tags=["favorite"])
@@ -166,16 +166,9 @@ async def add_favorite(
         return StandardResponse(code=400, msg="bizId/dynId 不合法")
     biz_type, biz_id = resolved
     try:
-        # 2.47.0：按 biz_type 分发收藏操作类，folderId 缺省时内部自动使用（创建）默认收藏夹
-        action = get_favorite_action(biz_type)(
-            session,
-            actor_mid=user.mid,
-            biz_id=biz_id,
-            folder_id=req.folderId,
-            action="add",
-            dyn_id=req.dynId,
-        )
-        favorited, folder_id = await action.run()
+        # 2.48.0：以资源为主体，取资源实例调用 favorite()
+        biz = get_biz(biz_type, session, biz_id, user.mid)
+        favorited, folder_id = await biz.favorite(action="add", folder_id=req.folderId)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     count = await _get_favorite_count(session, biz_type, biz_id)
@@ -203,15 +196,8 @@ async def remove_favorite(
     if resolved is None or folder_id is None:
         return StandardResponse(code=400, msg="bizId/dynId/folderId 不合法")
     biz_type, biz_id = resolved
-    action = get_favorite_action(biz_type)(
-        session,
-        actor_mid=user.mid,
-        biz_id=biz_id,
-        folder_id=folder_id,
-        action="remove",
-        dyn_id=req.dynId,
-    )
-    removed, _ = await action.run()
+    biz = get_biz(biz_type, session, biz_id, user.mid)
+    removed, _ = await biz.favorite(action="remove", folder_id=folder_id)
     count = await _get_favorite_count(session, biz_type, biz_id)
     return StandardResponse(
         data=FavoriteAddResp(

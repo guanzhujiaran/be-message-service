@@ -7,8 +7,6 @@
 
 from sqlmodel import Field, SQLModel
 
-from bili_common.models.report import ReportBizTypeEnum
-
 from app.models.enums import InteractionBizTypeEnum
 from app.models.str_int import StrInt
 
@@ -17,12 +15,8 @@ from app.models.schemas.base import AutoStrMixin
 class ReportCreateReq(SQLModel, AutoStrMixin):
     """统一举报请求（评论 / 动态 / 用户空间 / RPA 资源）。"""
 
-    bizType: ReportBizTypeEnum = Field(description="举报来源类型（ReportBizTypeEnum 值）")
-    bizId: StrInt = Field(description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid（雪花 ID，StrInt 兼容前端 str 传参）")
-    resourceType: InteractionBizTypeEnum | None = Field(
-        default=None,
-        description="被举报对象所属资源类型（InteractionBizTypeEnum 值，2.37.0）：dynamic 举报可不传（默认 1）；lottery/rpa_* 等资源举报必传",
-    )
+    bizType: InteractionBizTypeEnum = Field(description="举报来源类型（InteractionBizTypeEnum 值，即业务资源类型：dynamic/lottery/rpa_*/comment/user）")
+    bizId: StrInt = Field(description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid，lottery/rpa_*→各自资源 id（雪花 ID，StrInt 兼容前端 str 传参）")
     reasonType: int = Field(description="统一举报原因（ReportReasonEnum 值）")
     reasonDesc: str | None = Field(default=None, max_length=500, description="补充描述（选填）")
     pics: list[str] | None = Field(default=None, description="证据图片 URL 列表（http(s)，最多 3 张）")
@@ -32,7 +26,7 @@ class ReportItem(SQLModel, AutoStrMixin):
     """统一举报记录展示项。"""
 
     pk: int
-    bizType: ReportBizTypeEnum
+    bizType: InteractionBizTypeEnum
     bizId: int
     accusedMid: int
     reportMid: int

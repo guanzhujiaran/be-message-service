@@ -26,18 +26,18 @@ from app.models.db import (
     DmSession,
     EventMessage,
     NotifyMessage,
-)
+    )
 from app.models.enums import (
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
     DmSessionTypeEnum,
-    EventTypeEnum,
+    InteractionActionTypeEnum,
     NotifyLevelEnum,
     NotifyStatusEnum,
     NotifyTargetTypeEnum,
-    SourceTypeEnum,
-)
+    InteractionBizTypeEnum,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -240,12 +240,12 @@ async def test_event_enum_round_trip_all_members() -> None:
     """遍历事件枚举全部成员，逐一验证写入 → 读回一致。"""
     await _cleanup()
     async with new_session() as s:
-        created: list[tuple[int, EventTypeEnum, SourceTypeEnum]] = []
+        created: list[tuple[int, InteractionActionTypeEnum, InteractionBizTypeEnum]] = []
         for i, (et, st) in enumerate(
             [
                 (e, s_)
-                for e in EventTypeEnum
-                for s_ in SourceTypeEnum
+                for e in InteractionActionTypeEnum
+                for s_ in InteractionBizTypeEnum
             ]
         ):
             row = EventMessage(
@@ -278,8 +278,8 @@ async def test_event_enum_round_trip_all_members() -> None:
                 )
             )
         ).all()
-        valid_et = {e.name for e in EventTypeEnum}
-        valid_st = {e.name for e in SourceTypeEnum}
+        valid_et = {e.name for e in InteractionActionTypeEnum}
+        valid_st = {e.name for e in InteractionBizTypeEnum}
         for et_raw, st_raw in raws:
             assert et_raw in valid_et, f"库中 event_type 字面量异常: {et_raw!r}"
             assert st_raw in valid_st, f"库中 source_type 字面量异常: {st_raw!r}"

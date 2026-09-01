@@ -12,10 +12,10 @@
 - POST /space/untop   取消置顶
 - POST /create/check  发布页预校验
 
-互动类（P4-T7，2.47.0 起直接实例化 `interaction_actions` 操作对象）：
-- POST /thumb         点赞 / 取消点赞（幂等，LikeAction）
-- POST /dislike       点踩 / 取消点踩（幂等，DislikeAction）
-- POST /share         分享上报（shareCount +1，ShareAction）
+互动类（P4-T7，2.48.0 起统一由 `interaction_actions.BaseBiz` 资源类承载，按 bizType 分发）：
+- POST /thumb         点赞 / 取消点赞（幂等，BaseBiz.like）
+- POST /dislike       点踩 / 取消点踩（幂等，BaseBiz.dislike）
+- POST /share         分享上报（shareCount +1，BaseBiz.share）
 - POST /report        举报动态（不改 auditStatus）
 （浏览计数无上报接口：由后端在详情接口 GET /detail/{id} 访问时自动累计）
 
@@ -50,17 +50,15 @@ from app.models.db import (
     TMomentFavorite,
     TMomentLike,
     TResourceReport,
-)
+    )
 from app.models.enums import (
-    CommentTypeEnum,
     InteractionBizTypeEnum,
     MomentAuditStatusEnum,
-)
-from bili_common.models.report import ReportBizTypeEnum
+    )
 from app.models.schemas.interaction import (
     InteractionStatusItem,
     InteractionStatusResp,
-)
+    )
 from app.models.schemas.mq import InteractionViewPayload
 from app.models.schemas.moment import (
     MomentAtListResp,
@@ -92,20 +90,14 @@ from app.models.schemas.moment import (
     MomentTopReq,
     MomentTopResp,
     MomentTopicDetailResp,
-)
+    )
 from app.services.user.follow import FollowService
 from app.services.moment.interaction import (
-    BeMessageInteractionStatService as InteractionStatService,
+BeMessageInteractionStatService as InteractionStatService,
 )
 from app.services.message.infrastructure.publisher import publish_interaction_view
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
-from app.services.interaction_actions import (
-    DislikeAction,
-    ReportAction,
-    RepostAction,
-    ShareAction,
-    get_action,
-)
+from app.services.interaction_actions import get_biz
 from app.services.moment.moment_feed import MomentFeedService
 from app.services.moment.moment_publish import MomentPublishService
 from app.services.moment.moment_topic import MomentTopicService
@@ -229,15 +221,10 @@ async def repost_dynamic(
 ) -> StandardResponse[MomentRepostResp]:
     ip, ua = _client_ctx(request, user_agent)
     try:
-        action = RepostAction(
-            session,
-            actor_mid=user.mid,
-            biz_id=req.srcDynId,
-            content=req.content,
-            client_ip=ip,
-            user_agent=ua,
-        )
-        data = await action.run()
+        biz = get_biz(InteractionBizTypeEnum.DYNAMIC, session, req.srcDynId, user.mid)
+        biz.client_ip = ip
+        biz.user_agent = ua
+        data = await biz.repost(content=req.content)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=MomentRepostResp(**data))
@@ -313,15 +300,9 @@ async def thumb(
             return StandardResponse(code=400, msg="bizId 必填")
         biz_id = req.bizId
     try:
-        # 按 biz_type 分发到对应资源类型的点赞操作类（每个类声明自己的 _biz_type）
-        action = get_action("like", biz_type)(
-            session,
-            actor_mid=user.mid,
-            biz_id=biz_id,
-            up=req.up,
-            dyn_id=req.dynId,
-        )
-        is_like, like_count = await action.run()
+        # 2.48.0：以资源为主体，取资源实例调用 like()
+        biz = get_biz(biz_type, session, biz_id, user.mid)
+        is_like, like_count = await biz.like(up=req.up)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(
@@ -358,15 +339,8 @@ async def dislike(
     if biz_id is None:
         return StandardResponse(code=400, msg="bizId/dynId 不合法")
     try:
-        action = DislikeAction(
-            session,
-            actor_mid=user.mid,
-            biz_type=InteractionBizTypeEnum.DYNAMIC,
-            biz_id=biz_id,
-            up=req.up,
-            dyn_id=biz_id,
-        )
-        is_dislike, dislike_count = await action.run()
+        biz = get_biz(InteractionBizTypeEnum.DYNAMIC, session, biz_id, user.mid)
+        is_dislike, dislike_count = await biz.dislike(up=req.up)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(
@@ -394,13 +368,8 @@ async def share(
 ) -> StandardResponse[MomentShareResp]:
     """分享上报：normal 动态 ``shareCount`` 原子 +1（行为上报，不幂等）。"""
     try:
-        action = ShareAction(
-            session,
-            actor_mid=user.mid,
-            biz_id=req.dynId,
-            dyn_id=req.dynId,
-        )
-        count = await action.run()
+        biz = get_biz(InteractionBizTypeEnum.DYNAMIC, session, req.dynId, user.mid)
+        count = await biz.share()
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(
@@ -468,7 +437,7 @@ async def _query_status_items(
             subjects = (
                 await session.exec(
                     select(CommentSubject).where(
-                        col(CommentSubject.type) == CommentTypeEnum.LOTTERY,
+                        col(CommentSubject.type) == InteractionBizTypeEnum.LOTTERY,
                         col(CommentSubject.oid).in_(ids),
                     )
                 )
@@ -529,19 +498,13 @@ async def _query_status_items(
             details[_id] = detail
 
     # 2.40.0：被举报人数（去重举报人，同一人多次举报只记一次）
-    # dynamic → bizType='dynamic'；非动态 → resourceType=资源类型枚举值
+    # 举报 bizType 即业务资源类型（dynamic=1，lottery=2，rpa_*=3~6，comment=7，user=8），按 bizType 聚合
     report_counts: dict[int, int] = {}
     if ids:
-        if InteractionStatService.is_dynamic(biz_type):
-            _rp_where = (
-                col(TResourceReport.bizType) == ReportBizTypeEnum.DYNAMIC.value,
-                col(TResourceReport.bizId).in_(ids),
-            )
-        else:
-            _rp_where = (
-                col(TResourceReport.resourceType) == int(biz_type),
-                col(TResourceReport.bizId).in_(ids),
-            )
+        _rp_where = (
+            col(TResourceReport.bizType) == int(biz_type),
+            col(TResourceReport.bizId).in_(ids),
+        )
         rp_rows = (
             await session.exec(
                 select(
@@ -654,15 +617,8 @@ async def report(
     req: MomentReportReq,
 ) -> StandardResponse[MomentReportResp]:
     try:
-        action = ReportAction(
-            session,
-            actor_mid=user.mid,
-            biz_id=req.dynId,
-            reason_type=req.reasonType,
-            reason_desc=req.reasonDesc,
-            dyn_id=req.dynId,
-        )
-        await action.run()
+        biz = get_biz(InteractionBizTypeEnum.DYNAMIC, session, req.dynId, user.mid)
+        await biz.report(reason_type=req.reasonType, reason_desc=req.reasonDesc)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(

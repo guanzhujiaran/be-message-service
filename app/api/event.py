@@ -16,7 +16,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import EventTypeEnum
+from app.models.enums import InteractionActionTypeEnum
 from app.models.schemas import (
     EventAggregateResp,
     EventListResp,
@@ -58,7 +58,7 @@ async def report_event(
 async def aggregate_event(
     session: SessionDep,
     user: RequiredUser,
-    event_type: EventTypeEnum | None = Query(default=None, description="按类型筛选"),
+    event_type: InteractionActionTypeEnum | None = Query(default=None, description="按类型筛选"),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
     only_unread: bool = Query(default=False),
@@ -86,7 +86,7 @@ async def aggregate_event(
 async def list_event(
     session: SessionDep,
     user: RequiredUser,
-    event_type: EventTypeEnum | None = Query(default=None),
+    event_type: InteractionActionTypeEnum | None = Query(default=None),
     cursor_id: int | None = Query(default=None, ge=1, description="上一页末条 id，用于翻页"),
     page_size: int = Query(default=20, ge=1, le=50),
     only_unread: bool = Query(default=False),
@@ -142,9 +142,9 @@ async def unread_event(session: SessionDep, user: RequiredUser) -> StandardRespo
     data = await BaseEvent.count_unread_by_type(session, user.mid)
     return StandardResponse(
         data={
-            "like": data.get(EventTypeEnum.LIKE.value, 0),
-            "reply": data.get(EventTypeEnum.REPLY.value, 0),
-            "at": data.get(EventTypeEnum.AT.value, 0),
+            "like": data.get(InteractionActionTypeEnum.LIKE.value, 0),
+            "reply": data.get(InteractionActionTypeEnum.REPLY.value, 0),
+            "at": data.get(InteractionActionTypeEnum.AT.value, 0),
             "total": sum(data.values()),
         }
     )

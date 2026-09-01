@@ -16,20 +16,14 @@ from typing import Optional
 from pydantic import computed_field
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import EventTypeEnum, SourceTypeEnum
+from app.models.biz_type import source_type_label
+from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.base import AutoStrMixin
 
-# source_type（即 msgfeed item 的 business）→ 文字业务名称。
-# 跳转 uri 不再由后端拼接，前端按 business + type 自行决定业务与跳转；
-# 这里只额外给出可读的业务名，前端据此展示「对动态 / 对评论」的提醒。
-_BUSINESS_NAME: dict[SourceTypeEnum, str] = {
-    SourceTypeEnum.VIDEO: "视频",
-    SourceTypeEnum.DYNAMIC: "动态",
-    SourceTypeEnum.ARTICLE: "专栏",
-    SourceTypeEnum.COMMENT: "评论",
-    SourceTypeEnum.LOTTERY: "抽奖",
-    SourceTypeEnum.OTHER: "其他",
-}
+# business（= source_type）的文字名称不再在本模块维护：
+# 展示名统一由 `app.models.biz_type.source_type_label()` 供给——
+# 有对应 biz_type 的（dynamic / lottery / rpa_*）取 biz_type 的展示名，
+# 其余无 biz_type 的（仅评论 COMMENT）走 biz_type 模块的兜底表（计划书 §5.9）。
 _DEFAULT_BUSINESS_NAME = "其他"
 
 
@@ -58,9 +52,9 @@ class EventReportReq(SQLModel, AutoStrMixin):
     """
 
     mid: int = Field(description="接收提醒的用户mid")
-    event_type: EventTypeEnum = Field(description="事件类型：like / reply / at")
-    source_type: SourceTypeEnum = Field(
-        default=SourceTypeEnum.OTHER, description="来源实体类型"
+    event_type: InteractionActionTypeEnum = Field(description="事件类型：like / reply / at")
+    source_type: InteractionBizTypeEnum = Field(
+        description="来源实体类型（必填：无对应资源时禁止落库）"
     )
     source_id: str = Field(min_length=1, max_length=64, description="来源实体id")
     actor_mid: int = Field(description="触发行为的用户mid")
@@ -89,8 +83,8 @@ class EventItem(SQLModel, AutoStrMixin):
     """
 
     id: int
-    event_type: EventTypeEnum
-    source_type: SourceTypeEnum
+    event_type: InteractionActionTypeEnum
+    source_type: InteractionBizTypeEnum
     source_id: str
     biz_id: str | None = Field(
         default=None, description="业务资源id（如评论rpid），与 source_type 共同唯一定位原资源"
@@ -110,8 +104,8 @@ class EventAggregateItem(SQLModel, AutoStrMixin):
     对应 count=12、actors 取最近 3 位、latest_* 取最新一条。
     """
 
-    event_type: EventTypeEnum
-    source_type: SourceTypeEnum
+    event_type: InteractionActionTypeEnum
+    source_type: InteractionBizTypeEnum
     source_id: str
     biz_id: str | None = Field(
         default=None,
@@ -171,10 +165,10 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
         未知 / 缺省 business 统一回落「其他」。
         """
         try:
-            st = SourceTypeEnum(self.business)
+            st = InteractionBizTypeEnum(self.business)
         except ValueError:
             return _DEFAULT_BUSINESS_NAME
-        return _BUSINESS_NAME.get(st, _DEFAULT_BUSINESS_NAME)
+        return source_type_label(st)
 
 
 class EventMsgfeedItem(SQLModel, AutoStrMixin):
@@ -222,8 +216,8 @@ class EventReadReq(SQLModel):
     """已读请求（支持 id / 类型 / 聚合分组三种粒度）。"""
 
     event_ids: list[int] = Field(default_factory=list)
-    event_type: EventTypeEnum | None = None
-    source_type: SourceTypeEnum | None = None
+    event_type: InteractionActionTypeEnum | None = None
+    source_type: InteractionBizTypeEnum | None = None
     source_id: str | None = None
 
 
@@ -261,8 +255,8 @@ class EventPushPayload(SQLModel, AutoStrMixin):
 
     event_id: int
     mid: int
-    event_type: EventTypeEnum
-    source_type: SourceTypeEnum
+    event_type: InteractionActionTypeEnum
+    source_type: InteractionBizTypeEnum
     source_id: str
     biz_id: str | None = None
     title: str = ""

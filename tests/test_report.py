@@ -24,16 +24,14 @@ from app.models.db.comment_tbl import CommentReport
 from app.models.db.moment_tbl import TMoment, TResourceReport
 from app.models.db.report_tbl import TUserReport
 from app.models.enums import (
-    CommentTypeEnum,
-    EventTypeEnum,
     InteractionBizTypeEnum,
+    InteractionActionTypeEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-)
+    )
 from app.models.schemas import CommentAddReq, ReportCreateReq, ReportReviewReq
 from app.services.comment import CommentService
 from app.services.admin.report import ReportService
-from bili_common.models.report import ReportBizTypeEnum
 from bili_common.services.report import ReportBaseService
 
 _OID = 884_000_100_000
@@ -140,7 +138,7 @@ async def _create_comment(session, oid: int) -> int:
         _MID,
         CommentAddReq(
             oid=str(oid),
-            type=CommentTypeEnum.DYNAMIC,
+            type=InteractionBizTypeEnum.DYNAMIC,
             root="0",
             parent="0",
             message="测试评论",
@@ -158,13 +156,13 @@ async def test_record_report_idempotent():
     async with new_session() as s:
         created1, pk1 = await ReportBaseService.record_report(
             s, TUserReport,
-            reporter_mid=REP_A, biz_type=ReportBizTypeEnum.USER.value,
+            reporter_mid=REP_A, biz_type=InteractionBizTypeEnum.USER.value,
             biz_id=27, accused_mid=27, reason_type=1,
         )
         assert created1 is True and pk1 is not None
         created2, pk2 = await ReportBaseService.record_report(
             s, TUserReport,
-            reporter_mid=REP_A, biz_type=ReportBizTypeEnum.USER.value,
+            reporter_mid=REP_A, biz_type=InteractionBizTypeEnum.USER.value,
             biz_id=27, accused_mid=27, reason_type=1,
         )
         assert created2 is False and pk2 is None
@@ -245,7 +243,7 @@ async def test_review_resolve_hide_hides_moment():
                 await s.exec(
                     select(EventMessage).where(
                         EventMessage.mid == _MID,
-                        EventMessage.event_type == EventTypeEnum.HIDE,
+                        EventMessage.event_type == InteractionActionTypeEnum.HIDE,
                     )
                 )
             ).all()
@@ -276,8 +274,7 @@ async def test_report_resource_lottery_not_hideable():
             created, _ = await ReportService.report(
                 s, REP_A,
                 ReportCreateReq(
-                    bizType="resource", bizId=oid,
-                    resourceType=int(InteractionBizTypeEnum.LOTTERY),
+                    bizType="lottery", bizId=oid,
                     reasonType=1,
                 ),
             )
@@ -341,8 +338,7 @@ async def test_report_resource_rpa_hide_exits_feed():
             created, _ = await ReportService.report(
                 s, REP_A,
                 ReportCreateReq(
-                    bizType="resource", bizId=oid,
-                    resourceType=int(InteractionBizTypeEnum.RPA_ACTION),
+                    bizType="rpa_action", bizId=oid,
                     reasonType=1,
                 ),
             )
@@ -438,7 +434,7 @@ async def test_report_review_reject_notifies_reporter():
                 await s.exec(
                     select(EventMessage).where(
                         EventMessage.mid == REP_A,
-                        EventMessage.event_type == EventTypeEnum.REPORT_REJECT,
+                        EventMessage.event_type == InteractionActionTypeEnum.REPORT_REJECT,
                     )
                 )
             ).all()
@@ -486,7 +482,7 @@ async def test_report_review_resolve_notifies_reporter():
                 await s.exec(
                     select(EventMessage).where(
                         EventMessage.mid == REP_A,
-                        EventMessage.event_type == EventTypeEnum.REPORT_RESOLVED,
+                        EventMessage.event_type == InteractionActionTypeEnum.REPORT_RESOLVED,
                     )
                 )
             ).all()

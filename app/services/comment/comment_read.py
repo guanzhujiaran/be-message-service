@@ -32,15 +32,15 @@ from app.models.enums import (
     CommentSortEnum,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    CommentTypeEnum,
-)
+    InteractionBizTypeEnum,
+    )
 from app.models.schemas import (
     CommentCountResp,
     CommentItem,
     CommentListResp,
     CommentSubListResp,
     CommentUserBrief,
-)
+    )
 from app.services.comment import VISIBLE_STATES, CommentService
 from app.services.user.account import CommentAdminUser
 
@@ -57,7 +57,7 @@ class CommentReadService:
     async def list_main(
         session: AsyncSession,
         oid: int,
-        type_: CommentTypeEnum,
+        type_: InteractionBizTypeEnum,
         *,
         sort: CommentSortEnum = CommentSortEnum.HOT,
         page_num: int = 1,
@@ -258,7 +258,7 @@ class CommentReadService:
 
     @staticmethod
     async def get_count(
-        session: AsyncSession, oid: int, type_: CommentTypeEnum
+        session: AsyncSession, oid: int, type_: InteractionBizTypeEnum
     ) -> CommentCountResp:
         """评论区计数（读冗余列，不做 COUNT 扫描）。"""
         subject = await CommentService.get_subject(session, oid, type_)
@@ -332,7 +332,7 @@ class CommentReadService:
         session: AsyncSession,
         root: int,
         oid: int,
-        type_: CommentTypeEnum,
+        type_: InteractionBizTypeEnum,
         *,
         page_num: int = 1,
         page_size: int = 20,

@@ -28,14 +28,14 @@ from app.models.db import (
     CommentIndex,
     CommentSubject,
     TMoment,
-)
+    )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.enums import (
     CommentStateEnum,
-    CommentTypeEnum,
+    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-)
+    )
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_read import CommentReadService
@@ -154,7 +154,7 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
         await session.exec(
             select(CommentSubject).where(
                 col(CommentSubject.oid) == oid,
-                col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+                col(CommentSubject.type) == InteractionBizTypeEnum.DYNAMIC,
             )
         )
     ).one_or_none()
@@ -174,7 +174,7 @@ async def _add_root(session, mid: int, oid: int, *, message: str | None = None, 
     resp = await CommentService.add(
         session,
         mid,
-        CommentAddReq(oid=str(oid), type=CommentTypeEnum.DYNAMIC, message=msg, up_mid=up_mid or None),
+        CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.DYNAMIC, message=msg, up_mid=up_mid or None),
         uname="tester",
         ip_v4="203.0.113.45",
         ip_v6=None,
@@ -199,7 +199,7 @@ async def test_publish_root_and_sub_comment() -> None:
                 _STRANGER,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.DYNAMIC,
+                    type=InteractionBizTypeEnum.DYNAMIC,
                     root=root_rpid,
                     parent=root_rpid,
                     message="回复楼主",
@@ -256,7 +256,7 @@ async def test_reply_to_sub_comment_stays_under_root() -> None:
                 _STRANGER,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.DYNAMIC,
+                    type=InteractionBizTypeEnum.DYNAMIC,
                     root=root_rpid,
                     parent=root_rpid,
                     message="二级评论",
@@ -273,7 +273,7 @@ async def test_reply_to_sub_comment_stays_under_root() -> None:
                 _AT_USER,
                 CommentAddReq(
                     oid=str(oid),
-                    type=CommentTypeEnum.DYNAMIC,
+                    type=InteractionBizTypeEnum.DYNAMIC,
                     root=root_rpid,
                     parent=sub2_resp.rpid,
                     message="回复二级评论",
@@ -342,7 +342,7 @@ async def test_list_main_and_detail_and_count() -> None:
         # 列表（未登录视角，viewer_mid=None）
         async with new_session() as s:
             listing = await CommentReadService.list_main(
-                s, oid, CommentTypeEnum.DYNAMIC, sort="time", viewer_mid=None
+                s, oid, InteractionBizTypeEnum.DYNAMIC, sort="time", viewer_mid=None
             )
             assert listing.total == 1
             assert listing.all_count == 1
@@ -354,7 +354,7 @@ async def test_list_main_and_detail_and_count() -> None:
             assert detail is not None
             assert detail.member is not None and detail.member.uname == "tester"
 
-            count = await CommentReadService.get_count(s, oid, CommentTypeEnum.DYNAMIC)
+            count = await CommentReadService.get_count(s, oid, InteractionBizTypeEnum.DYNAMIC)
             assert count.root_count == 1 and count.all_count == 1
     finally:
         # 清理 pptr seed 用户（硬删，避免污染其它用例 / 模块）
@@ -435,13 +435,13 @@ async def test_input_validation() -> None:
         async with new_session() as s:
             with pytest.raises(ValueError):
                 await CommentService.add(
-                    s, _AUTHOR, CommentAddReq(oid=str(oid), type=CommentTypeEnum.DYNAMIC, message="")
+                    s, _AUTHOR, CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.DYNAMIC, message="")
                 )
             with pytest.raises(ValueError):
                 await CommentService.add(
                     s,
                     _AUTHOR,
-                    CommentAddReq(oid="not-a-number", type=CommentTypeEnum.DYNAMIC, message="x"),
+                    CommentAddReq(oid="not-a-number", type=InteractionBizTypeEnum.DYNAMIC, message="x"),
                 )
             # 楼中楼但 root 不存在 → 按状态给出准确反馈的异常
             with pytest.raises(CommentNotInteractiveException):
@@ -449,7 +449,7 @@ async def test_input_validation() -> None:
                     s,
                     _AUTHOR,
                     CommentAddReq(
-                        oid=str(oid), type=CommentTypeEnum.DYNAMIC, root="999999", parent="999999", message="x"
+                        oid=str(oid), type=InteractionBizTypeEnum.DYNAMIC, root="999999", parent="999999", message="x"
                     ),
                 )
     finally:

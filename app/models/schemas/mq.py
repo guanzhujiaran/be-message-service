@@ -14,7 +14,7 @@
 
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import DmMsgTypeEnum, EventTypeEnum, InteractionBizTypeEnum
+from app.models.enums import DmMsgTypeEnum, InteractionActionTypeEnum, InteractionBizTypeEnum
 
 
 class DmContentPayload(SQLModel):
@@ -50,7 +50,7 @@ class EventPushPayload(SQLModel):
 
     event_id: int
     mid: int
-    event_type: EventTypeEnum
+    event_type: InteractionActionTypeEnum
     title: str = ""
     content: str = ""
     jump_url: str | None = None

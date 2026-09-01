@@ -19,31 +19,45 @@
         f"原文：{excerpt}",
     ]
 
-URL 必须以 ``http://`` / ``https://`` 开头，否则视为非法，由 ``is_safe_url()``
-兜底拒绝，防止有人构造 ``javascript:...`` / ``data:...`` 的伪链接绕过。
+URL 支持三种形态（见计划书 §2.10，正则与前端 ``src/utils/notifyContent.ts`` 必须同步）：
+
+- ``http://`` / ``https://`` 外链；
+- ``route:{路由名}?{query}`` 站内跳转（**现行写法**，路由名取自
+  :class:`app.models.enums.FrontendRouteEnum`，由 :func:`app.utils.route_target.build_route_target` 生成）；
+- ``/app/...`` 站内路径（**仅存量数据兼容**，新代码一律用路由名）。
+
+非法目标（``javascript:`` / ``data:`` 等伪协议、未注册的路由名）由 ``_is_safe_target()``
+兜底拒绝，防止有人构造伪链接绕过。
 """
 
 from __future__ import annotations
+
+from app.utils.route_target import is_route_target
 
 __all__ = ["INLINE_LINK_RE", "markup_inline_link"]
 
 
 # 形如 #{文本}{"url"} —— 注意 url 部分是双引号包裹的字面量，便于正则区分「链接结束」与文本里出现的右花括号
-# URL 既支持 https:// 外链，也支持 /app/... 站内路径，方便直接复用 build_comment_source() 的产出
-INLINE_LINK_RE = r'#\{([^{}]*?)\}\{"((?:https?://[^"\s]+|/app/\S+))"\}'
+# url 三选一：https:// 外链 | route:站内路由名（现行） | /app/... 站内路径（存量兼容）
+INLINE_LINK_RE = r'#\{([^{}]*?)\}\{"((?:https?://[^"\s]+|/app/\S+|route:[^"\s]+))"\}'
 
 
 def _is_safe_target(url: str) -> bool:
-    """只允许 ``http(s)://`` 外链与 ``/app/...`` 站内相对路径，过滤 ``javascript:`` / ``data:`` 等伪协议。
+    """只放行三类目标：``http(s)://`` 外链、``route:`` + 已注册路由名、``/app/...`` 站内路径。
 
-    站内路径只接受 ``/app/`` 前缀——这是当前前端约定；其他相对路径（一级目录、动态拼接等）
-    暂不放行，避免让用户写的通知能跳到任意站内路由增加被滥用面。
+    过滤 ``javascript:`` / ``data:`` 等伪协议；``route:`` 形态还要求路由名已在
+    :class:`FrontendRouteEnum` 注册（见 ``app/utils/route_target.py``），
+    避免让用户写的通知能跳到任意站内位置增加被滥用面。
     """
     if not url:
         return False
-    lowered = url.strip().lower()
+    stripped = url.strip()
+    lowered = stripped.lower()
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return True
+    if lowered.startswith("route:"):
+        return is_route_target(stripped)
+    # 存量数据兼容：历史通知里落过 /app/... 站内路径，只接受 /app/ 前缀
     return lowered.startswith("/app/")
 
 

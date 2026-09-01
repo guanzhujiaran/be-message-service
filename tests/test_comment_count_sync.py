@@ -18,10 +18,10 @@ from app.models.db import CommentIndex, CommentSubject
 from app.models.db.moment_tbl import TMoment
 from app.models.enums import (
     CommentStateEnum,
-    CommentTypeEnum,
+    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-)
+    )
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_admin import CommentAdminService
@@ -104,7 +104,7 @@ async def _add(session, oid: int) -> int:
         _MID,
         CommentAddReq(
             oid=str(oid),
-            type=CommentTypeEnum.DYNAMIC,
+            type=InteractionBizTypeEnum.DYNAMIC,
             root="0",
             parent="0",
             message="测试评论",
@@ -119,7 +119,7 @@ async def _subject_counts(session, oid: int) -> tuple[int, int]:
         await session.exec(
             select(CommentSubject).where(
                 col(CommentSubject.oid) == oid,
-                col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+                col(CommentSubject.type) == InteractionBizTypeEnum.DYNAMIC,
             )
         )
     ).one_or_none()

@@ -252,9 +252,10 @@ class TMomentTopicRel(TimestampMixin, table=True):
 class TResourceReport(ReportBase, table=True):
     """通用资源举报表（2.37.0 改名自 TMomentReport；继承 bili-common `ReportBase` 同构结构）。
 
-    任意资源（dynamic/lottery/rpa_*）可举报：``bizType`` 标识举报来源（dynamic），
-    ``resourceType``（InteractionBizTypeEnum 值）标识被举报资源类型；``bizId`` 为资源 id
-    （dynamic→dynId）。**不再指向 TMoment 的 FK**（lottery/rpa_* 的 bizId 不在 TMoment 表）。
+    任意资源（dynamic/lottery/rpa_*/comment/user）可举报：``bizType`` 即业务资源类型
+    （InteractionBizTypeEnum 值），``bizId`` 为资源 id（dynamic→dynId，comment→rpid，
+    lottery/rpa_*→各自资源 id；bizType+bizId 唯一确定被举报资源）。
+    **不再指向 TMoment 的 FK**（lottery/rpa_* 的 bizId 不在 TMoment 表）。
 
     幂等：`ReportBaseService.record_report` 按 (reportMid, bizType, bizId) 去重；
     业务唯一约束 `TResourceReport_reportMid_bizType_bizId_key` 兜底。

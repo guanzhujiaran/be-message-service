@@ -83,7 +83,7 @@ class FavoriteFolderAction:
         try:
             await session.commit()
             return folder_id
-        except Exception:  # noqa: BLE001
+        except Exception:
             await session.rollback()
             row2 = (
                 await session.exec(
@@ -131,7 +131,11 @@ class FavoriteFolderAction:
         if cover_url:
             # submit 内部 commit（同事务提交收藏夹 + 审核记录）
             await FolderCoverAuditService.submit(
-                session, uid=self.actor_mid, folder_id=folder_id, new_cover=cover_url, old_cover=None
+                session,
+                uid=self.actor_mid,
+                folder_id=folder_id,
+                new_cover=cover_url,
+                old_cover=None,
             )
             cover_audit_status = "pending"
         else:
@@ -213,7 +217,9 @@ class FavoriteFolderAction:
         # 删除收藏夹下所有收藏明细，同时按用户去重回退 favoriteCount
         detail_rows = (
             await session.exec(
-                select(TMomentFavorite).where(col(TMomentFavorite.folderId) == folder_id)
+                select(TMomentFavorite).where(
+                    col(TMomentFavorite.folderId) == folder_id
+                )
             )
         ).all()
         affected: list[tuple[InteractionBizTypeEnum, int]] = []
@@ -231,13 +237,21 @@ class FavoriteFolderAction:
             ).first()
             if other is None:
                 affected.append((detail.bizType, detail.bizId))
-        await session.exec(delete(TMomentFavorite).where(col(TMomentFavorite.folderId) == folder_id))
-        await session.exec(delete(TFavoriteFolder).where(col(TFavoriteFolder.folder_id) == folder_id))
+        await session.exec(
+            delete(TMomentFavorite).where(col(TMomentFavorite.folderId) == folder_id)
+        )
+        await session.exec(
+            delete(TFavoriteFolder).where(col(TFavoriteFolder.folder_id) == folder_id)
+        )
         for biz_type, biz_id in affected:
             if InteractionStatService.is_dynamic(biz_type):
-                await MomentStatService.decr_stat(session, biz_id, "favoriteCount", floor_zero=True)
+                await MomentStatService.decr_stat(
+                    session, biz_id, "favoriteCount", floor_zero=True
+                )
             else:
-                await InteractionStatService.decr(session, biz_type, biz_id, "favoriteCount")
+                await InteractionStatService.decr(
+                    session, biz_type, biz_id, "favoriteCount"
+                )
         await session.commit()
 
     async def list_folders(self) -> list[dict]:
@@ -255,7 +269,10 @@ class FavoriteFolderAction:
                 )
                 .where(col(TFavoriteFolder.mid) == self.actor_mid)
                 .group_by(TFavoriteFolder.folder_id)
-                .order_by(col(TFavoriteFolder.is_default).desc(), col(TFavoriteFolder.folder_id).desc())
+                .order_by(
+                    col(TFavoriteFolder.is_default).desc(),
+                    col(TFavoriteFolder.folder_id).desc(),
+                )
             )
         ).all()
         # 批量回填该用户全部夹的 pending 封面审核标记（一次 IN，无 N+1）
@@ -266,7 +283,8 @@ class FavoriteFolderAction:
                 await session.exec(
                     select(TFolderCoverAudit.folderId).where(
                         col(TFolderCoverAudit.mid) == self.actor_mid,
-                        col(TFolderCoverAudit.auditStatus) == FolderCoverAuditStatusEnum.PENDING,
+                        col(TFolderCoverAudit.auditStatus)
+                        == FolderCoverAuditStatusEnum.PENDING,
                         col(TFolderCoverAudit.folderId).in_(folder_ids),
                     )
                 )
@@ -280,7 +298,9 @@ class FavoriteFolderAction:
                 "coverUrl": row[0].cover_url,
                 "isDefault": bool(row[0].is_default),
                 "favoriteCount": int(row[1] or 0),
-                "coverAuditStatus": "pending" if row[0].folder_id in pending_folder_ids else None,
+                "coverAuditStatus": (
+                    "pending" if row[0].folder_id in pending_folder_ids else None
+                ),
             }
             for row in rows
         ]
@@ -325,7 +345,9 @@ class FavoriteFolderAction:
         items = [{"bizType": r[0], "bizId": str(r[1])} for r in rows]
         return int(total), items
 
-    async def folders_containing(self, biz_type: InteractionBizTypeEnum | str, biz_id: int) -> list[str]:
+    async def folders_containing(
+        self, biz_type: InteractionBizTypeEnum | str, biz_id: int
+    ) -> list[str]:
         """某资源被当前用户收藏在哪些收藏夹（返回 folder_id 字符串列表）。"""
         bt = InteractionBizTypeEnum.from_text(biz_type)
         rows = (
@@ -345,7 +367,9 @@ class FavoriteFolderAction:
         """获取主页是否显示收藏（默认 True）。"""
         row = (
             await self.session.exec(
-                select(TUserFavoriteSetting).where(col(TUserFavoriteSetting.mid) == self.actor_mid)
+                select(TUserFavoriteSetting).where(
+                    col(TUserFavoriteSetting.mid) == self.actor_mid
+                )
             )
         ).one_or_none()
         return bool(row.showFavorites) if row else True
@@ -355,12 +379,16 @@ class FavoriteFolderAction:
         session = self.session
         row = (
             await session.exec(
-                select(TUserFavoriteSetting).where(col(TUserFavoriteSetting.mid) == self.actor_mid)
+                select(TUserFavoriteSetting).where(
+                    col(TUserFavoriteSetting.mid) == self.actor_mid
+                )
             )
         ).one_or_none()
         if row is None:
             session.add(
-                TUserFavoriteSetting(mid=self.actor_mid, showFavorites=1 if show_favorites else 0)
+                TUserFavoriteSetting(
+                    mid=self.actor_mid, showFavorites=1 if show_favorites else 0
+                )
             )
         else:
             row.showFavorites = 1 if show_favorites else 0
@@ -402,7 +430,9 @@ class FavoriteFolderAction:
             return None
         total = (
             await session.exec(
-                select(func.count()).select_from(TMomentFavorite).where(
+                select(func.count())
+                .select_from(TMomentFavorite)
+                .where(
                     col(TMomentFavorite.mid) == target_mid,
                     col(TMomentFavorite.folderId) == folder_id,
                 )
@@ -429,7 +459,9 @@ class FavoriteFolderAction:
         """该用户主页是否公开展示收藏（showFavorites=1；缺省默认公开）。"""
         row = (
             await self.session.exec(
-                select(TUserFavoriteSetting).where(col(TUserFavoriteSetting.mid) == target_mid)
+                select(TUserFavoriteSetting).where(
+                    col(TUserFavoriteSetting.mid) == target_mid
+                )
             )
         ).one_or_none()
         return bool(row.showFavorites) if row else True

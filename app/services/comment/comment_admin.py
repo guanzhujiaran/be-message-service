@@ -18,17 +18,17 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
-from app.models.enums import CommentStateEnum, CommentTypeEnum, NotifyLevelEnum
+from app.models.enums import CommentStateEnum, InteractionBizTypeEnum, NotifyLevelEnum
 from app.models.schemas import (
     CommentAuditItem,
     CommentSourceResp,
     CommentStatsResp,
-)
+    )
 from app.services.comment import (
     DEFAULT_REJECT_REASON,
     CommentService,
     summarize_text,
-)
+    )
 from app.services.moment.moment_stat import MomentStatService
 from app.services.message.insite.notify import NotifyService
 from app.services.user.account import CommentAdminUser
@@ -78,7 +78,7 @@ class CommentAdminService:
         # 评论对象是 Moment（DYNAMIC）时，同步动态统计 commentCount：
         # 进入计数（非 NORMAL → NORMAL）→ +1；离开计数（NORMAL → 非 NORMAL）→ -1
         # 注意：此处位于状态变更 commit 之后，回写必须再 commit 一次才会落库
-        if prev_state != state and row.type is CommentTypeEnum.DYNAMIC:
+        if prev_state != state and row.type is InteractionBizTypeEnum.DYNAMIC:
             # 先同步评论区冗余计数（Feed/详情展示的 stat.commentCount 读的就是 root_count），
             # 再回写动态计数 TInteractionStat.commentCount（2.36.0 起统一）；
             # 即使动态记录缺失，评论系统计数也已正确（评论计数以评论区为准）
@@ -155,7 +155,7 @@ class CommentAdminService:
             await session.exec(
                 select(CommentSubject).where(
                     col(CommentSubject.oid) == oid,
-                    col(CommentSubject.type) == CommentTypeEnum.DYNAMIC,
+                    col(CommentSubject.type) == InteractionBizTypeEnum.DYNAMIC,
                 )
             )
         ).one_or_none()
@@ -379,8 +379,8 @@ class CommentAdminService:
 
     @staticmethod
     async def _get_up_mids(
-        session: AsyncSession, keys: set[tuple[int, CommentTypeEnum]]
-    ) -> dict[tuple[int, CommentTypeEnum], int]:
+        session: AsyncSession, keys: set[tuple[int, InteractionBizTypeEnum]]
+    ) -> dict[tuple[int, InteractionBizTypeEnum], int]:
         """批量取 `(oid, type)` 对应评论区的 UP 主 mid。"""
         if not keys:
             return {}
@@ -433,7 +433,7 @@ class CommentAdminService:
 
     @staticmethod
     async def _get_subject(
-        session: AsyncSession, oid: int, type_: CommentTypeEnum
+        session: AsyncSession, oid: int, type_: InteractionBizTypeEnum
     ) -> CommentSubject | None:
         return (
             await session.exec(

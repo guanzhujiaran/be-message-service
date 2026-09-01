@@ -21,7 +21,7 @@ class AuditSourceInfo(SQLModel, AutoStrMixin):
 
     kind: str = Field(description="来源大类：comment 评论 / dm 私信")
     biz_type: str = Field(
-        description="业务类型：评论为 CommentTypeEnum，私信固定为 dm"
+        description="业务类型：评论为 InteractionBizTypeEnum，私信固定为 dm"
     )
     label: str = Field(description="来源展示文案，如「抽奖卡片 #123」")
     oid: str | None = Field(default=None, description="业务实体id（字符串），私信为空")

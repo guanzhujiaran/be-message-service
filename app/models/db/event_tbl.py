@@ -25,7 +25,7 @@ from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import EventTypeEnum, SourceTypeEnum
+from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
 
 
 class EventMessage(TimestampMixin, table=True):
@@ -44,15 +44,14 @@ class EventMessage(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
 
     mid: int = Field(sa_type=BIGINT, index=True, description="接收者mid")
-    event_type: EventTypeEnum = Field(
-        sa_type=SAEnum(EventTypeEnum), description="事件类型"
+    event_type: InteractionActionTypeEnum = Field(
+        sa_type=SAEnum(InteractionActionTypeEnum), description="事件类型"
     )
 
     # ---- 聚合分组键 ----
-    source_type: SourceTypeEnum = Field(
-        default=SourceTypeEnum.OTHER,
-        sa_type=SAEnum(SourceTypeEnum),
-        description="来源实体类型",
+    source_type: InteractionBizTypeEnum = Field(
+        sa_type=SAEnum(InteractionBizTypeEnum),
+        description="来源实体类型（必填：无对应资源时禁止落库）",
     )
     source_id: str = Field(max_length=64, description="来源实体id")
     biz_id: str | None = Field(
@@ -97,8 +96,8 @@ class EventReadCursor(TimestampMixin, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     mid: int = Field(sa_type=BIGINT, index=True, description="用户mid")
-    event_type: EventTypeEnum = Field(
-        sa_type=SAEnum(EventTypeEnum), description="事件类型"
+    event_type: InteractionActionTypeEnum = Field(
+        sa_type=SAEnum(InteractionActionTypeEnum), description="事件类型"
     )
     last_read_id: int = Field(default=0, description="已读到的最大事件id")
     last_read_at: datetime | None = Field(default=None, description="上次一键已读时间")

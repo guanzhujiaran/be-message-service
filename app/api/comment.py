@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import BanServiceEnum, CommentSortEnum, CommentTypeEnum
+from app.models.enums import BanServiceEnum, CommentSortEnum, InteractionBizTypeEnum
 from app.models.schemas import (
     CommentActionReq,
     CommentActionResp,
@@ -34,7 +34,7 @@ from app.models.schemas import (
     CommentTopReq,
     CommentTopResp,
     CommentUserBrief,
-)
+    )
 from app.services.user.account import CommentAdminUser
 from app.services.comment import CommentService
 from app.services.comment.comment_action import CommentActionService
@@ -163,7 +163,7 @@ async def list_main(
     session: SessionDep,
     _viewer: int | None = Depends(resolve_optional_viewer),
     oid: str = Query(description="业务实体id（字符串，雪花ID）"),
-    type: CommentTypeEnum = Query(description="业务实体类型"),
+    type: InteractionBizTypeEnum = Query(description="业务实体类型"),
     sort: CommentSortEnum = Query(default=CommentSortEnum.HOT, description="排序：hot 热度 / time 时间"),
     page_num: int = Query(default=1, ge=1, description="页码，从 1 开始"),
     page_size: int = Query(default=20, ge=1, le=50, description="每页条数"),
@@ -234,7 +234,7 @@ async def comment_detail(
 async def comment_count(
     session: SessionDep,
     oid: str = Query(description="业务实体id（字符串）"),
-    type: CommentTypeEnum = Query(description="业务实体类型"),
+    type: InteractionBizTypeEnum = Query(description="业务实体类型"),
 ) -> StandardResponse[CommentCountResp]:
     """评论区计数（root_count / all_count）。
 
@@ -260,7 +260,7 @@ async def reply_list(
     _viewer: int | None = Depends(resolve_optional_viewer),
     root: str = Query(description="根评论rpid（字符串）"),
     oid: str = Query(description="业务实体id（字符串）"),
-    type: CommentTypeEnum = Query(description="业务实体类型"),
+    type: InteractionBizTypeEnum = Query(description="业务实体类型"),
     page_num: int = Query(default=1, ge=1, description="页码，从 1 开始"),
     page_size: int = Query(default=20, ge=1, le=50, description="每页条数"),
 ) -> StandardResponse[CommentSubListResp]:

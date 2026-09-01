@@ -34,14 +34,14 @@ from app.models.db import (
     NotifyState,
     UserActivity,
     UserMessageSetting,
-)
+    )
 from app.models.enums import (
     DmMsgStatusEnum,
     DmMsgTypeEnum,
-    EventTypeEnum,
+    InteractionActionTypeEnum,
     NotifyTargetTypeEnum,
-    SourceTypeEnum,
-)
+    InteractionBizTypeEnum,
+    )
 from app.models.schemas import (
     DmSendReq,
     EventReadReq,
@@ -49,7 +49,7 @@ from app.models.schemas import (
     EventUnreadResp,
     MessageSettingUpdateReq,
     NotifyCreateReq,
-)
+    )
 import app.services.message.dm.dm as dm_svc_mod
 import app.services.message.infrastructure.publisher as publisher
 from app.services.message.insite.activity import ActivityService
@@ -300,8 +300,8 @@ async def test_event_aggregation_and_dedup() -> None:
     async with new_session() as s:
         req = lambda actor: EventReportReq(
             mid=mid,
-            event_type=EventTypeEnum.LIKE,
-            source_type=SourceTypeEnum.VIDEO,
+            event_type=InteractionActionTypeEnum.LIKE,
+            source_type=InteractionBizTypeEnum.DYNAMIC,
             source_id="BV1",
             actor_mid=actor,
         )
@@ -314,7 +314,7 @@ async def test_event_aggregation_and_dedup() -> None:
         # 不同人对同一来源 → 两条明细，聚合为 count=2
         await BaseEvent.from_req(req(800002)).report(s)
 
-        groups, total = await BaseEvent.aggregate(s, mid, EventTypeEnum.LIKE)
+        groups, total = await BaseEvent.aggregate(s, mid, InteractionActionTypeEnum.LIKE)
         assert total == 1, "应聚合成 1 个分组"
         assert groups[0].count == 2, "聚合 count 应为 2"
         assert groups[0].unread_count == 2
@@ -324,7 +324,7 @@ async def test_event_aggregation_and_dedup() -> None:
 
         # 按类型一键已读
         await BaseEvent.mark_read(
-            s, mid, EventReadReq(event_type=EventTypeEnum.LIKE)  # type: ignore[arg-type]
+            s, mid, EventReadReq(event_type=InteractionActionTypeEnum.LIKE)  # type: ignore[arg-type]
         )
         assert await BaseEvent.count_unread(s, mid) == 0
 
@@ -440,8 +440,8 @@ async def test_setting_gate_and_dnd() -> None:
 
         # 关闭点赞提醒 → 事件闸门关闭
         await SettingService.update(s, mid, MessageSettingUpdateReq(recv_like=False))
-        assert await SettingService.accept_event(s, mid, EventTypeEnum.LIKE) is False
-        assert await SettingService.accept_event(s, mid, EventTypeEnum.REPLY) is True
+        assert await SettingService.accept_event(s, mid, "recv_like") is False
+        assert await SettingService.accept_event(s, mid, "recv_reply") is True
 
         # 免打扰时段 [0,23) → 当前小时必然在区间内 → 不允许推送
         await SettingService.update(
@@ -488,8 +488,8 @@ async def test_msg_feed_unread_aggregation() -> None:
         await BaseEvent.from_req(
             EventReportReq(
                 mid=mid,
-                event_type=EventTypeEnum.LIKE,
-                source_type=SourceTypeEnum.VIDEO,
+                event_type=InteractionActionTypeEnum.LIKE,
+                source_type=InteractionBizTypeEnum.DYNAMIC,
                 source_id="BVfeed",
                 actor_mid=700001,
             ),
@@ -535,8 +535,8 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
         await BaseEvent.from_req(
             EventReportReq(
                 mid=mid,
-                event_type=EventTypeEnum.REPLY,
-                source_type=SourceTypeEnum.COMMENT,
+                event_type=InteractionActionTypeEnum.REPLY,
+                source_type=InteractionBizTypeEnum.COMMENT,
                 source_id="900100",
                 actor_mid=800001,
                 content="回复内容",
@@ -546,16 +546,16 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
 
         # 明细出参带 biz_id
         items, _total = await BaseEvent.list_detail(
-            s, mid, event_type=EventTypeEnum.REPLY
+            s, mid, event_type=InteractionActionTypeEnum.REPLY
         )
         assert items and items[0].biz_id == "10000001", "list_detail 应透传 biz_id"
 
         # 聚合出参带 biz_id（取组内最新一条）
-        groups, _t = await BaseEvent.aggregate(s, mid, EventTypeEnum.REPLY)
+        groups, _t = await BaseEvent.aggregate(s, mid, InteractionActionTypeEnum.REPLY)
         assert groups and groups[0].biz_id == "10000001", "aggregate 应透传 biz_id"
 
         # msgfeed 出参带 resource_id（替代原 biz_id + subject_id）
-        feed = await BaseEvent.list_msgfeed(s, mid, event_type=EventTypeEnum.REPLY)
+        feed = await BaseEvent.list_msgfeed(s, mid, event_type=InteractionActionTypeEnum.REPLY)
         assert feed.total.items, "msgfeed 应有聚合条目"
         assert (
             feed.total.items[0].item.resource_id == "10000001"

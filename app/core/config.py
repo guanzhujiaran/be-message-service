@@ -205,7 +205,7 @@ class Settings(BaseSettings):
     # 近 7 天发布量每超过该阈值 1 条惩罚分
     edgerank_author_publish_threshold: int = 5
     edgerank_author_spam_penalty: float = 0.2
-    # 2.37.0 通用维度：举报数降权（每 1 条 pending 举报扣分，按 resourceType+bizId 统计）
+    # 2.37.0 通用维度：举报数降权（每 1 条 pending 举报扣分，按 bizType+bizId 统计）
     edgerank_report_penalty: float = 0.5
     # 作者粉丝/等级（moment_author_quality.fansCount / currentLevel，定时任务聚合）
     edgerank_fans_weight: float = 0.2  # log(1+fans)

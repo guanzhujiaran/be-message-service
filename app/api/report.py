@@ -10,11 +10,10 @@
 
 from fastapi import APIRouter, Query
 
-from bili_common.models.report import ReportBizTypeEnum
-
 from app.core.database import SessionDep
 from app.dependencies import AdminUser, RequiredUser
 from app.models import StandardResponse
+from app.models.enums import InteractionBizTypeEnum
 from app.models.schemas import (
     ReportCreateReq,
     ReportListResp,
@@ -54,7 +53,7 @@ async def create_report(
 async def list_reports(
     session: SessionDep,
     admin: AdminUser,
-    biz_type: ReportBizTypeEnum | None = Query(default=None, description="按来源过滤（ReportBizTypeEnum 值）"),
+    biz_type: InteractionBizTypeEnum | None = Query(default=None, description="按来源过滤（InteractionBizTypeEnum 值）"),
     status: str | None = Query(default=None, description="按状态过滤：pending/resolved/rejected"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
