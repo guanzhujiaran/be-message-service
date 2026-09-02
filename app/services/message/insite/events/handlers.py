@@ -89,7 +89,6 @@ class ReplyEvent(BaseEvent):
             raise ValueError(
                 f"事件来源类型 {stype} 无对应的业务资源类型，无法构建 msgfeed"
             )
-        resource_type = biz_type.value
         resource_id = ""
         root_id = ""
         source_id = biz_id  # 当前评论 / 消息自身唯一 ID
@@ -122,6 +121,21 @@ class ReplyEvent(BaseEvent):
             # 回复类事件拿不到 CommentIndex（评论被物理删除 / 历史行 biz_id 写成动态 oid）：
             # 无法回捞正文，同样标记占位，不再依赖事件表 content 兜底。
             comment_deleted = True
+
+        # `resource_type` 表达的是「该回复跳过去的实际原资源类型」（即 `resource_id`
+        # 所指代的对象类型），与 `business`（source_type）「通知文案中的被互动对象」
+        # 是两个独立维度：
+        # - 一级评论（`source_type=DYNAMIC/LOTTERY`）→ `resource_type` 跟随 source_type；
+        # - 楼中楼 / 任意 @（`source_type=COMMENT`）→ `resource_type` 应为该评论所属
+        #   顶层资源的类型（DYNAMIC/LOTTERY），与 `resource_id=oid` 成对供前端跳转
+        #   `openEventDetail` 用（详见 `utils/eventJump.ts`）。
+        if biz_type is InteractionBizTypeEnum.COMMENT and idx is not None:
+            own_type = idx.type
+            resource_type = (
+                own_type.value if isinstance(own_type, InteractionBizTypeEnum) else int(own_type)
+            )
+        else:
+            resource_type = biz_type.value
 
         title, image = await _resolve_source_meta(
             ctx.session, stype, latest.source_id, latest.biz_id, ctx.dyn_cache

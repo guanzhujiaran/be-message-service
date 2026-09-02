@@ -118,7 +118,9 @@ async def read_event(
 
     - 传 `event_ids` → 精确已读；
     - 传 `event_type` → 该类型一键已读；
-    - 再加 `source_type + source_id` → 只清掉某一张聚合卡片。
+    - 再加 `source_type + source_id` → 只清掉某一张聚合卡片；
+    - 传 `read_before`（datetime）→ 把该时间戳（含）之前、归属当前用户的互动提醒
+      全部置为已读，用于「打开列表即自动已读」（前端拉取列表后携带调用时刻调用）。
     """
     data = await BaseEvent.mark_read(session, user.mid, req)
     return StandardResponse(data=data)

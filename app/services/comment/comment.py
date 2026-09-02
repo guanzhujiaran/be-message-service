@@ -39,6 +39,7 @@ from app.models.db import (
     CommentIndex,
     CommentReport,
     CommentSubject,
+    TMoment,
     )
 from app.models.enums import (
     CommentAttrBit,
@@ -420,8 +421,21 @@ class CommentService:
             if audit_state == CommentStateEnum.NORMAL:
                 if root != 0 and reply_to_mid and reply_to_mid != mid:
                     await CommentService._notify_reply(
-                        mid, oid, rpid, reply_to_mid, message, uname, req.type
+                        mid, oid, rpid, root, reply_to_mid, message, uname, req.type
                     )
+                # 一级评论（root==0，对资源本身的评论）：若资源有创建者（如动态 up 主）
+                # 则通知创建者「XX 评论/回复了你的动态」；资源无创建者（lottery/rpa_*
+                # 等通用资源，CommentSubject.up_mid=0）则不通知。复用 `_notify_reply`，
+                # root=0 时其 `source_type` 即资源类型（DYNAMIC/LOTTERY），与一级评论
+                # 「业务来源是资源本身」的语义一致。
+                if root == 0:
+                    author_mid = await CommentService._resolve_resource_author(
+                        session, subject, oid, req.type
+                    )
+                    if author_mid and author_mid != mid:
+                        await CommentService._notify_reply(
+                            mid, oid, rpid, 0, author_mid, message, uname, req.type
+                        )
                 for at_mid in at_mids:
                     if at_mid != mid:
                         await CommentService._notify_at(
@@ -644,6 +658,9 @@ class CommentService:
         权限：内容作者（subject.up_mid）或管理员。全区唯一一条置顶，
         互斥覆盖——新置顶会清掉旧置顶的 TOP 位标记。
 
+        取消置顶只对本条生效：请求取消的 rpid 不是当前置顶时，本条本就未置顶，
+        按幂等处理直接返回 True 且不落库，不会连带取消别人的置顶。
+
         Returns:
             是否成功（评论不存在 / 非根评论 / 无权限均返回 False）。
         """
@@ -664,23 +681,28 @@ class CommentService:
         if not allowed:
             return False
 
-        # 清掉旧置顶的 TOP 位（若与本次不同）
-        if subject.top_rpid and subject.top_rpid != rpid:
-            old = (
-                await session.exec(
-                    select(CommentIndex).where(
-                        col(CommentIndex.rpid) == subject.top_rpid
-                    )
-                )
-            ).one_or_none()
-            if old is not None:
-                old.attr = old.attr & ~CommentAttrBit.TOP.value
-                session.add(old)
-
         if top:
+            # 互斥覆盖：新置顶生效前先清掉旧置顶的 TOP 位（若与本次不同）。
+            # 只在这里清——取消置顶的目标就是当前置顶本身，不存在「旧置顶」。
+            if subject.top_rpid and subject.top_rpid != rpid:
+                old = (
+                    await session.exec(
+                        select(CommentIndex).where(
+                            col(CommentIndex.rpid) == subject.top_rpid
+                        )
+                    )
+                ).one_or_none()
+                if old is not None:
+                    old.attr = old.attr & ~CommentAttrBit.TOP.value
+                    session.add(old)
             subject.top_rpid = rpid
             row.attr = row.attr | CommentAttrBit.TOP.value
         else:
+            # 取消置顶**只对本条生效**。当前置顶是别人时，说明本条本就没置顶，
+            # 幂等 no-op 直接返回：无条件清空 subject.top_rpid 会连带取消别人的置顶，
+            # 且被误清的那条 TOP 位已落库，无法撤销。
+            if subject.top_rpid != rpid:
+                return True
             subject.top_rpid = None
             row.attr = row.attr & ~CommentAttrBit.TOP.value
         session.add(row)
@@ -725,33 +747,68 @@ class CommentService:
     # ==================== 通知（Phase 3.3，弱依赖）====================
 
     @staticmethod
+    async def _resolve_resource_author(
+        session: AsyncSession,
+        subject: CommentSubject,
+        oid: int,
+        type_: InteractionBizTypeEnum,
+    ) -> int:
+        """解析评论所挂资源的创建者 mid；资源无创建者返回 0。
+
+        判定规则（按实际 owner，动态判断）：
+        - 优先 `CommentSubject.up_mid`（评论区作者 = 资源 owner）；
+        - 为 0 且资源类型为 `DYNAMIC` 时回查 `TMoment.mid` 兜底，保证动态 up 主
+          总能收到（`up_mid` 可能因首次开区未补齐而为 0）；
+        - lottery / rpa_* 等通用资源无创建者（`up_mid=0`，无 TMoment 行）→ 返回 0，
+          调用方据此不投递「一级评论→资源创建者」通知。
+        """
+        author_mid = subject.up_mid or 0
+        if author_mid:
+            return author_mid
+        if type_ is InteractionBizTypeEnum.DYNAMIC:
+            dyn = await session.get(TMoment, oid)
+            return dyn.mid if dyn is not None else 0
+        return 0
+
+    @staticmethod
     async def _notify_reply(
         actor_mid: int,
         oid: int,
         rpid: int,
+        root: int,
         to_mid: int,
         message: str,
         actor_uname: str | None = None,
         type_: "InteractionBizTypeEnum | None" = None,
     ) -> None:
-        """弱依赖：通知被回复者。
+        """弱依赖：投递 REPLY 事件通知。
+
+        承担两类投递（接收者不同，`source_type` 相应区分）：
+        1. **一级评论→资源创建者**：`root == 0`、`to_mid=资源创建者`（动态 up 主），
+           `source_type = type_`（DYNAMIC/LOTTERY），业务来源就是资源本身；
+        2. **楼中楼→被回复评论作者**：`root != 0`、`to_mid=reply_to_mid`，
+           `source_type = COMMENT`，业务来源是被回复的那条评论。
 
         独立会话投递：即便事件落库失败，也绝不污染「发评」主事务的会话。
-        type_=DYNAMIC 时（评论的对象是 Moment）事件来源标记为 DYNAMIC（P6-T7）。
+
+        错误的旧实现是看 `type_`（评论区类型）一刀切：动态评论区下所有回复
+        都标 DYNAMIC，导致楼中楼回复显示成「回复了我的动态」（business_name
+        「动态」/ `targetName` 文案错位）；正确做法是看被通知的对象（评论
+        主体）是不是评论本身（楼中楼）还是顶层资源（一级评论）。
 
         `biz_id` **恒为评论 rpid**（不随 source_type 变成 oid）：
         `BaseEvent.list_msgfeed` 是把 `biz_id` 当评论 rpid 去查 `CommentIndex`
         的，写成 oid 会导致 source_id/root_id/target_id/source_content/target_content
         全部解析不出来（回复卡片只剩动作文案，正文与「被回复的评论」都不显示），
         且 dedup_key 含 biz_id 时同一个人在同一动态下的多条回复会被误判重复。
+        `source_id` 仍为动态/抽奖 oid，便于 ``_resolve_source_meta`` 回捞标题/封面。
         """
         from app.services.message.insite.events import report_event_weakly
 
+        # 一级评论：业务来源就是所在顶层资源；楼中楼：业务来源是被回复的评论。
         source_type = (
-            InteractionBizTypeEnum.DYNAMIC
-            if type_ == InteractionBizTypeEnum.DYNAMIC
-            else InteractionBizTypeEnum.COMMENT
-        )
+            type_ if type_ is not None else InteractionBizTypeEnum.COMMENT
+        ) if root == 0 else InteractionBizTypeEnum.COMMENT
         await report_event_weakly(
             EventReportReq(
                 mid=to_mid,
@@ -774,16 +831,18 @@ class CommentService:
     ) -> None:
         """弱依赖：通知被 @ 者。
 
-        独立会话投递：失败不影响发评主流程。type_=DYNAMIC 时（评论对象为 Moment）
-        事件来源标记为 DYNAMIC（P6-T7 一致性）。
+        独立会话投递：失败不影响发评主流程。
+
+        **`source_type` 恒为 `COMMENT`**：被 @ 用户是「评论正文里被点名」，
+        业务来源统一是被通知的这条评论本身（无论该评论是一级还是楼中楼）。
+        一级评论里 @人 的 resource_id 仍是所属顶层资源的 oid，
+        经 ``_resolve_source_meta`` 的 COMMENT 分支按 `biz_id=rpid` 查
+        CommentIndex.oid 回捞动态标题/封面；前端用 `business=COMMENT`
+        修正文案（"@了你 的评论"），跳转由 `resource_id`（=oid）带 rpid 定位。
         """
         from app.services.message.insite.events import report_event_weakly
 
-        source_type = (
-            InteractionBizTypeEnum.DYNAMIC
-            if type_ == InteractionBizTypeEnum.DYNAMIC
-            else InteractionBizTypeEnum.COMMENT
-        )
+        source_type = InteractionBizTypeEnum.COMMENT
         await report_event_weakly(
             EventReportReq(
                 mid=to_mid,
@@ -791,7 +850,7 @@ class CommentService:
                 source_type=source_type,
                 source_id=str(oid),
                 actor_mid=actor_mid,
-                biz_id=str(oid) if source_type is InteractionBizTypeEnum.DYNAMIC else str(rpid),
+                biz_id=str(rpid),
             )
         )
 

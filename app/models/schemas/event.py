@@ -213,12 +213,22 @@ class EventAggregateResp(SQLModel, AutoStrMixin):
 
 
 class EventReadReq(SQLModel):
-    """已读请求（支持 id / 类型 / 聚合分组三种粒度）。"""
+    """已读请求（支持 id / 类型 / 聚合分组 / 时间戳四种粒度）。
+
+    - ``event_ids``：精确已读；
+    - ``event_type`` + 可选 ``source_type`` + ``source_id``：按类型 / 聚合分组一键已读；
+    - ``read_before``：把该时间戳（含）之前、归属当前用户的互动提醒全部置为已读，
+      用于「打开列表即自动已读」——前端在拉取列表后携带调用时刻调用，
+      即可把本次请求之前的点赞 / 回复 / @ 消息全部标记已读，无需手动「全部已读」按钮。
+    """
 
     event_ids: list[int] = Field(default_factory=list)
     event_type: InteractionActionTypeEnum | None = None
     source_type: InteractionBizTypeEnum | None = None
     source_id: str | None = None
+    read_before: datetime | None = Field(
+        default=None, description="标记该时间戳（含）之前的全部消息为已读；不传则按其它条件标记"
+    )
 
 
 class EventReadResp(SQLModel, AutoStrMixin):

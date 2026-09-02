@@ -273,6 +273,41 @@ async def test_top_pin_permission() -> None:
         await _cleanup(oid, {_AUTHOR, _UP, _STRANGER})
 
 
+async def test_top_unpin_other_is_noop() -> None:
+    """取消置顶只对本条生效。
+
+    回归：旧实现对「未置顶评论」取消置顶时会无条件清空 `subject.top_rpid`，
+    连带把真正的置顶评论取消掉，且被误清的 TOP 位已落库无法撤销。
+    """
+    oid = _next_oid()
+    try:
+        async with new_session() as s:
+            # 文案必须唯一：防刷按「同 mid + 同内容」10s 内 3 次限流，
+            # 复用其它用例的 "测试评论" 会在全量跑时把 _AUTHOR 挤到限流外。
+            root_a = await _add(s, _AUTHOR, oid, message="置顶候选A", up_mid=_UP)
+            root_b = await _add(s, _VIEWER, oid, message="置顶候选B", up_mid=_UP)
+
+        async with new_session() as s:
+            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_a), top=True)
+
+        # 对未置顶的 B 取消置顶：幂等 no-op，A 的置顶与 TOP 位都必须原样保留
+        async with new_session() as s:
+            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_b), top=False)
+            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            assert listing.top is not None and listing.top.rpid == root_a
+            assert listing.top.is_top is True
+
+        # 互斥覆盖：改置顶 B，A 的 TOP 位应被清掉并回到普通列表
+        async with new_session() as s:
+            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_b), top=True)
+            listing2 = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            assert listing2.top is not None and listing2.top.rpid == root_b
+            item_a = next(it for it in listing2.items if it.rpid == root_a)
+            assert item_a.is_top is False, "旧置顶的 TOP 位应被互斥清掉"
+    finally:
+        await _cleanup(oid, {_AUTHOR, _UP, _VIEWER})
+
+
 async def test_at_search() -> None:
     """@ 面板按昵称前缀搜索命中 pptr 用户表。"""
     # 该用例依赖外部 pptr Postgres（只读库），不可达时跳过而非失败

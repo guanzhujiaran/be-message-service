@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,6 +36,8 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import (
+    CommentContent,
+    CommentIndex,
     EventMessage,
     EventReadCursor,
     UserFollow,
@@ -102,6 +105,26 @@ class MsgfeedBuildContext:
             fans=int(getattr(info, "follower_count", 0) or 0) if info else 0,
             follow=actor_mid in self.follow_targets,
         )
+
+
+def _replace_at_mentions(message: str, at_nickname_map: dict[int, str]) -> str:
+    """把评论正文里的 `@{mid}` 占位符替换为 `@昵称`（对齐 comment_read）。
+
+    - 只替换能命中 `at_nickname_map`（mid → 昵称）的占位符；
+    - 命中不到的（mid 不存在 / 用户已删）原样保留，由前端兜底清理，
+      避免把「@ 关系」丢成一个裸 `@` 或产生错误的人名。
+    """
+    if not message or not at_nickname_map:
+        return message
+
+    def _sub(match: re.Match[str]) -> str:
+        mid = int(match.group(1))
+        nickname = at_nickname_map.get(mid)
+        if not nickname:
+            return match.group(0)
+        return f"@{nickname}"
+
+    return re.sub(r"@\{(\d{1,19})\}", _sub, message)
 
 
 def build_dedup_key(
@@ -642,6 +665,24 @@ class BaseEvent(ABC):
                 )
             ).all()
             comment_content = {row.rpid: row.message for row in content_rows}
+            # 回捞被 @ 用户的昵称，把正文里的 `@{mid}` 占位符替换为 `@昵称`
+            # （对齐 comment_read：正文不落昵称快照，读取时按 at_mids 回查补全）。
+            at_mids: set[int] = set()
+            for row in content_rows:
+                at_mids.update(row.at_mids or [])
+            at_nickname_map: dict[int, str] = {}
+            if at_mids:
+                profiles = await PptrUser.get_many(at_mids)
+                at_nickname_map = {
+                    int(mid): (brief.uname or "").strip()
+                    for mid, brief in profiles.items()
+                    if (brief.uname or "").strip()
+                }
+            if at_nickname_map:
+                comment_content = {
+                    rpid: _replace_at_mentions(msg, at_nickname_map)
+                    for rpid, msg in comment_content.items()
+                }
 
         follow_targets: set[int] = set()
         if actor_mids:
@@ -728,7 +769,15 @@ class BaseEvent(ABC):
     async def mark_read(
         cls, session: AsyncSession, mid: int, req: EventReadReq
     ) -> EventReadResp:
-        """标记已读，支持 id / 类型 / 聚合分组三种粒度。"""
+        """标记已读，支持 id / 类型 / 聚合分组 / 时间戳四种粒度。
+
+        - 传 ``event_ids`` → 精确已读；
+        - 传 ``event_type`` → 该类型一键已读；
+        - 再加 ``source_type + source_id`` → 只清掉某一张聚合卡片；
+        - 传 ``read_before``（datetime）→ 把该时间戳（含）之前、归属当前用户的全部互动提醒
+          标记为已读（用于「打开列表即自动已读」：前端在拉取列表后携带调用时刻调用，
+          即可把本次请求之前的点赞 / 回复 / @ 消息全部置为已读）。
+        """
         table = EventMessage.__table__
         conditions = [table.c.mid == mid, table.c.is_read == False]
 
@@ -742,6 +791,16 @@ class BaseEvent(ABC):
             if req.source_id is not None:
                 conditions.append(table.c.source_id == req.source_id)
 
+        # 时间闸门：仅把 cutoff（含）之前的消息置为已读，之后的新消息保持未读。
+        # cutoff 默认取服务端当前时间；若前端传入 read_before（UTC，带 Z），
+        # 则换算到服务端本地时区并转为 naive，与 naive 的 created_at 对齐，避免时区错位。
+        cutoff = req.read_before
+        if cutoff is not None and cutoff.tzinfo is not None:
+            cutoff = cutoff.astimezone().replace(tzinfo=None)
+        if cutoff is None:
+            cutoff = datetime.now()
+        conditions.append(table.c.created_at <= cutoff)
+
         now = datetime.now()
         result = await session.exec(
             table.update().where(*conditions).values(  # type: ignore[call-overload]
@@ -751,7 +810,7 @@ class BaseEvent(ABC):
         affected = int(getattr(result, "rowcount", 0) or 0)
 
         if req.event_type is not None and not req.event_ids:
-            await cls._advance_cursor(session, mid, req.event_type)
+            await cls._advance_cursor(session, mid, req.event_type, cutoff)
 
         await session.commit()
         return EventReadResp(
@@ -812,15 +871,19 @@ class BaseEvent(ABC):
 
     @classmethod
     async def _advance_cursor(
-        cls, session: AsyncSession, mid: int, event_type: InteractionActionTypeEnum
+        cls,
+        session: AsyncSession,
+        mid: int,
+        event_type: InteractionActionTypeEnum,
+        read_before: datetime | None = None,
     ) -> None:
-        max_id = (
-            await session.exec(
-                select(func.max(EventMessage.id)).where(
-                    EventMessage.mid == mid, EventMessage.event_type == event_type
-                )
-            )
-        ).one() or 0
+        max_id_stmt = select(func.max(EventMessage.id)).where(
+            EventMessage.mid == mid, EventMessage.event_type == event_type
+        )
+        # read_before 限定下，已读水位只抬到该时间戳（含）之前的最大 id
+        if read_before is not None:
+            max_id_stmt = max_id_stmt.where(EventMessage.created_at <= read_before)
+        max_id = (await session.exec(max_id_stmt)).one() or 0
         stmt = select(EventReadCursor).where(
             EventReadCursor.mid == mid, EventReadCursor.event_type == event_type
         )

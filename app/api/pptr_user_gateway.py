@@ -635,7 +635,11 @@ async def get_space_info(
         if blocked:
             return StandardResponse(code=403, msg="对方已将你加入黑名单，无法访问其空间")
 
-    data = await PptrUser(mid=int(mid)).get_space_info(session=session)
+    # 用户档案四表（TUserInfo / TUserDetail / TUserVip / TUserLevel）在 pptr Postgres，
+    # 不在本服务 MySQL 主库：不能把 MySQL 的 `session` 传进去（会报
+    # "Table 'BiliMessageDB.TUserInfo' doesn't exist"），这里不传 session，
+    # 由 `fetch_profile` 内部自建 pptr 会话（new_pptr_session）读取。
+    data = await PptrUser(mid=int(mid)).get_space_info()
     if data is None:
         return StandardResponse(
             code=int(ResponseCode.USER_NOT_FOUND), msg="用户不存在", data=None

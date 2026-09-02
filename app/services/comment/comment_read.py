@@ -158,7 +158,7 @@ class CommentReadService:
                 )
             ).one_or_none()
 
-        focus_row_loaded = None
+        focus_row_loaded: CommentItem | None = None
         if focus_root and focus_root not in (top_rpid, 0):
             focus_root_row = (
                 await session.exec(
@@ -184,17 +184,18 @@ class CommentReadService:
                 focus_row_loaded = focus_assembled[0]
                 focus_row_loaded.replies = focus_assembled[1:]
 
-        # 置顶行 / focus 根评论与主列表一起装配，避免多跑一轮批量查询
+        # 置顶行与主列表一起装配，避免多跑一轮批量查询。
+        # 注意：focus 根评论**不能**放进 extra——它上面已单独装配完成（带完整楼中楼），
+        # 而 assemble_items 只接受 CommentIndex 索引行；把已装配的 CommentItem 传回去，
+        # 读 row.reply_to_mid 会直接 AttributeError（视图模型上没有该索引字段）。
         extra: list[CommentIndex] = []
         if top_row is not None:
             extra.append(top_row)
-        if focus_row_loaded is not None:
-            extra.append(focus_row_loaded)  # type: ignore[arg-type]
         assembled = await CommentReadService.assemble_items(
             session, [*extra, *rows], viewer_mid=viewer_mid
         )
-        # 楼中楼预览：批量回捞后按 root 分组截断，SQL 次数与一级评论条数无关
-        # （focus 根评论已在上面单独装配了完整楼中楼，这里会再挂载一次预览，幂等无害）
+        # 楼中楼预览：批量回捞后按 root 分组截断，SQL 次数与一级评论条数无关。
+        # focus 根评论不在 assembled 里（主查询已排除），其完整楼中楼不会被预览截断覆盖。
         await CommentReadService._attach_sub_previews(
             session, assembled, viewer_mid=viewer_mid
         )
@@ -203,7 +204,7 @@ class CommentReadService:
         # focus 根评论紧随置顶之后，需从主列表里剔除再插到最前（置顶之后）
         if focus_row_loaded is not None:
             items = [it for it in items if it.rpid != str(focus_root)]
-            items.insert(0 if top_item is None else 1, focus_row_loaded)  # type: ignore[arg-type]
+            items.insert(0 if top_item is None else 1, focus_row_loaded)
 
         # 作者本人的审核中评论：单独装配后插到置顶 / focus 之后、普通列表之前。
         # 它们不进主分页（主分页只取 NORMAL），这里直接拼接到列表头部即可。

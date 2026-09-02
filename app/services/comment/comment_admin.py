@@ -205,15 +205,43 @@ class CommentAdminService:
 
         # 回复通知
         if row.root != 0 and row.reply_to_mid and row.reply_to_mid != row.mid:
+            # 楼中楼：补发「被回复评论作者」通知
             await CommentService._notify_reply(
                 row.mid,
                 row.oid,
                 row.rpid,
+                row.root,
                 row.reply_to_mid,
                 excerpt,
                 actor_uname,
                 row.type,
             )
+        elif row.root == 0:
+            # 一级评论：审核通过补发「资源创建者」通知（资源无创建者则跳过，与 add 即时投递一致）
+            subject = (
+                await session.exec(
+                    select(CommentSubject).where(
+                        col(CommentSubject.oid) == row.oid,
+                        col(CommentSubject.type) == row.type,
+                    )
+                )
+            ).one_or_none()
+            author_mid = (
+                await CommentService._resolve_resource_author(
+                    session, subject, row.oid, row.type
+                )
+            ) if subject is not None else 0
+            if author_mid and author_mid != row.mid:
+                await CommentService._notify_reply(
+                    row.mid,
+                    row.oid,
+                    row.rpid,
+                    0,
+                    author_mid,
+                    excerpt,
+                    actor_uname,
+                    row.type,
+                )
 
         # @ 通知：仅补发未投递过的记录
         pending_ats = (
