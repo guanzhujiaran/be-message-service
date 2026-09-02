@@ -20,15 +20,14 @@ from loguru import logger
 from sqlmodel import col, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import TMoment, TMomentAuditLog, TResourceFeed
+from app.models.db import TMoment, TResourceAuditLog, TResourceFeed
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-    )
+)
 from app.models.schemas.moment import (
     MomentAuditDetailResp,
     MomentAuditItem,
@@ -116,12 +115,14 @@ async def _safe_author_brief(mid: int):
         return None
 
 
-def _to_audit_log_item(log: TMomentAuditLog) -> MomentAuditLogItem:
-    """TMomentAuditLog → 流水卡片（枚举转字符串）。"""
+def _to_audit_log_item(log: TResourceAuditLog) -> MomentAuditLogItem:
+    """TResourceAuditLog → 流水卡片（枚举转字符串；动态资源 `dynId` 透传 `bizId`，保持 API 契约稳定）。"""
+    # 2.55.0（2026-09-02）：通用资源审核流水 `TMomentAuditLog → TResourceAuditLog` 改造；
+    # API 响应仍出 `dynId/operatorMid` 旧名（值分别取自 base 的 `bizId`/`mid`），保持前端契约不变。
     return MomentAuditLogItem(
         pk=log.pk,
-        dynId=log.dynId,
-        operatorMid=log.operatorMid,
+        dynId=log.bizId,
+        operatorMid=log.mid,
         operatorRole=log.operatorRole.value,
         fromStatus=log.fromStatus.value if log.fromStatus is not None else None,
         toStatus=log.toStatus.value,
@@ -134,18 +135,20 @@ def _to_audit_log_item(log: TMomentAuditLog) -> MomentAuditLogItem:
 
 def _build_audit_log(
     *,
-    moment_id: int,
+    biz_type: InteractionBizTypeEnum,
+    biz_id: int,
     operator_mid: int,
     to_status: MomentAuditStatusEnum,
     action: MomentAuditLogActionEnum,
     from_status: MomentAuditStatusEnum | None = None,
     reject_reason: str | None = None,
     remark: str | None = None,
-) -> TMomentAuditLog:
-    """构造一条管理员审核流转记录。"""
-    return TMomentAuditLog(
-        dynId=moment_id,
-        operatorMid=operator_mid,
+) -> TResourceAuditLog:
+    """构造一条通用资源审核流转记录（`ResourceBase` 子表，2.55.0 起）。"""
+    return TResourceAuditLog(
+        bizType=biz_type,
+        bizId=biz_id,
+        mid=operator_mid,
         operatorRole=MomentAuditLogOperatorRoleEnum.ADMIN,
         fromStatus=from_status,
         toStatus=to_status,
@@ -306,25 +309,30 @@ class MomentAuditService:
         page_num: int = 1,
         page_size: int = 20,
     ) -> MomentAuditLogListResp:
-        """审核记录流水查询（按 dynId / 操作员 / 时间段过滤）。"""
+        """审核记录流水查询（按 dynId / 操作员 / 时间段过滤，2.55.0 起落 `TResourceAuditLog`）。
+
+        API 入参 `dyn_id` 语义不变（= 动态资源时 bizId），内部按
+        `(bizType=DYNAMIC, bizId=dyn_id)` 过滤；`operator_mid` 对应 base 的 `mid`。
+        """
         page_num = max(1, page_num)
         page_size = min(max(1, page_size), 50)
 
         conditions = []
         if dyn_id is not None:
-            conditions.append(col(TMomentAuditLog.dynId) == dyn_id)
+            conditions.append(col(TResourceAuditLog.bizType) == InteractionBizTypeEnum.DYNAMIC)
+            conditions.append(col(TResourceAuditLog.bizId) == dyn_id)
         if operator_mid is not None:
-            conditions.append(col(TMomentAuditLog.operatorMid) == operator_mid)
+            conditions.append(col(TResourceAuditLog.mid) == operator_mid)
         if from_date:
-            conditions.append(col(TMomentAuditLog.created_at) >= from_date)
+            conditions.append(col(TResourceAuditLog.created_at) >= from_date)
         if to_date:
-            conditions.append(col(TMomentAuditLog.created_at) <= to_date)
+            conditions.append(col(TResourceAuditLog.created_at) <= to_date)
 
         total = int(
             (
                 await session.exec(
                     select(func.count())
-                    .select_from(TMomentAuditLog)
+                    .select_from(TResourceAuditLog)
                     .where(*conditions)
                 )
             ).one()
@@ -332,9 +340,9 @@ class MomentAuditService:
         )
         rows = (
             await session.exec(
-                select(TMomentAuditLog)
+                select(TResourceAuditLog)
                 .where(*conditions)
-                .order_by(col(TMomentAuditLog.created_at).desc())
+                .order_by(col(TResourceAuditLog.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
             )
@@ -350,7 +358,10 @@ class MomentAuditService:
     async def detail(
         session: AsyncSession, moment_id: int
     ) -> MomentAuditDetailResp:
-        """单条动态审核详情：当前快照（含全部状态）+ 历史流转。"""
+        """单条动态审核详情：当前快照（含全部状态）+ 历史流转。
+
+        2.55.0 起历史流水按 `(bizType=DYNAMIC, bizId=moment_id)` 过滤。
+        """
         dyn = await _get_any(session, moment_id)
         briefs = await PptrUser.get_many([dyn.mid] if dyn else [])
         item = (
@@ -358,9 +369,12 @@ class MomentAuditService:
         )
         logs = (
             await session.exec(
-                select(TMomentAuditLog)
-                .where(col(TMomentAuditLog.dynId) == moment_id)
-                .order_by(col(TMomentAuditLog.created_at).desc())
+                select(TResourceAuditLog)
+                .where(
+                    col(TResourceAuditLog.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TResourceAuditLog.bizId) == moment_id,
+                )
+                .order_by(col(TResourceAuditLog.created_at).desc())
             )
         ).all()
         return MomentAuditDetailResp(

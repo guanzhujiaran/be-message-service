@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 from app.models.enums import MomentVisibleScopeEnum
 from app.models.str_int import StrInt
@@ -672,7 +672,7 @@ class MomentLikerItem(SQLModel, AutoStrMixin):
     uname: str | None = Field(default=None, description="昵称（取不到则为 None）")
     face: str | None = Field(default=None, description="头像 URL")
     like_time: str | None = Field(
-        default=None, description="点赞时间（ISO8601；服务端从 TMomentLike.created_at 取）"
+        default=None, description="点赞时间（ISO8601；服务端从 TResourceLike.created_at 取）"
     )
 
 

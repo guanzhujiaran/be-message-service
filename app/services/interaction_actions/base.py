@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.user.follow import FollowService
 

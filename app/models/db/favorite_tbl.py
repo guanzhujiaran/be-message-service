@@ -1,4 +1,4 @@
-"""动态收藏夹 ORM 模型（be-message MySQL 主库 `BiliMessageDB`）。
+"""通用收藏 ORM 模型（be-message MySQL 主库 `BiliMessageDB`，2.55.0 起通用化）。
 
 对齐 `app.models.db` 既有规范（详见 `moment.py` 顶部约束）：
 - 表名 `T` 前缀 PascalCase；列名 camelCase；
@@ -7,12 +7,15 @@
 - `folder_id` 复用雪花 ID 生成器（`app.core.sharding.generate_moment_id`），
   对外以字符串传输避免 JS 精度丢失。
 
-收藏夹业务约束（计划书 §4.2 / §4.8）：
+收藏夹业务约束（计划书 §4.2 / §4.8 / §3.1.1）：
 - 一个用户多个收藏夹，每用户有且仅有一个**默认收藏夹**（`is_default=1`），
   首次进入收藏时由 `get_or_create` 自动创建，保证新用户无需先建夹即可收藏；
 - 收藏夹可自定义封面（`cover_url`，**仅存链接不转存图片**）、名称、描述；
-- 收藏明细 `TMomentFavorite` 唯一约束 `(bizType, bizId, folderId)` 保证同一收藏夹
-  对同一资源不重复收藏（2.17.0 泛化，支持任意业务资源）；
+- **收藏明细 `TResourceFavorite` 继承 `ResourceBase`**（2.55.0 收口：去 `dynId`
+  冗余列与对 TMoment 的 FK；类名/表名从 `TMomentFavorite → TResourceFavorite`，
+  与 `TResourceLike` / `TResourceDislike` / `TResourceAuditLog` 同前缀），
+  唯一约束 `(bizType, bizId, folderId)` 保证同一收藏夹对同一资源不重复收藏
+  （2.17.0 泛化，支持任意业务资源）；
 - 动态资源（`bizType='dynamic'`）与非动态资源（lottery / rpa_*）计数统一走
   `TInteractionStat.favoriteCount`（2.36.0 起），收藏/取消时原子 ±1。
 """
@@ -22,9 +25,9 @@ from datetime import datetime
 from sqlalchemy import BIGINT, Text, UniqueConstraint, text
 from sqlmodel import Field, Index, PrimaryKeyConstraint
 
-from app.models.db.base_tbl import TimestampMixin
+from app.models.db.base_tbl import ResourceBase, TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 
 class TFavoriteFolder(TimestampMixin, table=True):
@@ -46,34 +49,31 @@ class TFavoriteFolder(TimestampMixin, table=True):
     is_default: int = Field(default=0, sa_type=BIGINT, description="是否默认收藏夹：0=否,1=是（每用户一个）")
 
 
-class TMomentFavorite(TimestampMixin, table=True):
-    """收藏明细表（2.17.0 泛化：支持任意业务资源 bizType+bizId）。
+class TResourceFavorite(ResourceBase, TimestampMixin, table=True):
+    """通用资源收藏明细表（2.55.0 改名 `TMomentFavorite → TResourceFavorite`）。
 
-    幂等双写：唯一约束 `(bizType, bizId, folderId)` 保证同夹不重复收藏；
-    动态资源（bizType='dynamic'）时 `bizId` 与 `dynId` 冗余相同。
+    **继承 `ResourceBase`**（`pk+bizType+bizId+mid+created_at/updated_at`），
+    唯一约束 `(bizType, bizId, folderId)` 保证同一收藏夹对同一资源不重复收藏；
+    动态资源（bizType=DYNAMIC）时 `bizId` 与 `dynId` 同义（不再冗余 `dynId` 列，
+    2.55.0 删除以彻底去掉对 `TMoment` 的 FK 依赖，使任何 bizType 资源都能走同一套
+    明细 + 清理路径）。
+
+    类名/表名从 `TMomentFavorite` 改为 `TResourceFavorite`（与 `TResourceLike` /
+    `TResourceDislike` / `TResourceAuditLog` 同前缀；语义上 Favorite 适用于任意
+    通用资源）。代码层类名统一，DB 层由用户手动更新（计划书 §3.1.1 已附 DDL）。
     """
 
-    __tablename__ = "TMomentFavorite"
+    __tablename__ = "TResourceFavorite"
     __table_args__ = (
-        PrimaryKeyConstraint("pk", name="TMomentFavorite_pkey"),
-        UniqueConstraint("bizType", "bizId", "folderId", name="TMomentFavorite_bizType_bizId_folderId_key"),
-        Index("idx_fav_mid_created", "mid", text('created_at DESC')),
-        Index("idx_fav_folder_created", "folderId", text('created_at DESC')),
-        Index("idx_fav_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "收藏明细：唯一约束(bizType,bizId,folderId)防重复收藏"},
+        PrimaryKeyConstraint("pk", name="TResourceFavorite_pkey"),
+        UniqueConstraint("bizType", "bizId", "folderId", name="TResourceFavorite_bizType_bizId_folderId_key"),
+        Index("idx_resource_favorite_mid_created", "mid", text('created_at DESC')),
+        Index("idx_resource_favorite_folder_created", "folderId", text('created_at DESC')),
+        Index("idx_resource_favorite_biz", "bizType", "bizId"),
+        {"extend_existing": True, "comment": "通用资源收藏明细：同夹内唯一约束(bizType,bizId,folderId)防重复收藏；继承 ResourceBase；原 TMomentFavorite"},
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
-    bizType: InteractionBizTypeEnum = Field(
-        default=InteractionBizTypeEnum.DYNAMIC,
-        sa_type=SAEnum(InteractionBizTypeEnum),
-        nullable=False,
-        description="资源类型（IntEnum 落库 INT）：1=dynamic,2=lottery,3=rpa_action,4=rpa_workflow,5=rpa_browser",
-    )
-    bizId: int = Field(default=None, nullable=False, sa_type=BIGINT, description="被收藏的资源id（动态时=dynId）")
-    dynId: int | None = Field(default=None, sa_type=BIGINT, index=True, description="冗余兼容列：bizType=dynamic 时与 bizId 相同，非动态为 NULL")
     folderId: int = Field(default=None, nullable=False, sa_type=BIGINT, index=True, description="所属收藏夹id")
-    mid: int = Field(default=None, nullable=False, sa_type=BIGINT, index=True, description="收藏用户mid")
     note: str | None = Field(default=None, max_length=200, description="收藏备注（预留）")
 
 
@@ -94,4 +94,4 @@ class TUserFavoriteSetting(TimestampMixin, table=True):
     showFavorites: int = Field(default=1, sa_type=BIGINT, description="主页是否显示收藏tab：1=显示,0=隐藏")
 
 
-__all__ = ["TFavoriteFolder", "TMomentFavorite", "TUserFavoriteSetting"]
+__all__ = ["TFavoriteFolder", "TResourceFavorite", "TUserFavoriteSetting"]

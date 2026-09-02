@@ -21,14 +21,11 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import EventMessage, TResourceFeed
 from app.models.db.comment_tbl import CommentReport
-from app.models.db.moment_tbl import TMoment, TResourceReport
+from app.models.db.moment_tbl import TMoment
+from app.models.db.resource_tbl import TResourceReport
 from app.models.db.report_tbl import TUserReport
-from app.models.enums import (
-    InteractionBizTypeEnum,
-    InteractionActionTypeEnum,
-    MomentAuditStatusEnum,
-    MomentTypeEnum,
-    )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from app.models.enums import MomentAuditStatusEnum, MomentTypeEnum
 from app.models.schemas import CommentAddReq, ReportCreateReq, ReportReviewReq
 from app.services.comment import CommentService
 from app.services.admin.report import ReportService

@@ -16,12 +16,8 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import CommentIndex, CommentSubject
 from app.models.db.moment_tbl import TMoment
-from app.models.enums import (
-    CommentStateEnum,
-    InteractionBizTypeEnum,
-    MomentAuditStatusEnum,
-    MomentTypeEnum,
-    )
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import CommentStateEnum, MomentAuditStatusEnum, MomentTypeEnum
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_admin import CommentAdminService

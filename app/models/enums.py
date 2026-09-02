@@ -5,15 +5,9 @@
 （新增枚举值需要 DDL，这是原生 ENUM 的固有代价）。对外接口层（AutoStrMixin / pydantic）
 序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
-
 from enum import Enum
 
 from bili_common.models import IntEnumAutoDoc
-
-# 业务资源类型唯一真相源收口到 bili-common 的 `InteractionBizTypeEnum`，be-message 侧
-# 直接复用（含 bizType / source_type 两个语义维度）；互动操作类型收口到 bili-common 的
-# `InteractionActionTypeEnum`（动作维度，与资源维度明确区分），本模块仅 re-export。
-from bili_common.models.interaction import InteractionBizTypeEnum, InteractionActionTypeEnum
 from bili_common.models.notify import NotifyLevelEnum, NotifyTargetTypeEnum
 # 举报相关枚举（原因 / 审核状态）统一收口到 bili-common，be-message 侧直接复用，不再重定义：
 from bili_common.models.report import ReportReasonEnum, ReportAuditStatusEnum
@@ -44,7 +38,8 @@ class NotifyStatusEnum(IntEnumAutoDoc):
 
 # ==================== 事件提醒 ====================
 # 互动操作类型已收口到 bili-common 的 `InteractionActionTypeEnum`（动作维度，与
-# `InteractionBizTypeEnum` 资源维度明确区分），本模块仅 re-export，详见 bili-common。
+# `InteractionBizTypeEnum` 资源维度明确区分），直接 `from bili_common.models import ...`
+# 使用，本模块不 re-export，详见 bili-common。
 
 # ==================== 私信 ====================
 
@@ -287,7 +282,7 @@ MomentReportAuditStatusEnum = ReportAuditStatusEnum
 
 
 class MomentAuditLogActionEnum(IntEnumAutoDoc):
-    """Moment 审核流转动作类型（写 TMomentAuditLog.actionType）。"""
+    """通用资源审核流转动作类型（2.55.0 起写 `TResourceAuditLog.actionType`；原 `TMomentAuditLog`）。"""
 
     CREATE = 1
     EDIT = 2
@@ -304,8 +299,10 @@ class MomentAuditLogOperatorRoleEnum(IntEnumAutoDoc):
     ADMIN = 2
 
 
-# 互动资源类型枚举（`InteractionBizTypeEnum`）与举报枚举（`ReportReasonEnum` /
-# `ReportAuditStatusEnum`）均已收口到 bili-common，本文件仅复用 / 定义 be-message 专属枚举。
+# 互动资源类型枚举（`InteractionBizTypeEnum`）与互动操作枚举（`InteractionActionTypeEnum`）
+# 已从本文件移除（不再 re-export），使用方直接从 `bili_common.models` 导入；
+# 举报枚举（`ReportReasonEnum` / `ReportAuditStatusEnum`）同样收口在 bili-common，
+# 本文件仅做 be-message 侧别名复用 / 定义 be-message 专属枚举。
 
 
 # ==================== 用户关注关系 ====================
@@ -397,10 +394,8 @@ __all__ = [
     "DmMsgTypeEnum",
     "DmRelationEnum",
     "DmSessionTypeEnum",
-    "InteractionActionTypeEnum",
     "ExpActionType",
     "FollowStatusEnum",
-    "InteractionBizTypeEnum",
     "MessageModuleEnum",
     "MomentAuditLogActionEnum",
     "MomentAuditLogOperatorRoleEnum",

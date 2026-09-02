@@ -27,17 +27,17 @@ from app.models.db import (
     EventMessage,
     NotifyMessage,
     )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
     DmSessionTypeEnum,
-    InteractionActionTypeEnum,
     NotifyLevelEnum,
     NotifyStatusEnum,
     NotifyTargetTypeEnum,
-    InteractionBizTypeEnum,
-    )
+)
+
 
 
 @pytest.fixture(autouse=True)

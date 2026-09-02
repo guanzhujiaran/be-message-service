@@ -10,11 +10,11 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    InteractionBizTypeEnum,
     MomentReportReasonEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo

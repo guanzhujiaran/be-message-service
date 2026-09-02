@@ -21,13 +21,13 @@ from app.models.db import (
     CommentSubject,
     TMoment,
     )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
-    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
-    )
+)
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
@@ -504,7 +504,6 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
     一律不投递回复 / @ 通知，避免接收方点开看到「评论不可见」；仅 NORMAL 投递。
     """
     import app.services.message.insite.events as events_mod
-    from app.models.enums import InteractionActionTypeEnum
     from app.models.schemas import EventReportReq
 
     # 关掉「先审后发」，保证无敏感词评论直接 NORMAL（与
@@ -586,7 +585,6 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
     再次翻转为 NORMAL 不重复补发。
     """
     import app.services.message.insite.events as events_mod
-    from app.models.enums import InteractionActionTypeEnum
     from app.models.schemas import EventReportReq
 
     # 关掉「先审后发」：无敏感词评论（含根评论）直接 NORMAL，作为楼中楼回复目标；
@@ -673,7 +671,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
 
     from app.models.db.event_tbl import EventMessage
     from app.models.db.follow_tbl import UserFollow
-    from app.models.enums import InteractionActionTypeEnum, FollowStatusEnum
+    from app.models.enums import FollowStatusEnum
 
     # 关掉先审后发，保证评论直接 NORMAL（通知在 add 内即时投递）
     monkeypatch.setattr(settings, "comment_pre_audit", False)

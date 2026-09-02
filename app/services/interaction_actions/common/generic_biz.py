@@ -9,9 +9,8 @@
 from loguru import logger
 from sqlmodel import col, select
 
-from app.models.db import TResourceFeed
-from app.models.db.moment_tbl import TResourceReport
-from app.models.enums import InteractionBizTypeEnum
+from app.models.db import TResourceFeed, TResourceReport
+from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base import InteractionRelationScopeEnum
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
@@ -31,15 +30,39 @@ class GenericResourceBiz(BaseBiz):
 
     # ==================== 资源获取 ====================
 
-    async def get_resource(self) -> InteractionResource:
-        """资源存在性校验（注册式校验器；未注册类型默认放行）。"""
-        await ops.validate_exists(self.session, self.biz_type, self.biz_id)
-        return InteractionResource(
-            bizType=self.biz_type,
-            bizId=self.biz_id,
-            exists=True,
-            interactable=True,
-        )
+    async def get_resource(self, rpid: str | None = None) -> InteractionResource:
+        """取本资源并折叠为统一 :class:`InteractionResource`（继承基类统一装配）。"""
+        return await super().get_resource(rpid)
+
+    async def _load_meta(self) -> tuple[str | None, str | None]:
+        """经 RPA RPC 取资源详情（名称 / 封面）；弱依赖降级为空（计划书 §5.11）。"""
+        from app.services.infrastructure.rpa_rpc import rpa_rpc_client
+
+        try:
+            detail = await rpa_rpc_client.get_resource_detail(
+                self.biz_type.to_text(), int(self.biz_id)
+            )
+        except Exception:  # noqa: BLE001
+            return None, None
+        if detail is None:
+            return None, None
+        name = getattr(detail, "name", None)
+        cover = getattr(detail, "cover", None)
+        return (str(name) if name else None), (str(cover) if cover else None)
+
+    async def _load_author_mid(self) -> int | None:
+        from app.services.infrastructure.rpa_rpc import rpa_rpc_client
+
+        try:
+            detail = await rpa_rpc_client.get_resource_detail(
+                self.biz_type.to_text(), int(self.biz_id)
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if detail is None or detail.detail is None:
+            return None
+        am = getattr(detail.detail, "authorMid", None)
+        return int(am) if am is not None else None
 
     # ==================== 互动操作 ====================
 

@@ -28,21 +28,20 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
     TMoment,
-    TMomentAuditLog,
+    TResourceAuditLog,
     TMomentTopic,
     TMomentTopicRel,
     TResourceFeed,
     )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
     MomentAuditStatusEnum,
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
-    )
+)
 from app.models.schemas import EventReportReq
 from app.models.schemas.moment import (
     MomentAttachRef,
@@ -109,7 +108,8 @@ def _to_enum_dyn_type(scene: str) -> MomentTypeEnum:
 
 def _build_audit_log(
     *,
-    moment_id: int,
+    biz_type: InteractionBizTypeEnum,
+    biz_id: int,
     operator_mid: int,
     to_status: MomentAuditStatusEnum,
     action: MomentAuditLogActionEnum,
@@ -119,15 +119,17 @@ def _build_audit_log(
     operator_role: MomentAuditLogOperatorRoleEnum = MomentAuditLogOperatorRoleEnum.AUTHOR,
     client_ip: str | None = None,
     user_agent: str | None = None,
-) -> TMomentAuditLog:
-    """构造一条审核流转记录。
+) -> TResourceAuditLog:
+    """构造一条通用资源审核流转记录（2.55.0 起，`ResourceBase` 子表）。
 
-    ``operator_role``（2.22.1）：操作人角色，默认作者（author）；
+    2.22.1 ``operator_role``：操作人角色，默认作者（author）；
     管理员删除等管理端操作传 ``ADMIN``。
+    2.55.0：传 `biz_type` + `biz_id`（动态资源 = `InteractionBizTypeEnum.DYNAMIC + dynId`）。
     """
-    return TMomentAuditLog(
-        dynId=moment_id,
-        operatorMid=operator_mid,
+    return TResourceAuditLog(
+        bizType=biz_type,
+        bizId=biz_id,
+        mid=operator_mid,
         operatorRole=operator_role,
         fromStatus=from_status,
         toStatus=to_status,
@@ -217,13 +219,18 @@ async def _validate_attach(
 ) -> None:
     """校验附加卡资源存在（2.21.0）。
 
-    对已注册类型的资源（如 lottery / dynamic）经 `InteractionResourceValidator` 校验存在，
-    不存在抛 ValueError（路由层转 422）；未注册类型放行。
+    经对应资源类的 ``check_exists`` 校验存在，不存在抛 ValueError（路由层转 422）；
+    未实现资源类默认放行。
     """
-    from bili_common.services.interaction import InteractionResourceValidator
+    from app.services.interaction_actions.base_biz import get_biz
 
     if attach and attach.bizType and attach.bizId:
-        await InteractionResourceValidator.validate(session, attach.bizType, attach.bizId)
+        try:
+            biz = get_biz(attach.bizType, session, int(attach.bizId))
+        except (ValueError, TypeError):
+            return
+        if not await biz.check_exists():
+            raise ValueError("资源不存在")
 
 
 def _resolve_topics(req: MomentCreateReq | MomentEditReq) -> list[MomentTopicRef]:
@@ -435,7 +442,8 @@ class MomentPublishService:
         _persist_resource_feed(session, moment_id, mid, topics, visible_scope=dyn.visibleScope)
         session.add(
             _build_audit_log(
-                moment_id=moment_id,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=moment_id,
                 operator_mid=mid,
                 to_status=MomentAuditStatusEnum.AUDITING,
                 action=MomentAuditLogActionEnum.CREATE,
@@ -503,7 +511,8 @@ class MomentPublishService:
         # 必须等管理员审核通过（P6-T2）才对 srcDyn.repostCount +1。
         session.add(
             _build_audit_log(
-                moment_id=moment_id,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=moment_id,
                 operator_mid=mid,
                 to_status=MomentAuditStatusEnum.AUDITING,
                 action=MomentAuditLogActionEnum.CREATE,
@@ -558,7 +567,8 @@ class MomentPublishService:
         _persist_resource_feed(session, moment_id, mid, None, visible_scope=MomentVisibleScopeEnum.PUBLIC)
         session.add(
             _build_audit_log(
-                moment_id=moment_id,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=moment_id,
                 operator_mid=mid,
                 to_status=MomentAuditStatusEnum.AUDITING,
                 action=MomentAuditLogActionEnum.CREATE,
@@ -652,7 +662,8 @@ class MomentPublishService:
 
         session.add(
             _build_audit_log(
-                moment_id=dyn.dynId,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=dyn.dynId,
                 operator_mid=mid,
                 to_status=MomentAuditStatusEnum.AUDITING,
                 action=MomentAuditLogActionEnum.EDIT,
@@ -719,7 +730,8 @@ class MomentPublishService:
 
         session.add(
             _build_audit_log(
-                moment_id=dyn.dynId,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=dyn.dynId,
                 operator_mid=mid,
                 to_status=from_status,  # 软删不改 auditStatus，仅标记 deletedAt
                 action=MomentAuditLogActionEnum.DELETE,

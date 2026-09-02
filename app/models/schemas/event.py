@@ -17,7 +17,7 @@ from pydantic import computed_field
 from sqlmodel import Field, SQLModel
 
 from app.models.biz_type import source_type_label
-from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.base import AutoStrMixin
 
 # business（= source_type）的文字名称不再在本模块维护：
@@ -91,6 +91,8 @@ class EventItem(SQLModel, AutoStrMixin):
     )
     title: str | None = None
     image: str | None = None
+    jump_target: str = ""
+    resource_deleted: bool = False
     actor_mid: int
     desc: str | None = None
     is_read: bool = False
@@ -113,6 +115,8 @@ class EventAggregateItem(SQLModel, AutoStrMixin):
     )
     title: str | None = None
     image: str | None = None
+    jump_target: str = ""
+    resource_deleted: bool = False
     count: int = Field(default=0, description="该分组下的事件总数")
     unread_count: int = Field(default=0, description="该分组下的未读数")
     actors: list[EventUserBrief] = Field(
@@ -154,6 +158,8 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
     # 触发评论是否处于「非正常状态」（被删 / 未过审 / 驳回 / 下架 / 待审）：
     # True 时 source_content / target_content 为空，前端展示「该评论已被删除」占位。
     comment_deleted: bool = False
+    jump_target: str = ""  # 后端下发的跳转目标 route:{name}?{query}（前端只 router.push）
+    resource_deleted: bool = False  # 顶层资源是否已删除/不存在（前端展示占位且不跳转）
     ctime: int
 
     @computed_field  # type: ignore[prop-decorator]
@@ -197,10 +203,24 @@ class EventMsgfeedCursor(SQLModel):
 
 
 class EventListResp(SQLModel, AutoStrMixin):
-    """消息中心列表响应：latest 为最新一条，total 为完整分页。"""
+    """消息中心列表响应：latest 为最新一条，total 为完整分页。
+
+    `total_count` / `unread_count` 用于**对账**——列表按「来源实体」聚合，单页只返回
+    `page_size` 张卡片（每张卡片聚合了 N 个用户的同类互动），因此本页 `items` 长度
+    天然小于「未读事件数」。这两个字段给出真实总量，避免前端把「单页 20 张」误判为
+    「全部只有 20 条 / 已结束」：
+    - `total_count`：当前筛选条件下聚合卡片（分组）总数，决定总页数；
+    - `unread_count`：当前 `event_type` 下未读事件总数，与 `GET /unread` 的对应字段一致。
+    """
 
     latest: EventMsgfeedSection
     total: EventMsgfeedSection
+    total_count: int = Field(
+        default=0, description="当前筛选条件下聚合卡片（分组）总数（与单页 items 长度无关）"
+    )
+    unread_count: int = Field(
+        default=0, description="当前 event_type 下未读事件总数，对齐 GET /unread 的对应字段"
+    )
 
 
 class EventAggregateResp(SQLModel, AutoStrMixin):

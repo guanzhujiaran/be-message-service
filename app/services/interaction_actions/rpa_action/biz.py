@@ -1,6 +1,6 @@
 """RPA 自定义操作（RPA_ACTION）资源类（2.48.0）。"""
 
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.services.interaction_actions.common.generic_biz import GenericResourceBiz
 
 __all__ = ["RpaActionBiz"]

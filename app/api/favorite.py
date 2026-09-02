@@ -1,7 +1,8 @@
-"""动态收藏夹路由（收藏夹系统，P4-T10）。
+"""通用资源收藏夹路由（收藏夹系统，P4-T10；2.55.0 全面通用化）。
 
 路由前缀 `/api/v1/favorite`，全部需登录（`RequiredUser`）。
-`folder_id` / `dyn_id` 均为雪花 ID，传输用字符串，路由层 `int()` 转换。
+`folder_id` / 资源 `bizId` 均为雪花 ID，传输用字符串，路由层 `int()` 转换。
+2.55.0 起去除 `[兼容] dynId` 字段：`bizId` 同时承载 dynId 语义（dynamic 时值等于 dynId）。
 """
 
 from typing import Annotated
@@ -13,7 +14,7 @@ from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.favorite import (
     FavoriteAddReq,
     FavoriteAddResp,
@@ -46,18 +47,12 @@ async def _parse_int(value: str | None, field: str) -> int | None:
         return None
 
 
-def _resolve_biz(biz_type: InteractionBizTypeEnum, biz_id: str | None, dyn_id: str | None) -> tuple[InteractionBizTypeEnum, int] | None:
+def _resolve_biz(biz_type: InteractionBizTypeEnum, biz_id: str | None) -> tuple[InteractionBizTypeEnum, int] | None:
     """解析收藏请求的目标资源 (biz_type_enum, biz_id_int)。
 
-    - bizType=dynamic：bizId 与 dynId 任取其一；
-    - bizType≠dynamic：必须提供 bizId。
-    解析失败返回 None。
+    2.55.0 全面通用化：`bizId` 字段同时承载 dynId 语义（dynamic 时值等于 dynId），
+    移除原 `[兼容] dynId` 字段。`bizId` 必填。
     """
-    if biz_type == InteractionBizTypeEnum.DYNAMIC:
-        rid = biz_id if biz_id is not None else dyn_id
-        if rid is None:
-            return None
-        return InteractionBizTypeEnum.DYNAMIC, int(rid)
     if biz_id is None:
         return None
     return biz_type, int(biz_id)
@@ -161,9 +156,9 @@ async def add_favorite(
     req: FavoriteAddReq,
 ) -> StandardResponse[FavoriteAddResp]:
     biz_type = req.bizType
-    resolved = _resolve_biz(biz_type, req.bizId, req.dynId)
+    resolved = _resolve_biz(biz_type, req.bizId)
     if resolved is None:
-        return StandardResponse(code=400, msg="bizId/dynId 不合法")
+        return StandardResponse(code=400, msg="bizId 不合法")
     biz_type, biz_id = resolved
     try:
         # 2.48.0：以资源为主体，取资源实例调用 favorite()
@@ -176,7 +171,6 @@ async def add_favorite(
         data=FavoriteAddResp(
             bizType=biz_type,
             bizId=str(biz_id),
-            dynId=req.dynId,
             folderId=str(folder_id),
             favorited=favorited,
             favoriteCount=count,
@@ -191,10 +185,10 @@ async def remove_favorite(
     req: FavoriteRemoveReq,
 ) -> StandardResponse[FavoriteAddResp]:
     biz_type = req.bizType
-    resolved = _resolve_biz(biz_type, req.bizId, req.dynId)
+    resolved = _resolve_biz(biz_type, req.bizId)
     folder_id = await _parse_int(req.folderId, "folderId")
     if resolved is None or folder_id is None:
-        return StandardResponse(code=400, msg="bizId/dynId/folderId 不合法")
+        return StandardResponse(code=400, msg="bizId/folderId 不合法")
     biz_type, biz_id = resolved
     biz = get_biz(biz_type, session, biz_id, user.mid)
     removed, _ = await biz.favorite(action="remove", folder_id=folder_id)
@@ -203,7 +197,6 @@ async def remove_favorite(
         data=FavoriteAddResp(
             bizType=biz_type,
             bizId=str(biz_id),
-            dynId=req.dynId,
             folderId=req.folderId,
             favorited=not removed,
             favoriteCount=count,
@@ -226,13 +219,10 @@ async def list_favorites(
     total, items = await FavoriteFolderAction(session, user.mid).list_items(
         folder_id, page, pageSize, biz_type=bizType
     )
-    # 兼容字段：仅当过滤为 dynamic 或不过滤时，把 dynamic 项的 bizId 填到 dynIds
-    dyn_ids = [it["bizId"] for it in items if it["bizType"] == InteractionBizTypeEnum.DYNAMIC]
     return StandardResponse(
         data=FavoriteListResp(
             folderId=folderId,
             total=total,
-            dynIds=dyn_ids,
             items=[FavoriteListItem(**it) for it in items],
         )
     )
@@ -266,13 +256,12 @@ async def list_favorite_items(
 async def dyn_folders(
     session: SessionDep,
     user: RequiredUser,
-    bizId: str | None = Query(default=None, description="资源id（字符串）"),
+    bizId: str = Query(description="资源id（字符串）"),
     bizType: InteractionBizTypeEnum = Query(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）"),
-    dynId: str | None = Query(default=None, description="[兼容]动态id（字符串）"),
 ) -> StandardResponse[FavoriteDynFoldersResp]:
-    resolved = _resolve_biz(bizType, bizId, dynId)
+    resolved = _resolve_biz(bizType, bizId)
     if resolved is None:
-        return StandardResponse(code=400, msg="bizId/dynId 不合法")
+        return StandardResponse(code=400, msg="bizId 不合法")
     biz_type, biz_id = resolved
     folder_ids = await FavoriteFolderAction(session, user.mid).folders_containing(
         biz_type, biz_id
@@ -281,7 +270,6 @@ async def dyn_folders(
         data=FavoriteDynFoldersResp(
             bizType=biz_type,
             bizId=str(biz_id),
-            dynId=dynId,
             folderIds=folder_ids,
         )
     )
@@ -344,12 +332,10 @@ async def public_dynamics(
     if result is None:
         return StandardResponse(code=403, msg="该收藏夹不公开或不存在")
     total, items = result
-    dyn_ids = [it["bizId"] for it in items if it["bizType"] == InteractionBizTypeEnum.DYNAMIC]
     return StandardResponse(
         data=FavoriteListResp(
             folderId=folderId,
             total=total,
-            dynIds=dyn_ids,
             items=[FavoriteListItem(**it) for it in items],
         )
     )

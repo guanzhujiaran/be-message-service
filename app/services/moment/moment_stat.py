@@ -4,7 +4,7 @@
 
 - 动态资源计数（like/comment/repost/view/favorite/share/dislike/coin）统一存
   `TInteractionStat`（`bizType=dynamic` 行），与 lottery/rpa_* 同一张表；
-- 点赞/点踩明细 `TMomentLike`/`TMomentDislike`、浏览去重 `TInteractionViewLog`、
+- 点赞/点踩明细 `TResourceLike`/`TResourceDislike`、浏览去重 `TInteractionViewLog`、
   评论 `CommentSubject(oid,type)` 均已泛化；旧动态统计表（双轨）已删除。
 - 2.42.0：浏览去重明细每用户每资源一行（唯一约束 bizType+bizId+mid），
   `lastViewAt` 判自然日窗口，跨天再次访问才给 Stat.viewCount +1；
@@ -21,7 +21,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TInteractionStat
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )

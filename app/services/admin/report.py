@@ -21,10 +21,7 @@ from loguru import logger
 from sqlmodel import col, func, select
 
 from app.core.config import settings
-from app.models.enums import (
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
-)
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas import (
     EventReportReq,
     ReportCreateReq,

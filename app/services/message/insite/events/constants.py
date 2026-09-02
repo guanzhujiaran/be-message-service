@@ -1,7 +1,7 @@
 """事件相关常量与派生集合（单一真相源旁挂的本地配置）。"""
 from __future__ import annotations
 
-from bili_common.models.interaction import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 # 每张聚合卡片（aggregate 接口）最多展示的触发者头像数
 _MAX_ACTORS_PER_GROUP = 3

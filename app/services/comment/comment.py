@@ -41,15 +41,14 @@ from app.models.db import (
     CommentSubject,
     TMoment,
     )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     CommentAttrBit,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    InteractionBizTypeEnum,
-    InteractionActionTypeEnum,
     MomentReportReasonEnum,
     NotifyLevelEnum,
-    )
+)
 from app.models.schemas import CommentAddReq, CommentAddResp, EventReportReq
 from app.services.comment.comment_audit import audit_text
 from app.services.user.follow import FollowService
@@ -801,7 +800,7 @@ class CommentService:
         的，写成 oid 会导致 source_id/root_id/target_id/source_content/target_content
         全部解析不出来（回复卡片只剩动作文案，正文与「被回复的评论」都不显示），
         且 dedup_key 含 biz_id 时同一个人在同一动态下的多条回复会被误判重复。
-        `source_id` 仍为动态/抽奖 oid，便于 ``_resolve_source_meta`` 回捞标题/封面。
+        `source_id` 仍为动态/抽奖 oid，便于经 `DynamicBiz`/`LotteryBiz` 的 `_load_meta` 回捞标题/封面。
         """
         from app.services.message.insite.events import report_event_weakly
 
@@ -836,7 +835,7 @@ class CommentService:
         **`source_type` 恒为 `COMMENT`**：被 @ 用户是「评论正文里被点名」，
         业务来源统一是被通知的这条评论本身（无论该评论是一级还是楼中楼）。
         一级评论里 @人 的 resource_id 仍是所属顶层资源的 oid，
-        经 ``_resolve_source_meta`` 的 COMMENT 分支按 `biz_id=rpid` 查
+        经 `CommentBiz`/`DynamicBiz` 的 `_load_meta` 按 `biz_id=rpid` 查
         CommentIndex.oid 回捞动态标题/封面；前端用 `business=COMMENT`
         修正文案（"@了你 的评论"），跳转由 `resource_id`（=oid）带 rpid 定位。
         """

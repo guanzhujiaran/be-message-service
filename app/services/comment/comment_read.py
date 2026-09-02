@@ -26,14 +26,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.models.db import CommentAction, CommentContent, CommentIndex
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
     CommentAttrBit,
     CommentSortEnum,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    InteractionBizTypeEnum,
-    )
+)
 from app.models.schemas import (
     CommentCountResp,
     CommentItem,

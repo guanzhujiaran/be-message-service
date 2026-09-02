@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import AdminUser, RequiredUser
 from app.models import StandardResponse
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas import (
     ReportCreateReq,
     ReportListResp,

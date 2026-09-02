@@ -35,13 +35,8 @@ from app.models.db import (
     UserActivity,
     UserMessageSetting,
     )
-from app.models.enums import (
-    DmMsgStatusEnum,
-    DmMsgTypeEnum,
-    InteractionActionTypeEnum,
-    NotifyTargetTypeEnum,
-    InteractionBizTypeEnum,
-    )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from app.models.enums import DmMsgStatusEnum, DmMsgTypeEnum, NotifyTargetTypeEnum
 from app.models.schemas import (
     DmSendReq,
     EventReadReq,

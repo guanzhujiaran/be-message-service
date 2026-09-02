@@ -5,8 +5,9 @@
 - 每种 ``InteractionActionTypeEnum`` 对应一个处理器类（``LikeEvent`` / ``ReplyEvent`` / ...），
   统一继承自虚基类 ``BaseEvent``；
 - 写路径（上报）与跨类型的读路径（聚合 / 明细 / msgfeed / 已读 / 计数）的公共逻辑下沉到
-  ``BaseEvent``，**只有「按类型差异化」的逻辑（主要是 msgfeed 内容体构建）被抽成抽象方法
-  ``build_msgfeed_content``**，由子类实现；
+  ``BaseEvent``；**msgfeed 内容体构建也只有一份**（``_generic_content`` 按
+  ``is_comment_anchored`` 决定走评论层级回捞还是直接取资源 id），
+  子类只声明投递语义（``blocked_silent`` / ``setting_gate``）；
 - 业务方不再直接调 ``EventService``，而是 ``BaseEvent.from_req(req).report(session)``，
   或 ``ReplyEvent(mid=..., ...).report(session)`` 这样按对象操作，类型含义一目了然。
 
@@ -23,9 +24,10 @@
 模块拆分（本包）：
 
 - ``constants``：常量与派生集合；
-- ``source_meta``：原资源实时回捞；
-- ``base``：``BaseEvent`` 虚基类 + ``MsgfeedBuildContext`` + 上报 / 读路径公共逻辑；
-- ``handlers``：各互动操作类型的处理器（msgfeed 内容体差异化），并在末尾填充注册表；
+- ``source_meta``：动态正文首图提取（``_first_pic`` 共享工具，供 ``DynamicBiz`` 复用）；
+- ``base``：``BaseEvent`` 虚基类 + ``MsgfeedBuildContext`` + 上报 / 读路径公共逻辑
+  + 评论定位（``CommentLocate`` / ``is_comment_anchored``）；
+- ``handlers``：各互动操作类型的处理器（投递语义差异化），并在末尾填充注册表；
 - ``registry``：``EventSpec`` 规格与 ``EVENT_REGISTRY`` 空容器（单一真相源）。
 
 保留与原 ``events.py`` 完全一致的公开 API，外部 ``from app.services.message.insite.events
@@ -33,10 +35,12 @@ import <Name>`` 无需改动。
 """
 from .base import (
     BaseEvent,
+    CommentLocate,
     GenericEvent,
     MsgfeedBuildContext,
     _resolve_handler_cls,
     build_dedup_key,
+    is_comment_anchored,
     report_event_weakly,
 )
 from .handlers import (
@@ -54,18 +58,20 @@ from .registry import (
 )
 
 __all__ = [
-    "BaseEvent",
-    "EventSpec",
-    "GenericEvent",
-    "LikeEvent",
-    "ReplyEvent",
+    "EVENT_REGISTRY",
     "AtEvent",
     "AuditRejectEvent",
+    "BaseEvent",
+    "CommentLocate",
+    "EventSpec",
+    "GenericEvent",
     "HideEvent",
+    "LikeEvent",
+    "MsgfeedBuildContext",
+    "ReplyEvent",
     "ReportRejectEvent",
     "ReportResolvedEvent",
-    "MsgfeedBuildContext",
-    "EVENT_REGISTRY",
     "build_dedup_key",
+    "is_comment_anchored",
     "report_event_weakly",
 ]

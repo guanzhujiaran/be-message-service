@@ -17,7 +17,8 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import BanServiceEnum, CommentSortEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import BanServiceEnum, CommentSortEnum
 from app.models.schemas import (
     CommentActionReq,
     CommentActionResp,

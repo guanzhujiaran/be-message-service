@@ -29,7 +29,7 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base import (
     InteractionAclScopeEnum,
@@ -127,20 +127,82 @@ class BaseBiz(ABC):
             )
         return self._biz_type
 
-    # ==================== 资源获取（子类实现）====================
+    # ==================== 资源获取（统一装配 + 子类钩子）====================
 
-    async def get_resource(self) -> InteractionResource:
+    async def get_resource(self, rpid: str | None = None) -> InteractionResource:
         """取本资源并折叠为统一 :class:`InteractionResource`。
 
-        默认实现**不校验存在性**（弱依赖场景，如浏览上报）；需要校验的资源覆盖本方法
-        并按情况置 ``exists`` / ``interactable``。
+        统一调用子类提供的 ``check_exists()`` / ``_load_meta()`` / ``_load_author_mid()``
+        / ``_load_interactable()`` 钩子装配展示信息（标题 / 封面 / 作者 / 存在性 /
+        可互动性 / 后端跳转目标），不在子类里散落存在性 / 展示字段逻辑（计划书 §5.11 / C20）。
         """
+        exists = await self.check_exists()
+        title: str | None = None
+        cover: str | None = None
+        author_mid: int | None = None
+        interactable = exists
+        if exists:
+            title, cover = await self._load_meta()
+            author_mid = await self._load_author_mid()
+            inter = await self._load_interactable()
+            interactable = inter if inter is not None else exists
         return InteractionResource(
             bizType=self.biz_type,
             bizId=self.biz_id,
-            exists=True,
-            interactable=True,
+            authorMid=author_mid,
+            exists=exists,
+            interactable=interactable,
+            title=title,
+            cover=cover,
+            jumpTarget=self._build_jump_target(rpid),
         )
+
+    # ----- 子类钩子：统一由 get_resource 调用 -----
+
+    async def check_exists(self) -> bool:
+        """资源是否存在（默认 ``True``：无存在性概念的资源放行）。
+
+        可互动 / 可举报资源应覆盖本方法（如动态查 ``TMoment``、抽奖查 RPC），
+        把原 ``InteractionResourceValidator`` 注册式校验下沉为各资源类自身方法。
+        """
+        return True
+
+    async def _load_meta(self) -> tuple[str | None, str | None]:
+        """返回 ``(标题, 封面)``；默认 ``(None, None)``。资源覆盖以填充展示信息。"""
+        return None, None
+
+    async def _load_author_mid(self) -> int | None:
+        """资源作者 mid；默认 ``None``。"""
+        return None
+
+    async def _load_interactable(self) -> bool | None:
+        """可互动性（``None`` 表示沿用 ``exists``）。默认 ``None``。"""
+        return None
+
+    def _build_jump_target(self, rpid: str | None = None) -> str | None:
+        """按资源类型拼出后端跳转目标（见 :func:`app.utils.route_target.jump_target_for`）。"""
+        from app.utils.route_target import jump_target_for
+
+        return jump_target_for(self.biz_type, self.biz_id, rpid)
+
+    @classmethod
+    async def batch_get_resources(
+        cls,
+        session,
+        biz_ids: list[int],
+        *,
+        actor_mid: int | None = None,
+        rpid_map: dict[int, str] | None = None,
+    ) -> dict[int, InteractionResource]:
+        """批量取资源快照（默认逐条 ``get_resource``；资源类可覆盖为一次 IN 查询 / 批量 RPC）。
+
+        返回 ``biz_id(int) -> InteractionResource``；``rpid_map`` 携带楼层锚点（评论定位）。
+        """
+        out: dict[int, InteractionResource] = {}
+        for bid in biz_ids:
+            biz = cls(session, bid, actor_mid)
+            out[bid] = await biz.get_resource(rpid=(rpid_map or {}).get(bid))
+        return out
 
     async def check_resource(self, resource: InteractionResource) -> None:
         """校验资源是否存在 / 可互动（基类统一实现，子类可覆盖细化）。"""

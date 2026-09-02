@@ -18,7 +18,8 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
-from app.models.enums import CommentStateEnum, InteractionBizTypeEnum, NotifyLevelEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import CommentStateEnum, NotifyLevelEnum
 from app.models.schemas import (
     CommentAuditItem,
     CommentSourceResp,

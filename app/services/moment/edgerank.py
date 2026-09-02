@@ -34,7 +34,7 @@ from sqlmodel import SQLModel
 
 from app.core.config import settings
 from app.models.db import TInteractionStat, TMomentTopic
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 # 零互动时的最小基数分（低于任意「1 个赞」的分值，保证同时刻有互动内容排在前面）
 _ZERO_INTERACTION_BASE = 0.1

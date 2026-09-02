@@ -40,7 +40,8 @@ from app.models.db import (
     TInteractionStat,
     UserFollow,
 )
-from app.models.enums import FollowStatusEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import FollowStatusEnum
 from app.models.pptr_db import PptrUserLevel
 from app.services.comment import VISIBLE_STATES
 from app.services.comment.comment_action import compute_hot_score

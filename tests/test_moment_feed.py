@@ -87,7 +87,7 @@ async def _real_dyns(n: int) -> list[RealDyn]:
 async def _cleanup(dids: list[int]) -> None:
     async with new_session() as s:
         for d in dids:
-            await s.exec(text(f"DELETE FROM TMomentAuditLog WHERE dynId = {d}"))
+            await s.exec(text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {d}"))
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {d}"))
         await s.commit()
 

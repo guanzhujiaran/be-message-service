@@ -1,10 +1,11 @@
 """动态卡片模块 ORM 模型（be-message MySQL 主库 `BiliMessageDB`）。
 
-本文件定义动态卡片功能所需的全部数据表，由 Alembic `alembic/` 分支
-（be-message 主库）统一纳管。
+本文件仅定义动态（Moment）自身的数据表：主表、话题、作者质量。
+通用资源点赞 / 点踩 / 举报 / 审核流水见 `resource_tbl`；Feed 元数据见
+`resource_feed_tbl`。由 Alembic `alembic/` 分支（be-message 主库）统一纳管。
 
 约束（对齐 `app.models.db` 既有规范）：
-- 表名沿用计划书冻结的 `"T"` 前缀 PascalCase（TMoment / TMomentLike …）；
+- 表名沿用计划书冻结的 `"T"` 前缀 PascalCase（TMoment / TMomentTopic …）；
 - 列名（name）使用 camelCase，Python 属性名与数据库列名完全一致；
 - 时间戳统一用 `TimestampMixin`（datetime + default_factory + onupdate）；
 - JSON 正文用 `sa.JSON()`；枚举列直接用 `sqlalchemy.Enum(...)`（如 `sa_type=Enum(SomeEnum)`），落库为 MySQL 原生 ENUM 存成员名；
@@ -18,18 +19,13 @@ from datetime import datetime
 
 from sqlalchemy import BIGINT, JSON, Text, UniqueConstraint, text
 from sqlmodel import Field, ForeignKeyConstraint, Index, PrimaryKeyConstraint
-from bili_common.models.report import ReportBase
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionBizTypeEnum,
-    MomentAuditLogActionEnum,
-    MomentAuditLogOperatorRoleEnum,
     MomentAuditStatusEnum,
     MomentFoldTypeEnum,
-    MomentReportAuditStatusEnum,
-    MomentReportReasonEnum,
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
@@ -103,70 +99,6 @@ class TMoment(TimestampMixin, table=True):
     timerPubTime: datetime | None = Field(default=None, description="定时发布时间（NULL=立即进入审核队列）")
     pubTime: datetime | None = Field(default=None, description="实际对外发布时间（审核通过时写入 now()），Feed 排序依据")
     deletedAt: datetime | None = Field(default=None, description="软删时间（不为 NULL 时所有对外接口视为不存在）")
-
-
-class TMomentLike(TimestampMixin, table=True):
-    """点赞明细表（2.17.0 泛化：支持任意业务资源 bizType+bizId，幂等双写的关键）。
-
-    唯一约束 `(bizType, bizId, mid)` 一人一赞；动态资源（bizType='dynamic'）
-    时 `bizId` 与 `dynId` 冗余相同。`FK(dynId)` 仅在 bizType='dynamic' 时对动态生效，
-    非动态资源（lottery/rpa_*）dynId 为 NULL 不受 FK 约束。
-    """
-
-    __tablename__ = "TMomentLike"
-    __table_args__ = (
-        ForeignKeyConstraint(["dynId"], ["TMoment.dynId"], ondelete="CASCADE", name="TMomentLike_dynId_fkey"),
-        PrimaryKeyConstraint("pk", name="TMomentLike_pkey"),
-        UniqueConstraint("bizType", "bizId", "mid", name="TMomentLike_bizType_bizId_mid_key"),
-        Index("idx_like_mid_time", "mid", text('created_at DESC')),
-        Index("idx_like_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "点赞明细：一人一赞，唯一约束(bizType,bizId,mid)保证幂等双写"},
-    )
-
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
-    bizType: InteractionBizTypeEnum = Field(
-        default=InteractionBizTypeEnum.DYNAMIC,
-        sa_type=SAEnum(InteractionBizTypeEnum),
-        nullable=False,
-        description="资源类型（IntEnum 落库 INT）：1=dynamic,2=lottery,3=rpa_action,4=rpa_workflow,5=rpa_browser",
-    )
-    bizId: int = Field(default=None, nullable=False, sa_type=BIGINT, description="被点赞的资源id（动态时=dynId）")
-    # 注意：dynId 需要普通索引 idx_like_dyn 以支撑 FK TMomentLike_dynId_fkey
-    dynId: int | None = Field(default=None, sa_type=BIGINT, nullable=True, index=True, description="冗余兼容列：bizType=dynamic 时与 bizId 相同，非动态为 NULL")
-    # mid 仅存 BIGINT，不建跨库 FK
-    mid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="点赞者 UID")
-    likeType: int = Field(default=1, description="点赞类型：1=普通点赞（预留扩展）")
-
-
-class TMomentDislike(TimestampMixin, table=True):
-    """点踩明细表（2.35.0）：幂等，uq(bizType,bizId,mid)。
-
-    与点赞对称：一人一踩，唯一约束保证幂等双写；`dislikeCount` 在
-    `TInteractionStat`（2.36.0 起统一）同事务原子 ±1，EdgeRank 以
-    `dislike_ratio` 降权。
-    """
-
-    __tablename__ = "TMomentDislike"
-    __table_args__ = (
-        ForeignKeyConstraint(["dynId"], ["TMoment.dynId"], ondelete="CASCADE", name="TMomentDislike_dynId_fkey"),
-        PrimaryKeyConstraint("pk", name="TMomentDislike_pkey"),
-        UniqueConstraint("bizType", "bizId", "mid", name="TMomentDislike_bizType_bizId_mid_key"),
-        Index("idx_dislike_biz", "bizType", "bizId"),
-        Index("idx_dislike_mid_time", "mid", text('created_at DESC')),
-        {"extend_existing": True, "comment": "点踩明细：一人一踩，唯一约束(bizType,bizId,mid)保证幂等双写"},
-    )
-
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
-    bizType: InteractionBizTypeEnum = Field(
-        default=InteractionBizTypeEnum.DYNAMIC,
-        sa_type=SAEnum(InteractionBizTypeEnum),
-        nullable=False,
-        description="资源类型（IntEnum 落库 INT）",
-    )
-    bizId: int = Field(default=None, nullable=False, sa_type=BIGINT, description="被点踩的资源id（动态时=dynId）")
-    dynId: int | None = Field(default=None, sa_type=BIGINT, nullable=True, index=True, description="冗余兼容列：bizType=dynamic 时与 bizId 相同，非动态为 NULL")
-    # mid 仅存 BIGINT，不建跨库 FK
-    mid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="点踩者 UID")
 
 
 class MomentAuthorQuality(TimestampMixin, table=True):
@@ -249,68 +181,9 @@ class TMomentTopicRel(TimestampMixin, table=True):
     topicId: int = Field(default=None, nullable=False, sa_type=BIGINT, description="话题 ID（仅存 ID，名称只读 TMomentTopic）")
 
 
-class TResourceReport(ReportBase, table=True):
-    """通用资源举报表（2.37.0 改名自 TMomentReport；继承 bili-common `ReportBase` 同构结构）。
-
-    任意资源（dynamic/lottery/rpa_*/comment/user）可举报：``bizType`` 即业务资源类型
-    （InteractionBizTypeEnum 值），``bizId`` 为资源 id（dynamic→dynId，comment→rpid，
-    lottery/rpa_*→各自资源 id；bizType+bizId 唯一确定被举报资源）。
-    **不再指向 TMoment 的 FK**（lottery/rpa_* 的 bizId 不在 TMoment 表）。
-
-    幂等：`ReportBaseService.record_report` 按 (reportMid, bizType, bizId) 去重；
-    业务唯一约束 `TResourceReport_reportMid_bizType_bizId_key` 兜底。
-    """
-
-    __tablename__ = "TResourceReport"
-    __table_args__ = (
-        UniqueConstraint(
-            "reportMid", "bizType", "bizId",
-            name="TResourceReport_reportMid_bizType_bizId_key",
-        ),
-        Index("idx_tresource_report_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "通用资源举报表：任意资源(bizType+bizId)可举报（继承 ReportBase）"},
-    )
-
-
-class TMomentAuditLog(TimestampMixin, table=True):
-    """动态审核记录表（记录每一次审核流转用于审计 / 后台流水）。"""
-
-    __tablename__ = "TMomentAuditLog"
-    __table_args__ = (
-        ForeignKeyConstraint(["dynId"], ["TMoment.dynId"], ondelete="CASCADE", name="TMomentAuditLog_dynId_fkey"),
-        PrimaryKeyConstraint("pk", name="TMomentAuditLog_pkey"),
-        Index("idx_audit_log_dynid_created", "dynId", text('created_at DESC')),
-        Index("idx_audit_log_admin_created", "operatorMid", text('created_at DESC')),
-        Index("idx_audit_log_action_created", "actionType", text('created_at DESC')),
-        {"extend_existing": True, "comment": "动态审核记录：发布/编辑/通过/驳回等流转流水"},
-    )
-
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
-    dynId: int = Field(default=None, nullable=False, sa_type=BIGINT, description="被审核的动态")
-    operatorMid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="操作人 MID（作者=发布/编辑；管理员=通过/驳回）")
-    operatorRole: MomentAuditLogOperatorRoleEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(MomentAuditLogOperatorRoleEnum), description="author / admin"
-    )
-    fromStatus: MomentAuditStatusEnum | None = Field(
-        default=None, sa_type=SAEnum(MomentAuditStatusEnum), description="流转前 auditStatus"
-    )
-    toStatus: MomentAuditStatusEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(MomentAuditStatusEnum), description="流转后 auditStatus"
-    )
-    actionType: MomentAuditLogActionEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(MomentAuditLogActionEnum), description="create/edit/approve/reject/resubmit/delete"
-    )
-    rejectReason: str | None = Field(default=None, max_length=500, description="驳回原因（仅 actionType=reject 有值）")
-    remark: str | None = Field(default=None, max_length=500, description="其他备注")
-    clientIp: str | None = Field(default=None, max_length=64, description="操作者 IP")
-    userAgent: str | None = Field(default=None, max_length=512, description="操作者 UA")
-
-
 __all__ = [
     "TMoment",
-    "TMomentAuditLog",
-    "TMomentLike",
-    "TResourceReport",
+    "MomentAuthorQuality",
     "TMomentTopic",
     "TMomentTopicRel",
 ]

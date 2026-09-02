@@ -7,7 +7,7 @@
 from pydantic import Field
 from sqlmodel import SQLModel
 
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 
 from app.models.schemas.base import AutoStrMixin
@@ -47,33 +47,30 @@ class FavoriteFolderResp(SQLModel, AutoStrMixin):
 
 
 class FavoriteAddReq(SQLModel, AutoStrMixin):
-    """收藏资源到收藏夹（2.17.0 泛化支持多业务资源）。
+    """收藏资源到收藏夹（2.55.0 全面通用化）。
 
-    `bizType` 默认 `dynamic`，此时 `bizId` 等价 `dynId`（二者任传其一）；
-    `bizType≠dynamic` 时 `bizId` 必填、`dynId` 忽略。
+    `bizType` 默认 `dynamic`，此时 `bizId` = `dynId`（**单一字段，无 `dynId` 兼容字段**）；
+    `bizType≠dynamic` 时 `bizId` 必填。
     """
 
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
-    bizId: str | None = Field(default=None, description="资源id（字符串；动态时=动态id）")
-    dynId: str | None = Field(default=None, description="[兼容]动态id（字符串，雪花ID；等价 bizId=bizType=dynamic）")
+    bizId: str = Field(description="资源id（字符串；动态时=动态id，雪花ID）")
     folderId: str | None = Field(default=None, description="收藏夹id（字符串，雪花ID；缺省/空则收藏到默认收藏夹）")
 
 
 class FavoriteRemoveReq(SQLModel, AutoStrMixin):
-    """从收藏夹取消收藏（2.17.0 泛化）。"""
+    """从收藏夹取消收藏（2.55.0 全面通用化）。"""
 
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
-    bizId: str | None = Field(default=None, description="资源id（字符串）")
-    dynId: str | None = Field(default=None, description="[兼容]动态id（字符串，雪花ID）")
+    bizId: str = Field(description="资源id（字符串；动态时=动态id）")
     folderId: str = Field(description="收藏夹id（字符串，雪花ID）")
 
 
 class FavoriteAddResp(SQLModel, AutoStrMixin):
-    """收藏响应（2.17.0 泛化）。"""
+    """收藏响应（2.55.0 全面通用化）。"""
 
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源id（字符串）")
-    dynId: str | None = Field(default=None, description="[兼容]动态id（动态资源时返回）")
     folderId: str = Field(description="收藏夹id（字符串）")
     favorited: bool = Field(default=True, description="本次是否新增收藏（False=已在同夹收藏过）")
     favoriteCount: int = Field(default=0, description="该资源最新收藏数（用户去重）")
@@ -96,11 +93,13 @@ class FavoriteListItem(SQLModel, AutoStrMixin):
 
 
 class FavoriteListResp(SQLModel, AutoStrMixin):
-    """某收藏夹下资源列表（2.17.0 泛化：bizType+bizId 对）。"""
+    """某收藏夹下资源列表（2.55.0 全面通用化：bizType+bizId 对）。
+
+    不再提供 `dynIds` 兼容字段——前端按 `items` 自行过滤 `bizType=dynamic` 项。
+    """
 
     folderId: str = Field(description="收藏夹id（字符串）")
     total: int = Field(default=0, description="该夹收藏总数")
-    dynIds: list[str] = Field(default_factory=list, description="[兼容]当前页动态id列表（仅 bizType=dynamic 时有值）")
     items: list[FavoriteListItem] = Field(default_factory=list, description="当前页资源明细（bizType+bizId 对）")
 
 
@@ -113,11 +112,10 @@ class FavoriteItemListResp(SQLModel, AutoStrMixin):
 
 
 class FavoriteDynFoldersResp(SQLModel, AutoStrMixin):
-    """某资源被当前用户收藏在哪些收藏夹（2.17.0 泛化）。"""
+    """某资源被当前用户收藏在哪些收藏夹（2.55.0 全面通用化）。"""
 
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源id（字符串）")
-    dynId: str | None = Field(default=None, description="[兼容]动态id（动态资源时返回）")
     folderIds: list[str] = Field(default_factory=list, description="已收藏该资源的收藏夹id列表")
 
 

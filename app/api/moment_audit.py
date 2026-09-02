@@ -16,7 +16,8 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import RootUser
 from app.models import StandardResponse
-from app.models.enums import InteractionBizTypeEnum, MomentAuditStatusEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import MomentAuditStatusEnum
 from app.models.str_int import StrInt
 from app.models.schemas.moment import (
     MomentAuditActionReq,

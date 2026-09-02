@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: bf5aedb7d485
+Revision ID: f2712dc213c3
 Revises: 
-Create Date: 2026-09-02 11:44:14.555853
+Create Date: 2026-09-02 15:15:29.611520
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'bf5aedb7d485'
+revision: str = 'f2712dc213c3'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -126,27 +126,6 @@ def upgrade() -> None:
     op.create_index('idx_dynamic_repost_src', 'TMoment', ['repostSrcDynId', 'auditStatus'], unique=False)
     op.create_index('idx_dynamic_topic_pubtime', 'TMoment', ['topicId', sa.literal_column('pubTime DESC')], unique=False)
     op.create_index(op.f('ix_TMoment_created_at'), 'TMoment', ['created_at'], unique=False)
-    op.create_table('TMomentFavorite',
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
-    sa.Column('bizId', sa.BIGINT(), nullable=False),
-    sa.Column('dynId', sa.BIGINT(), nullable=True),
-    sa.Column('folderId', sa.BIGINT(), nullable=False),
-    sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('note', sqlmodel.sql.sqltypes.AutoString(length=200), nullable=True),
-    sa.PrimaryKeyConstraint('pk', name='TMomentFavorite_pkey'),
-    sa.UniqueConstraint('bizType', 'bizId', 'folderId', name='TMomentFavorite_bizType_bizId_folderId_key'),
-    comment='收藏明细：唯一约束(bizType,bizId,folderId)防重复收藏'
-    )
-    op.create_index('idx_fav_biz', 'TMomentFavorite', ['bizType', 'bizId'], unique=False)
-    op.create_index('idx_fav_folder_created', 'TMomentFavorite', ['folderId', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index('idx_fav_mid_created', 'TMomentFavorite', ['mid', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index(op.f('ix_TMomentFavorite_created_at'), 'TMomentFavorite', ['created_at'], unique=False)
-    op.create_index(op.f('ix_TMomentFavorite_dynId'), 'TMomentFavorite', ['dynId'], unique=False)
-    op.create_index(op.f('ix_TMomentFavorite_folderId'), 'TMomentFavorite', ['folderId'], unique=False)
-    op.create_index(op.f('ix_TMomentFavorite_mid'), 'TMomentFavorite', ['mid'], unique=False)
     op.create_table('TMomentTopic',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -170,6 +149,60 @@ def upgrade() -> None:
     op.create_index('idx_topic_audit_created', 'TMomentTopic', ['auditStatus', sa.literal_column('created_at DESC')], unique=False)
     op.create_index('idx_topic_creator_created', 'TMomentTopic', ['creatorMid', sa.literal_column('created_at DESC')], unique=False)
     op.create_index(op.f('ix_TMomentTopic_created_at'), 'TMomentTopic', ['created_at'], unique=False)
+    op.create_table('TResourceAuditLog',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.Column('operatorRole', sa.Enum('AUTHOR', 'ADMIN', name='momentauditlogoperatorroleenum'), nullable=False),
+    sa.Column('fromStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=True),
+    sa.Column('toStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=False),
+    sa.Column('actionType', sa.Enum('CREATE', 'EDIT', 'APPROVE', 'REJECT', 'RESUBMIT', 'DELETE', name='momentauditlogactionenum'), nullable=False),
+    sa.Column('rejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('remark', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('clientIp', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
+    sa.Column('userAgent', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
+    sa.PrimaryKeyConstraint('pk', name='TResourceAuditLog_pkey'),
+    comment='通用资源审核流水：bizType+bizId 定位任意资源，继承 ResourceBase'
+    )
+    op.create_index('idx_audit_log_action_created', 'TResourceAuditLog', ['actionType', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index('idx_audit_log_biz_created', 'TResourceAuditLog', ['bizType', 'bizId', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index('idx_audit_log_mid_created', 'TResourceAuditLog', ['mid', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index(op.f('ix_TResourceAuditLog_created_at'), 'TResourceAuditLog', ['created_at'], unique=False)
+    op.create_table('TResourceDislike',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.PrimaryKeyConstraint('pk', name='TResourceDislike_pkey'),
+    sa.UniqueConstraint('bizType', 'bizId', 'mid', name='TResourceDislike_bizType_bizId_mid_key'),
+    comment='通用资源点踩明细：一人一踩，继承 ResourceBase，唯一约束(bizType,bizId,mid)保证幂等双写；原 TMomentDislike'
+    )
+    op.create_index('idx_resource_dislike_biz', 'TResourceDislike', ['bizType', 'bizId'], unique=False)
+    op.create_index('idx_resource_dislike_mid_time', 'TResourceDislike', ['mid', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index(op.f('ix_TResourceDislike_created_at'), 'TResourceDislike', ['created_at'], unique=False)
+    op.create_table('TResourceFavorite',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.Column('folderId', sa.BIGINT(), nullable=False),
+    sa.Column('note', sqlmodel.sql.sqltypes.AutoString(length=200), nullable=True),
+    sa.PrimaryKeyConstraint('pk', name='TResourceFavorite_pkey'),
+    sa.UniqueConstraint('bizType', 'bizId', 'folderId', name='TResourceFavorite_bizType_bizId_folderId_key'),
+    comment='通用资源收藏明细：同夹内唯一约束(bizType,bizId,folderId)防重复收藏；继承 ResourceBase；原 TMomentFavorite'
+    )
+    op.create_index('idx_resource_favorite_biz', 'TResourceFavorite', ['bizType', 'bizId'], unique=False)
+    op.create_index('idx_resource_favorite_folder_created', 'TResourceFavorite', ['folderId', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index('idx_resource_favorite_mid_created', 'TResourceFavorite', ['mid', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index(op.f('ix_TResourceFavorite_created_at'), 'TResourceFavorite', ['created_at'], unique=False)
+    op.create_index(op.f('ix_TResourceFavorite_folderId'), 'TResourceFavorite', ['folderId'], unique=False)
     op.create_table('TResourceFeed',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -187,6 +220,21 @@ def upgrade() -> None:
     op.create_index('idx_resfeed_mid_pubtime', 'TResourceFeed', ['mid', sa.literal_column('pubTime DESC')], unique=False)
     op.create_index('idx_resfeed_status_pubtime', 'TResourceFeed', ['auditStatus', sa.literal_column('pubTime DESC')], unique=False)
     op.create_index(op.f('ix_TResourceFeed_created_at'), 'TResourceFeed', ['created_at'], unique=False)
+    op.create_table('TResourceLike',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.Column('likeType', sa.Integer(), nullable=False),
+    sa.PrimaryKeyConstraint('pk', name='TResourceLike_pkey'),
+    sa.UniqueConstraint('bizType', 'bizId', 'mid', name='TResourceLike_bizType_bizId_mid_key'),
+    comment='通用资源点赞明细：一人一赞，继承 ResourceBase，唯一约束(bizType,bizId,mid)保证幂等双写；原 TMomentLike'
+    )
+    op.create_index('idx_resource_like_biz', 'TResourceLike', ['bizType', 'bizId'], unique=False)
+    op.create_index('idx_resource_like_mid_time', 'TResourceLike', ['mid', sa.literal_column('created_at DESC')], unique=False)
+    op.create_index(op.f('ix_TResourceLike_created_at'), 'TResourceLike', ['created_at'], unique=False)
     op.create_table('TResourceReport',
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('bizType', sa.Integer(), nullable=False),
@@ -644,63 +692,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_msg_user_setting_created_at'), 'msg_user_setting', ['created_at'], unique=False)
     op.create_index(op.f('ix_msg_user_setting_mid'), 'msg_user_setting', ['mid'], unique=False)
-    op.create_table('TMomentAuditLog',
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('dynId', sa.BIGINT(), nullable=False),
-    sa.Column('operatorMid', sa.BIGINT(), nullable=False),
-    sa.Column('operatorRole', sa.Enum('AUTHOR', 'ADMIN', name='momentauditlogoperatorroleenum'), nullable=False),
-    sa.Column('fromStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=True),
-    sa.Column('toStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=False),
-    sa.Column('actionType', sa.Enum('CREATE', 'EDIT', 'APPROVE', 'REJECT', 'RESUBMIT', 'DELETE', name='momentauditlogactionenum'), nullable=False),
-    sa.Column('rejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
-    sa.Column('remark', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
-    sa.Column('clientIp', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
-    sa.Column('userAgent', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
-    sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentAuditLog_dynId_fkey', ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('pk', name='TMomentAuditLog_pkey'),
-    comment='动态审核记录：发布/编辑/通过/驳回等流转流水'
-    )
-    op.create_index('idx_audit_log_action_created', 'TMomentAuditLog', ['actionType', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index('idx_audit_log_admin_created', 'TMomentAuditLog', ['operatorMid', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index('idx_audit_log_dynid_created', 'TMomentAuditLog', ['dynId', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index(op.f('ix_TMomentAuditLog_created_at'), 'TMomentAuditLog', ['created_at'], unique=False)
-    op.create_table('TMomentDislike',
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
-    sa.Column('bizId', sa.BIGINT(), nullable=False),
-    sa.Column('dynId', sa.BIGINT(), nullable=True),
-    sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentDislike_dynId_fkey', ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('pk', name='TMomentDislike_pkey'),
-    sa.UniqueConstraint('bizType', 'bizId', 'mid', name='TMomentDislike_bizType_bizId_mid_key'),
-    comment='点踩明细：一人一踩，唯一约束(bizType,bizId,mid)保证幂等双写'
-    )
-    op.create_index('idx_dislike_biz', 'TMomentDislike', ['bizType', 'bizId'], unique=False)
-    op.create_index('idx_dislike_mid_time', 'TMomentDislike', ['mid', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index(op.f('ix_TMomentDislike_created_at'), 'TMomentDislike', ['created_at'], unique=False)
-    op.create_index(op.f('ix_TMomentDislike_dynId'), 'TMomentDislike', ['dynId'], unique=False)
-    op.create_table('TMomentLike',
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
-    sa.Column('bizId', sa.BIGINT(), nullable=False),
-    sa.Column('dynId', sa.BIGINT(), nullable=True),
-    sa.Column('mid', sa.BIGINT(), nullable=False),
-    sa.Column('likeType', sa.Integer(), nullable=False),
-    sa.ForeignKeyConstraint(['dynId'], ['TMoment.dynId'], name='TMomentLike_dynId_fkey', ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('pk', name='TMomentLike_pkey'),
-    sa.UniqueConstraint('bizType', 'bizId', 'mid', name='TMomentLike_bizType_bizId_mid_key'),
-    comment='点赞明细：一人一赞，唯一约束(bizType,bizId,mid)保证幂等双写'
-    )
-    op.create_index('idx_like_biz', 'TMomentLike', ['bizType', 'bizId'], unique=False)
-    op.create_index('idx_like_mid_time', 'TMomentLike', ['mid', sa.literal_column('created_at DESC')], unique=False)
-    op.create_index(op.f('ix_TMomentLike_created_at'), 'TMomentLike', ['created_at'], unique=False)
-    op.create_index(op.f('ix_TMomentLike_dynId'), 'TMomentLike', ['dynId'], unique=False)
     op.create_table('TMomentTopicRel',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -723,21 +714,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_TMomentTopicRel_created_at'), table_name='TMomentTopicRel')
     op.drop_index('idx_topic_rel_topic', table_name='TMomentTopicRel')
     op.drop_table('TMomentTopicRel')
-    op.drop_index(op.f('ix_TMomentLike_dynId'), table_name='TMomentLike')
-    op.drop_index(op.f('ix_TMomentLike_created_at'), table_name='TMomentLike')
-    op.drop_index('idx_like_mid_time', table_name='TMomentLike')
-    op.drop_index('idx_like_biz', table_name='TMomentLike')
-    op.drop_table('TMomentLike')
-    op.drop_index(op.f('ix_TMomentDislike_dynId'), table_name='TMomentDislike')
-    op.drop_index(op.f('ix_TMomentDislike_created_at'), table_name='TMomentDislike')
-    op.drop_index('idx_dislike_mid_time', table_name='TMomentDislike')
-    op.drop_index('idx_dislike_biz', table_name='TMomentDislike')
-    op.drop_table('TMomentDislike')
-    op.drop_index(op.f('ix_TMomentAuditLog_created_at'), table_name='TMomentAuditLog')
-    op.drop_index('idx_audit_log_dynid_created', table_name='TMomentAuditLog')
-    op.drop_index('idx_audit_log_admin_created', table_name='TMomentAuditLog')
-    op.drop_index('idx_audit_log_action_created', table_name='TMomentAuditLog')
-    op.drop_table('TMomentAuditLog')
     op.drop_index(op.f('ix_msg_user_setting_mid'), table_name='msg_user_setting')
     op.drop_index(op.f('ix_msg_user_setting_created_at'), table_name='msg_user_setting')
     op.drop_table('msg_user_setting')
@@ -864,22 +840,33 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_TResourceReport_bizId'), table_name='TResourceReport')
     op.drop_index('idx_tresource_report_biz', table_name='TResourceReport')
     op.drop_table('TResourceReport')
+    op.drop_index(op.f('ix_TResourceLike_created_at'), table_name='TResourceLike')
+    op.drop_index('idx_resource_like_mid_time', table_name='TResourceLike')
+    op.drop_index('idx_resource_like_biz', table_name='TResourceLike')
+    op.drop_table('TResourceLike')
     op.drop_index(op.f('ix_TResourceFeed_created_at'), table_name='TResourceFeed')
     op.drop_index('idx_resfeed_status_pubtime', table_name='TResourceFeed')
     op.drop_index('idx_resfeed_mid_pubtime', table_name='TResourceFeed')
     op.drop_table('TResourceFeed')
+    op.drop_index(op.f('ix_TResourceFavorite_folderId'), table_name='TResourceFavorite')
+    op.drop_index(op.f('ix_TResourceFavorite_created_at'), table_name='TResourceFavorite')
+    op.drop_index('idx_resource_favorite_mid_created', table_name='TResourceFavorite')
+    op.drop_index('idx_resource_favorite_folder_created', table_name='TResourceFavorite')
+    op.drop_index('idx_resource_favorite_biz', table_name='TResourceFavorite')
+    op.drop_table('TResourceFavorite')
+    op.drop_index(op.f('ix_TResourceDislike_created_at'), table_name='TResourceDislike')
+    op.drop_index('idx_resource_dislike_mid_time', table_name='TResourceDislike')
+    op.drop_index('idx_resource_dislike_biz', table_name='TResourceDislike')
+    op.drop_table('TResourceDislike')
+    op.drop_index(op.f('ix_TResourceAuditLog_created_at'), table_name='TResourceAuditLog')
+    op.drop_index('idx_audit_log_mid_created', table_name='TResourceAuditLog')
+    op.drop_index('idx_audit_log_biz_created', table_name='TResourceAuditLog')
+    op.drop_index('idx_audit_log_action_created', table_name='TResourceAuditLog')
+    op.drop_table('TResourceAuditLog')
     op.drop_index(op.f('ix_TMomentTopic_created_at'), table_name='TMomentTopic')
     op.drop_index('idx_topic_creator_created', table_name='TMomentTopic')
     op.drop_index('idx_topic_audit_created', table_name='TMomentTopic')
     op.drop_table('TMomentTopic')
-    op.drop_index(op.f('ix_TMomentFavorite_mid'), table_name='TMomentFavorite')
-    op.drop_index(op.f('ix_TMomentFavorite_folderId'), table_name='TMomentFavorite')
-    op.drop_index(op.f('ix_TMomentFavorite_dynId'), table_name='TMomentFavorite')
-    op.drop_index(op.f('ix_TMomentFavorite_created_at'), table_name='TMomentFavorite')
-    op.drop_index('idx_fav_mid_created', table_name='TMomentFavorite')
-    op.drop_index('idx_fav_folder_created', table_name='TMomentFavorite')
-    op.drop_index('idx_fav_biz', table_name='TMomentFavorite')
-    op.drop_table('TMomentFavorite')
     op.drop_index(op.f('ix_TMoment_created_at'), table_name='TMoment')
     op.drop_index('idx_dynamic_topic_pubtime', table_name='TMoment')
     op.drop_index('idx_dynamic_repost_src', table_name='TMoment')

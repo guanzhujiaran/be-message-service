@@ -29,12 +29,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import ClassVar
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 from sqlalchemy import case, func, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.biz_type import source_type_to_biz_type
 from app.models.db import (
     CommentContent,
     CommentIndex,
@@ -42,13 +44,7 @@ from app.models.db import (
     EventReadCursor,
     UserFollow,
 )
-from app.models.biz_type import source_type_to_biz_type
-from app.models.enums import (
-    FollowStatusEnum,
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
-)
-from bili_common.models.interaction import InteractionBizTypeEnum
+from app.models.enums import CommentStateEnum, FollowStatusEnum
 from app.models.schemas import (
     EventAggregateItem,
     EventItem,
@@ -63,9 +59,9 @@ from app.models.schemas import (
     EventReportResp,
     EventUserBrief,
 )
-from app.services.user.follow import FollowService
-from app.services.user.account import PptrUser
 from app.services.message.insite.setting import SettingService
+from app.services.user.account import PptrUser
+from app.services.user.follow import FollowService
 
 from .constants import (
     _ACTOR_SCAN_LIMIT,
@@ -73,7 +69,97 @@ from .constants import (
     _MAX_USERS_PER_ITEM,
 )
 from .registry import EVENT_REGISTRY
-from .source_meta import _resolve_source_meta
+
+# ==================== 事件资源快照批量回捞（计划书 §5.11 / C20）====================
+
+
+async def _load_event_resource_snapshots(
+    session, metas
+) -> "dict[tuple[int, str], InteractionResource]":
+    """按 ``(resource_type, resource_id, rpid)`` 批量回捞资源快照，每类资源一次调用。
+
+    metas: 可迭代的 ``(resource_type:int, resource_id:str, rpid:str|None)``。
+    返回 ``{(resource_type, resource_id): InteractionResource}``；未实现资源类 / 未知类型
+    返回 ``exists=False`` 的空占位（前端展示「资源已删除 / 不存在」且跳过跳转）。
+    """
+    from app.models.schemas.interaction import InteractionResource
+    from app.services.interaction_actions.base_biz import get_biz_class
+
+    by_type: dict[int, list[str]] = {}
+    for rt, rid, _ in metas:
+        if rid:
+            by_type.setdefault(rt, []).append(rid)
+    out: dict[tuple[int, str], InteractionResource] = {}
+    for rt, ids in by_type.items():
+        rpid_map = {
+            int(i): rpid
+            for (t, i, rpid) in metas
+            if t == rt and str(i).isdigit() and rpid
+        }
+        try:
+            biz_cls = get_biz_class(rt)
+        except ValueError:
+            biz_cls = None
+        snaps: dict[int, InteractionResource] = {}
+        if biz_cls is not None:
+            snaps = await biz_cls.batch_get_resources(
+                session, [int(i) for i in ids if str(i).isdigit()], rpid_map=rpid_map
+            )
+        for i in ids:
+            out[(rt, i)] = snaps.get(int(i)) or InteractionResource(
+                bizType=InteractionBizTypeEnum.DYNAMIC,
+                bizId=int(i) if str(i).isdigit() else 0,
+                exists=False,
+            )
+    return out
+
+
+async def _resolve_event_identities(
+    session, rows, comment_index: "dict[int, CommentIndex] | None" = None
+) -> "dict[int, tuple[int, str, str]]":
+    """把一批 ``EventMessage`` 解析为跳转身份 ``(resource_type, resource_id, rpid)``。
+
+    评论锚定事件按 ``biz_id=rpid`` 经 ``CommentIndex`` 取顶层 ``resource_type``
+    （DYNAMIC/LOTTERY）+ ``resource_id``（oid），``rpid`` 作楼层锚点；其余事件
+    ``resource_type`` = ``source_type`` 对应 bizType，``resource_id`` = ``biz_id``。
+    """
+    from app.models.db import CommentIndex
+
+    out: dict[int, tuple[int, str, str]] = {}
+    need: set[int] = set()
+    for r in rows:
+        if (
+            is_comment_anchored(r.event_type, r.source_type)
+            and r.biz_id
+            and str(r.biz_id).isdigit()
+        ):
+            if comment_index is None or int(r.biz_id) not in comment_index:
+                need.add(int(r.biz_id))
+    extra: dict[int, CommentIndex] = {}
+    if need:
+        res = await session.exec(
+            select(CommentIndex).where(CommentIndex.rpid.in_(need))
+        )
+        extra = {row.rpid: row for row in res}
+    cidx: dict[int, CommentIndex] = {**(comment_index or {}), **extra}
+    for r in rows:
+        biz = source_type_to_biz_type(r.source_type)
+        rt = biz.value if biz else 0
+        rid = r.biz_id or (r.source_id or "")
+        rpid = ""
+        if (
+            is_comment_anchored(r.event_type, r.source_type)
+            and r.biz_id
+            and str(r.biz_id).isdigit()
+        ):
+            idx = cidx.get(int(r.biz_id))
+            if idx is not None:
+                own = idx.type
+                rt = own.value if isinstance(own, InteractionBizTypeEnum) else int(own)
+                rid = str(idx.oid)
+                rpid = r.biz_id
+        out[r.id] = (rt, rid, rpid)
+    return out
 
 
 # ==================== msgfeed 构建上下文 ====================
@@ -105,6 +191,45 @@ class MsgfeedBuildContext:
             fans=int(getattr(info, "follower_count", 0) or 0) if info else 0,
             follow=actor_mid in self.follow_targets,
         )
+
+
+@dataclass
+class CommentLocate:
+    """事件在资源上的定位结果（回复 / @ / 点赞 / 系统处置统一复用）。
+
+    - ``resource_type + resource_id``：定位**跳转目标**。评论场景为「评论所属顶层
+      资源」的 类型 + oid，与前端 ``openEventDetail`` 的跳转判定同源；
+    - ``root_id / source_id / target_id``：定位**评论楼层**（根评论 / 触发评论 /
+      被回复评论的 rpid），前端据此深链定位到具体楼层；
+    - ``source_content / target_content``：对应楼层的评论正文（读取时实时回捞）；
+    - ``comment_deleted``：触发评论已不可见（删 / 未过审 / 驳回 / 下架），
+      正文不回捞，前端展示「该评论已被删除」占位。
+    """
+
+    resource_type: int
+    resource_id: str = ""
+    root_id: str = ""
+    source_id: str = ""
+    target_id: str = ""
+    source_content: str = ""
+    target_content: str = ""
+    comment_deleted: bool = False
+
+
+def is_comment_anchored(
+    event_type: InteractionActionTypeEnum,
+    source_type: InteractionBizTypeEnum | int | None,
+) -> bool:
+    """该事件是否「评论锚定」：``biz_id`` 是评论 rpid，需按 ``CommentIndex`` 回捞楼层关系。
+
+    - ``REPLY``：``biz_id`` **恒为评论 rpid**（不随 source_type 变成 oid）；
+    - 其余类型（@ / 点赞 / 审核 / 举报处置）：仅当 ``source_type`` 为 COMMENT 时
+      biz_id 才是 rpid；对动态 / 抽奖本身发起时 biz_id 是资源 oid，
+      不能当 rpid 查 CommentIndex。
+    """
+    if event_type is InteractionActionTypeEnum.REPLY:
+        return True
+    return source_type_to_biz_type(source_type) is InteractionBizTypeEnum.COMMENT
 
 
 def _replace_at_mentions(message: str, at_nickname_map: dict[int, str]) -> str:
@@ -178,9 +303,10 @@ class BaseEvent(ABC):
     - 写路径 ``report``、跨类型读路径（``aggregate`` / ``list_detail`` /
       ``list_msgfeed`` / ``mark_read`` / ``delete`` / ``count_unread`` /
       ``count_unread_by_type``）是**与类型无关**的公共逻辑，由本基类直接提供；
-    - 只有「该类型在 msgfeed 聚合条目里长什么样」因类型而异，抽成抽象方法
-      ``build_msgfeed_content``，由子类实现（如 ``ReplyEvent`` 需要实时回捞
-      评论层级关系 / 正文，其余类型走通用实现）。
+    - 内容体构建同样**只有一份**：``_generic_content`` 按 :func:`is_comment_anchored`
+      判断事件是否锚定在评论上，锚定的走 :meth:`_locate_comment` 回捞楼层关系 /
+      正文（回复 / 评论 @ / 评论点赞 / 评论处置），否则走 :meth:`_plain_locate`
+      只给资源 id；各类型处理器只需声明 ``event_type`` 与投递语义。
     """
 
     # 子类必须覆盖：该处理器对应的事件类型（DB 落地值，见 bili-common 的枚举）
@@ -214,7 +340,7 @@ class BaseEvent(ABC):
     # ==================== 工厂 ====================
 
     @classmethod
-    def from_req(cls, req: EventReportReq) -> "BaseEvent":
+    def from_req(cls, req: EventReportReq) -> BaseEvent:
         """从上报请求构造对应类型的事件处理器对象（最常用的入口）。"""
         handler_cls = _resolve_handler_cls(req.event_type)
         return handler_cls(
@@ -229,7 +355,7 @@ class BaseEvent(ABC):
     @classmethod
     def _for_type(
         cls, event_type: InteractionActionTypeEnum, source_type: InteractionBizTypeEnum
-    ) -> "BaseEvent":
+    ) -> BaseEvent:
         """读路径：按分组里的 event_type 取出对应处理器实例（mid 占位，仅用于构建内容）。
 
         ``source_type`` 取自分组的真实来源类型（不再用占位默认值），供内容构建正确回捞资源。
@@ -314,20 +440,22 @@ class BaseEvent(ABC):
     @abstractmethod
     async def build_msgfeed_content(
         self,
-        ctx: "MsgfeedBuildContext",
+        ctx: MsgfeedBuildContext,
         latest: EventMessage,
         rows: list[EventMessage],
     ) -> EventMsgfeedContent:
         """构建该类型在 msgfeed 聚合条目中的内容实体（``item`` 字段）。
 
         ``latest`` 为组内最新一条事件，``rows`` 为该组去重后的全部触发明细
-        （用于需要组内上下文的类型，如回复需要回捞被回复评论正文）。
+        （用于构建触发者头像列表等组内上下文）。
+
+        内容体本身由 ``_generic_content`` 统一构建，子类默认无需重写。
         """
 
     # ==================== 公共辅助（供子类 / 读路径复用）====================
 
     def _build_users(
-        self, ctx: "MsgfeedBuildContext", rows: list[EventMessage]
+        self, ctx: MsgfeedBuildContext, rows: list[EventMessage]
     ) -> list[EventUserBrief]:
         """按触发时间倒序去重后的触发者头像列表（所有类型通用）。"""
         users: list[EventUserBrief] = []
@@ -341,36 +469,121 @@ class BaseEvent(ABC):
                 break
         return users
 
-    async def _generic_content(
-        self, ctx: "MsgfeedBuildContext", latest: EventMessage
-    ) -> EventMsgfeedContent:
-        """「非评论」类事件的通用 msgfeed 内容体（点赞 / @ / 审核 / 举报等）。"""
+    def _plain_locate(self, latest: EventMessage) -> CommentLocate:
+        """非评论锚定事件的定位：``biz_id`` 即资源 id，无楼层关系。
+
+        典型：对动态 / 抽奖本身点赞或 @（``source_type`` 为 DYNAMIC / LOTTERY）。
+        """
+        biz_type = source_type_to_biz_type(latest.source_type)
+        if biz_type is None:
+            raise ValueError(
+                f"事件来源类型 {latest.source_type} 无对应的业务资源类型，无法构建 msgfeed"
+            )
+        biz_id = latest.biz_id or ""
+        return CommentLocate(
+            resource_type=biz_type.value,
+            resource_id=biz_id if biz_id.isdigit() else "",
+        )
+
+    def _locate_comment(
+        self, ctx: MsgfeedBuildContext, latest: EventMessage
+    ) -> CommentLocate:
+        """回捞「评论锚定」事件的楼层关系与正文（读取时实时回捞，不冗余存储）。
+
+        三种结果：
+
+        1. 命中 ``CommentIndex`` 且状态正常 → 展开三层楼层关系与正文；
+        2. 命中但状态非正常（删 / 未过审 / 驳回 / 下架 / 待审）→ 只给 ``resource_id``，
+           正文不回捞并标记 ``comment_deleted``；
+        3. 未命中（评论被物理删除 / 历史行 biz_id 写成 oid）→ 同样标记删除态，
+           ``resource_id`` 回落 biz_id。
+
+        ``resource_type`` 表达「该事件跳过去的实际原资源类型」（与 ``resource_id``
+        配对），与 ``business``（source_type）「通知文案中的被互动对象」是两个独立
+        维度：评论 @ / 评论点赞 / 楼中楼的 source_type=COMMENT，但跳转目标是评论
+        所属顶层资源（DYNAMIC/LOTTERY），故取 ``idx.type``；一级评论（source_type
+        已是 DYNAMIC/LOTTERY）直接跟随 source_type。
+        """
         biz_id = latest.biz_id or ""
         biz_type = source_type_to_biz_type(latest.source_type)
         if biz_type is None:
             raise ValueError(
                 f"事件来源类型 {latest.source_type} 无对应的业务资源类型，无法构建 msgfeed"
             )
-        resource_type = biz_type.value
-        resource_id = biz_id if biz_id.isdigit() else ""
-        title, image = await _resolve_source_meta(
-            ctx.session, latest.source_type, latest.source_id, latest.biz_id, ctx.dyn_cache
+        idx = ctx.comment_index.get(int(biz_id)) if biz_id.isdigit() else None
+
+        if idx is not None and biz_type is InteractionBizTypeEnum.COMMENT:
+            own_type = idx.type
+            resource_type = (
+                own_type.value
+                if isinstance(own_type, InteractionBizTypeEnum)
+                else int(own_type)
+            )
+        else:
+            resource_type = biz_type.value
+
+        if idx is None:
+            return CommentLocate(
+                resource_type=resource_type,
+                resource_id=biz_id if biz_id.isdigit() else "",
+                comment_deleted=True,
+            )
+        if idx.state is not CommentStateEnum.NORMAL:
+            return CommentLocate(
+                resource_type=resource_type,
+                resource_id=str(idx.oid),
+                comment_deleted=True,
+            )
+
+        root_pk = idx.root or 0
+        parent_pk = idx.parent or 0
+        target_pk = parent_pk if parent_pk else root_pk
+        # 触发评论自身 rpid（一级评论时 root_id 与之相同，target_id 为空）
+        source_id = biz_id
+        target_id = str(target_pk) if target_pk else ""
+        return CommentLocate(
+            resource_type=resource_type,
+            resource_id=str(idx.oid),
+            root_id=str(root_pk) if root_pk else source_id,
+            source_id=source_id,
+            target_id=target_id,
+            source_content=ctx.comment_content.get(int(biz_id), ""),
+            target_content=(
+                ctx.comment_content.get(int(target_id), "")
+                if target_id and target_id.isdigit()
+                else ""
+            ),
+        )
+
+    async def _generic_content(
+        self, ctx: MsgfeedBuildContext, latest: EventMessage
+    ) -> EventMsgfeedContent:
+        """统一的 msgfeed 内容体构建（点赞 / @ / 回复 / 审核 / 举报全部复用）。
+
+        评论锚定事件（见 :func:`is_comment_anchored`）走 :meth:`_locate_comment`
+        回捞楼层关系与正文；其余事件走 :meth:`_plain_locate`，只给资源 id。
+        """
+        locate = (
+            self._locate_comment(ctx, latest)
+            if is_comment_anchored(self.event_type, latest.source_type)
+            else self._plain_locate(latest)
         )
         return EventMsgfeedContent(
             item_id=latest.id or 0,
             type=int(self.event_type),
             business=latest.source_type.value if latest.source_type else 0,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            root_id="",
-            source_id="",
-            target_id="",
-            title=title,
+            resource_type=locate.resource_type,
+            resource_id=locate.resource_id,
+            root_id=locate.root_id,
+            source_id=locate.source_id,
+            target_id=locate.target_id,
+            # title / image / jump_target 由 list_msgfeed 末尾的批量资源快照统一装配
+            title="",
             desc=latest.content or "",
-            image=image,
-            source_content="",
-            target_content="",
-            comment_deleted=False,
+            image="",
+            source_content=locate.source_content,
+            target_content=locate.target_content,
+            comment_deleted=locate.comment_deleted,
             ctime=int(latest.created_at.timestamp()) if latest.created_at else 0,
         )
 
@@ -445,6 +658,17 @@ class BaseEvent(ABC):
         actor_mids: set[int] = {r.actor_mid for r in details}
         user_map = await PptrUser.get_many(actor_mids)
 
+        # 资源身份（resource_type, resource_id, rpid）批量解析 + 快照回捞
+        _latest_rows = [
+            bucket[(etype, stype, sid)][0]
+            for (etype, stype, sid, _c, _u, _l) in groups
+            if bucket.get((etype, stype, sid))
+        ]
+        _identities = await _resolve_event_identities(session, _latest_rows)
+        _snapshots = await _load_event_resource_snapshots(
+            session, [_identities[r.id] for r in _latest_rows]
+        )
+
         items: list[EventAggregateItem] = []
         for etype, stype, sid, cnt, unread, latest_id in groups:
             rows = bucket.get((etype, stype, sid), [])
@@ -467,9 +691,18 @@ class BaseEvent(ABC):
                 )
                 if len(actors) >= _MAX_ACTORS_PER_GROUP:
                     break
-            title, image = await _resolve_source_meta(
-                session, stype, sid, latest.biz_id if latest else None
-            )
+            title = image = ""
+            jump_target = ""
+            resource_deleted = False
+            if latest is not None:
+                _idt = _identities.get(latest.id)
+                if _idt is not None:
+                    snap = _snapshots.get((_idt[0], _idt[1]))
+                    if snap is not None:
+                        title = snap.title or ""
+                        image = snap.cover or ""
+                        resource_deleted = not snap.exists
+                        jump_target = (snap.jumpTarget or "") if snap.exists else ""
             items.append(
                 EventAggregateItem(
                     event_type=etype,
@@ -478,6 +711,8 @@ class BaseEvent(ABC):
                     biz_id=latest.biz_id if latest else None,
                     title=title,
                     image=image,
+                    jump_target=jump_target,
+                    resource_deleted=resource_deleted,
                     count=int(cnt or 0),
                     unread_count=int(unread or 0),
                     actors=actors,
@@ -527,12 +762,24 @@ class BaseEvent(ABC):
             .limit(page_size)
         )
         rows = (await session.exec(stmt)).all()
-        dyn_cache: dict[int, object] = {}
+        # 资源身份（resource_type, resource_id, rpid）批量解析 + 快照回捞
+        _identities = await _resolve_event_identities(session, rows)
+        _snapshots = await _load_event_resource_snapshots(
+            session, [_identities[r.id] for r in rows]
+        )
         items: list[EventItem] = []
         for r in rows:
-            title, image = await _resolve_source_meta(
-                session, r.source_type, r.source_id, r.biz_id, dyn_cache
-            )
+            title = image = ""
+            jump_target = ""
+            resource_deleted = False
+            _idt = _identities.get(r.id)
+            if _idt is not None:
+                snap = _snapshots.get((_idt[0], _idt[1]))
+                if snap is not None:
+                    title = snap.title or ""
+                    image = snap.cover or ""
+                    resource_deleted = not snap.exists
+                    jump_target = (snap.jumpTarget or "") if snap.exists else ""
             items.append(
                 EventItem(
                     id=r.id or 0,
@@ -542,6 +789,8 @@ class BaseEvent(ABC):
                     biz_id=r.biz_id,
                     title=title,
                     image=image,
+                    jump_target=jump_target,
+                    resource_deleted=resource_deleted,
                     actor_mid=r.actor_mid,
                     desc=r.content,
                     is_read=r.is_read,
@@ -564,14 +813,21 @@ class BaseEvent(ABC):
 
         聚合分组键为 ``(event_type, source_type, source_id)``，每组的内容体
         交由 ``_for_type(event_type).build_msgfeed_content(...)`` 按类型构建。
+
+        翻页设计（2.5x 修正）：分组以「组内最新事件 id」即 ``max(id)`` 排序定位页边界，
+        因此**游标翻页、has_more、total_count 都必须作用在分组聚合后的 ``max(id)`` 上**，
+        而不能把 ``id < cursor`` 当作事件行的过滤条件。
+
+        原因：一组往往包含**多条事件**（同一个人对同一动态多次 @），若用 ``id < cursor``
+        直接过滤事件行，一旦某组同时含「>= cursor 的 max(id)」与「< cursor 的旧事件」，
+        整组就会被下一页的游标条件误剔除——导致翻页**丢组、总数对不上、提前 is_end**。
+        修正后以 ``HAVING max(id) < cursor`` 定位，确保每组按最新事件被完整分配到唯一一页。
         """
-        conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
+        base_conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
         if event_type is not None:
-            conditions.append(EventMessage.event_type == event_type)
+            base_conditions.append(EventMessage.event_type == event_type)
         if only_unread:
-            conditions.append(EventMessage.is_read == False)
-        if cursor_id is not None:
-            conditions.append(EventMessage.id < cursor_id)
+            base_conditions.append(EventMessage.is_read == False)
 
         group_cols = (
             EventMessage.event_type,
@@ -579,20 +835,33 @@ class BaseEvent(ABC):
             EventMessage.source_id,
         )
 
+        # ---- 分组聚合子查询：只在『事件行级』筛选上做 group by，游标用 HAVING 加在 max(id) 上 ----
+        # （max(id) 是定位列：分组排序 / 翻页 / has_more / total_count 共用同一口径，保证自洽）
         unread_expr = func.sum(case((EventMessage.is_read == False, 1), else_=0))
-        stmt = (
+        group_stmt = (
             select(
                 *group_cols,
                 func.count().label("cnt"),
                 unread_expr.label("unread"),
                 func.max(EventMessage.id).label("latest_id"),
             )
-            .where(*conditions)
+            .where(*base_conditions)
             .group_by(*group_cols)
             .order_by(func.max(EventMessage.id).desc())
-            .limit(page_size)
         )
-        groups = (await session.exec(stmt)).all()
+        # 游标翻页：取「组内最新事件 id < cursor」的后一页分组
+        if cursor_id is not None:
+            group_stmt = group_stmt.having(func.max(EventMessage.id) < cursor_id)
+        groups = (await session.exec(group_stmt.limit(page_size))).all()
+
+        # 是否存在更早的分组（决定本页 is_end）——同样按 max(id) 口径
+        has_more = False
+        if groups:
+            tail_stmt = group_stmt.offset(page_size).limit(1)
+            has_more = (await session.exec(tail_stmt)).one_or_none() is not None
+        else:
+            has_more = False
+
         if not groups:
             return EventListResp(
                 latest=EventMsgfeedSection(
@@ -601,13 +870,15 @@ class BaseEvent(ABC):
                 total=EventMsgfeedSection(
                     cursor=EventMsgfeedCursor(is_end=True, id=None, time=None), items=[]
                 ),
+                total_count=0,
+                unread_count=await cls.count_unread(session, mid, event_type),
             )
 
         group_keys = [(g[0], g[1], g[2]) for g in groups]
         detail_stmt = (
             select(EventMessage)
             .where(
-                *conditions,
+                *base_conditions,
                 tuple_(*group_cols).in_(group_keys),  # type: ignore[arg-type]
             )
             .order_by(EventMessage.id.desc())  # type: ignore[union-attr]
@@ -629,31 +900,31 @@ class BaseEvent(ABC):
         dyn_cache: dict[int, object] = {}
 
         # ---- 评论关系 / 正文 / 点赞态 / 关注态，读取时实时回捞 ----
-        # 只处理 REPLY 类型的 biz_id（触发评论 rpid）：
-        # `CommentService._notify_reply` 自 2.50.0 起 biz_id 恒为评论 rpid
-        # （不再随 source_type 变成动态 oid），因此 REPLY+DYNAMIC（动态评论
-        # 的回复）组合同样需要回捞 CommentIndex 才能解析正文与楼层关系；
-        # 历史脏数据（biz_id 写成动态 oid）回捞不到时，由 ReplyEvent 的
-        # else 分支兜底标记删除态，不影响其余字段。
-        reply_biz_ids: set[str] = set()
+        # 只处理「评论锚定」分组的 biz_id（触发评论 rpid，见 is_comment_anchored）：
+        # REPLY 恒为 rpid（不再随 source_type 变成动态 oid），因此 REPLY+DYNAMIC
+        # （动态评论的回复）组合同样需要回捞；@ / 点赞 / 系统处置只有 source_type
+        # 为 COMMENT 时 biz_id 才是 rpid（对动态本身点赞 / @ 时是 oid，不能当 rpid 查）。
+        # 历史脏数据（biz_id 写成动态 oid）回捞不到时，由 _locate_comment 的
+        # 兜底分支标记删除态，不影响其余字段。
+        comment_biz_ids: set[str] = set()
         for etype, stype, sid, _cnt, _unread, _latest_id in groups:
-            if etype != InteractionActionTypeEnum.REPLY:
+            if not is_comment_anchored(etype, stype):
                 continue
             for r in bucket.get((etype, stype, sid), []):
                 if r.biz_id:
-                    reply_biz_ids.add(r.biz_id)
+                    comment_biz_ids.add(r.biz_id)
 
-        reply_biz_ints = [int(b) for b in reply_biz_ids if b.isdigit()]
+        comment_biz_ints = [int(b) for b in comment_biz_ids if b.isdigit()]
         comment_index: dict[int, CommentIndex] = {}
         comment_content: dict[int, str] = {}
-        if reply_biz_ints:
+        if comment_biz_ints:
             idx_rows = (
                 await session.exec(
-                    select(CommentIndex).where(CommentIndex.rpid.in_(reply_biz_ints))
+                    select(CommentIndex).where(CommentIndex.rpid.in_(comment_biz_ints))
                 )
             ).all()
             comment_index = {row.rpid: row for row in idx_rows}
-            all_rpids = set(reply_biz_ints)
+            all_rpids = set(comment_biz_ints)
             for row in idx_rows:
                 if row.root:
                     all_rpids.add(row.root)
@@ -723,25 +994,33 @@ class BaseEvent(ABC):
                 )
             )
 
-        next_conditions = [EventMessage.mid == mid, EventMessage.is_deleted == False]
-        if event_type is not None:
-            next_conditions.append(EventMessage.event_type == event_type)
-        if only_unread:
-            next_conditions.append(EventMessage.is_read == False)
-        if total_items:
-            last_id = total_items[-1].id
-            next_conditions.append(EventMessage.id < last_id)
-            has_more = bool(
-                (
-                    await session.exec(
-                        select(func.count())
-                        .select_from(EventMessage)
-                        .where(*next_conditions)
-                    )
-                ).one()
-            )
-        else:
-            has_more = False
+        # ---- 资源快照批量回捞（按 bizType 分组，每类一次 batch_get_resources）----
+        # 资源身份统一为 (resource_type, resource_id)，跳转目标由后端按 bizType 下发
+        # route:{name}?{query}（见 §2.10 / §5.11 / C20）；资源不存在返回 exists=False，
+        # 前端展示「资源已删除 / 不存在」且跳过跳转。
+        # rpid（楼层锚点）仅评论锚定事件才有意义：其 source_id 才是评论 rpid；
+        # 普通点赞/@（source_id 是动态/资源 id）不能当 rpid 写入跳转参数。
+        _metas = []
+        for item in total_items:
+            c = item.item
+            if not c.resource_id:
+                continue
+            rpid = None
+            if is_comment_anchored(
+                InteractionActionTypeEnum(c.type), InteractionBizTypeEnum(c.business)
+            ):
+                rpid = c.source_id or None
+            _metas.append((c.resource_type, c.resource_id, rpid))
+        _snapshots = await _load_event_resource_snapshots(session, _metas)
+        for item in total_items:
+            c = item.item
+            snap = _snapshots.get((c.resource_type, c.resource_id))
+            if snap is None:
+                continue
+            c.title = snap.title or ""
+            c.image = snap.cover or ""
+            c.resource_deleted = not snap.exists
+            c.jump_target = (snap.jumpTarget or "") if snap.exists else ""
 
         cursor = EventMsgfeedCursor(
             is_end=not has_more,
@@ -760,9 +1039,33 @@ class BaseEvent(ABC):
                 else None
             ),
         )
+
+        # ---- 对账字段：聚合卡片总数 + 未读事件总数 ----
+        # 列表按「来源实体」聚合，单页 items 长度 = min(page_size, 卡片数)，
+        # 与「未读事件数」天然不等（一张卡片聚合 N 个用户的同类互动）。这两个字段给出
+        # 真实总量，避免调用方把单页 20 张误判为「全部只有 20 条 / 已结束」。
+        # 注意：total_count 统计「全部页的卡片总数」，不能带游标条件（cursor 只用于翻页）。
+        total_cards = int(
+            (
+                await session.exec(
+                    select(func.count()).select_from(
+                        select(*group_cols)
+                        .where(*base_conditions)
+                        .group_by(*group_cols)
+                        .subquery()
+                    )
+                )
+            ).one()
+            or 0
+        )
+        # 未读事件总数：与 GET /unread 的对应字段口径一致（mid + is_read + is_deleted + event_type）
+        unread_count = await cls.count_unread(session, mid, event_type)
+
         return EventListResp(
             latest=EventMsgfeedSection(cursor=latest_cursor, items=total_items[:1]),
             total=EventMsgfeedSection(cursor=cursor, items=total_items),
+            total_count=total_cards,
+            unread_count=unread_count,
         )
 
     @classmethod
@@ -896,22 +1199,26 @@ class BaseEvent(ABC):
 
 
 class GenericEvent(BaseEvent):
-    """「非评论」类事件的通用处理器。
+    """全部事件类型的通用处理器（点赞 / @ / 回复 / 审核 / 举报处置）。
 
-    点赞 / @提及 / 审核驳回 / 举报下架 / 举报成立（未通过）等都不涉及评论层级关系，
-    直接走 ``_generic_content``：资源类型由 source_type 推导，正文取事件自身 content。
+    msgfeed 内容体统一走 ``_generic_content``：
+
+    - **评论锚定**事件（回复，或 source_type=COMMENT 的 @ / 点赞 / 处置）
+      经 ``_locate_comment`` 回捞楼层关系与正文，可深链定位到具体评论；
+    - 其余事件（对动态 / 抽奖本身的点赞 / @ / 处置）走 ``_plain_locate``，
+      资源类型由 source_type 推导，正文取事件自身 content。
     """
 
     async def build_msgfeed_content(
         self,
-        ctx: "MsgfeedBuildContext",
+        ctx: MsgfeedBuildContext,
         latest: EventMessage,
         rows: list[EventMessage],
     ) -> EventMsgfeedContent:
         return await self._generic_content(ctx, latest)
 
 
-def _resolve_handler_cls(event_type: InteractionActionTypeEnum) -> "type[BaseEvent]":
+def _resolve_handler_cls(event_type: InteractionActionTypeEnum) -> type[BaseEvent]:
     """按事件类型取处理器类；未登记的类型回落到 GenericEvent。"""
     spec = EVENT_REGISTRY.get(event_type)
     return spec.handler_cls if spec is not None else GenericEvent

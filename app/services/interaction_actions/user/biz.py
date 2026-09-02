@@ -13,7 +13,7 @@ from sqlmodel import col, select
 
 from app.core.database import new_pptr_session
 from app.models.db.report_tbl import TUserReport
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.pptr_db import PptrUserInfo
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
@@ -46,22 +46,31 @@ class UserBiz(BaseBiz):
             ).first()
         return row is not None
 
-    async def get_resource(self) -> InteractionResource:
-        """取用户并折叠为统一资源表示（不存在则 exists=False）。"""
+    # ==================== 资源获取（钩子实现）====================
+
+    async def check_exists(self) -> bool:
+        return await self._exists()
+
+    async def _load_meta(self) -> tuple[str | None, str | None]:
         if not await self._exists():
-            return InteractionResource(
-                bizType=InteractionBizTypeEnum.USER,
-                bizId=self.biz_id,
-                exists=False,
-            )
-        return InteractionResource(
-            bizType=InteractionBizTypeEnum.USER,
-            bizId=self.biz_id,
-            authorMid=int(self.biz_id),
-            ownerMid=int(self.biz_id),
-            exists=True,
-            interactable=True,
-        )
+            return None, None
+        try:
+            async with new_pptr_session() as ps:
+                row = (
+                    await ps.exec(
+                        select(PptrUserInfo).where(
+                            col(PptrUserInfo.uid) == int(self.biz_id)
+                        )
+                    )
+                ).first()
+        except Exception:  # noqa: BLE001
+            return None, None
+        if row is None:
+            return None, None
+        return (getattr(row, "uname", None), getattr(row, "avatar", None))
+
+    async def _load_author_mid(self) -> int | None:
+        return int(self.biz_id) if self.biz_id and self.biz_id > 0 else None
 
     # ==================== 举报 ====================
 

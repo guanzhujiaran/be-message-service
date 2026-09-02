@@ -16,11 +16,8 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TMomentTopic
-from app.models.enums import (
-    InteractionActionTypeEnum,
-    MomentTopicAuditStatusEnum,
-    InteractionBizTypeEnum,
-    )
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from app.models.enums import MomentTopicAuditStatusEnum
 from app.models.schemas.moment import (
     MomentTopicAuditItem,
     MomentTopicAuditListResp,

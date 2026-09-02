@@ -19,7 +19,8 @@ from sqlmodel import Field
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import InteractionBizTypeEnum, MomentVisibleScopeEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import MomentVisibleScopeEnum
 
 
 class TResourceFeed(TimestampMixin, table=True):

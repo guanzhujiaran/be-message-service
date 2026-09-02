@@ -30,12 +30,8 @@ from app.models.db import (
     TMoment,
     )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
-from app.models.enums import (
-    CommentStateEnum,
-    InteractionBizTypeEnum,
-    MomentAuditStatusEnum,
-    MomentTypeEnum,
-    )
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import CommentStateEnum, MomentAuditStatusEnum, MomentTypeEnum
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_read import CommentReadService

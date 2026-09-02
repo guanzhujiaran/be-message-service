@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     # 综合页 recommend 对登录用户叠加个性化因子：score = base + Σ(w_personal·signal)。
     # 三类信号（均为「加分」，不乘 decay，保证关注作者/偏好话题的新内容稳定靠前）：
     #   w_follow          关注作者（msg_user_follow，最强）
-    #   w_liked_author    点赞过的作者（TMomentLike+TMoment，关注冷启动补充）
+    #   w_liked_author    点赞过的作者（TResourceLike+TMoment，关注冷启动补充）
     #   w_topic           互动过的话题（TMomentTopicRel）
     # 未登录 / 开关关闭 → 退化为纯全局排序（与 2.32.0 一致）。
     edgerank_personalized_enabled: bool = True

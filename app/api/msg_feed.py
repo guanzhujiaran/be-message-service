@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import InteractionActionTypeEnum
+from bili_common.models import InteractionActionTypeEnum
 from app.models.schemas import EventUnreadResp, UserActivityResp
 from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm import DmInbox

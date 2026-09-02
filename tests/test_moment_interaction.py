@@ -23,14 +23,14 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
     TMoment,
-    TMomentLike,
+    TResourceLike,
     TResourceReport,
     TInteractionStat,
     TInteractionViewLog,
     TResourceFeed,
 )
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentReportReasonEnum,
     MomentTypeEnum,
@@ -101,7 +101,7 @@ async def _commit_seed(session, mid, **kw) -> int:
 async def _cleanup(dids: list[int]) -> None:
     async with new_session() as s:
         for d in dids:
-            await s.exec(text(f"DELETE FROM TMomentLike WHERE dynId = {d}"))
+            await s.exec(text(f"DELETE FROM TResourceLike WHERE bizType = 1 AND bizId = {d}"))
             await s.exec(
                 text(f"DELETE FROM TInteractionViewLog WHERE bizType = 1 AND bizId = {d}")
             )
@@ -152,7 +152,14 @@ async def test_thumb_first_like():
         async with new_session() as s:
             is_like, cnt = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, dids[0], D_MID2).like(up=1)
             assert is_like is True and cnt == 1
-            like = (await s.exec(select(TMomentLike).where(TMomentLike.dynId == dids[0]))).first()
+            like = (
+                await s.exec(
+                    select(TResourceLike).where(
+                        TResourceLike.bizType == InteractionBizTypeEnum.DYNAMIC,
+                        TResourceLike.bizId == dids[0],
+                    )
+                )
+            ).first()
             assert like is not None and like.mid == D_MID2
     finally:
         await _cleanup(dids)
@@ -168,7 +175,14 @@ async def test_thumb_idempotent():
             await get_biz(InteractionBizTypeEnum.DYNAMIC, s, dids[0], D_MID2).like(up=1)
             is_like, cnt = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, dids[0], D_MID2).like(up=1)
             assert is_like is True and cnt == 1  # 不叠加
-            n = (await s.exec(select(TMomentLike).where(TMomentLike.dynId == dids[0]))).all()
+            n = (
+                await s.exec(
+                    select(TResourceLike).where(
+                        TResourceLike.bizType == InteractionBizTypeEnum.DYNAMIC,
+                        TResourceLike.bizId == dids[0],
+                    )
+                )
+            ).all()
             assert len(n) == 1
     finally:
         await _cleanup(dids)
@@ -184,7 +198,14 @@ async def test_thumb_cancel():
             await get_biz(InteractionBizTypeEnum.DYNAMIC, s, dids[0], D_MID2).like(up=1)
             is_like, cnt = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, dids[0], D_MID2).like(up=2)
             assert is_like is False and cnt == 0
-            n = (await s.exec(select(TMomentLike).where(TMomentLike.dynId == dids[0]))).all()
+            n = (
+                await s.exec(
+                    select(TResourceLike).where(
+                        TResourceLike.bizType == InteractionBizTypeEnum.DYNAMIC,
+                        TResourceLike.bizId == dids[0],
+                    )
+                )
+            ).all()
             assert len(n) == 0
     finally:
         await _cleanup(dids)

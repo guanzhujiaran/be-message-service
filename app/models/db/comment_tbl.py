@@ -30,13 +30,14 @@ from bili_common.models.report import ReportBase
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
     CommentStateEnum,
     CommentSubjectStateEnum,
-    InteractionBizTypeEnum,
     MomentReportReasonEnum,
 )
+
 
 
 class CommentSubject(TimestampMixin, table=True):

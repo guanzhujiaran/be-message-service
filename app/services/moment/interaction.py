@@ -12,10 +12,9 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TInteractionStat, TInteractionViewLog, TMoment
-from bili_common.models.interaction import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from bili_common.services.interaction import (
     DYNAMIC_BIZ_TYPE,
-    InteractionResourceValidator,
     InteractionStatService,
 )
 
@@ -27,38 +26,9 @@ class BeMessageInteractionStatService(InteractionStatService):
     view_log_model = TInteractionViewLog
 
 
-# 注册 dynamic 资源校验器（校验 TMoment 存在且未软删）
-async def _check_dynamic(session: AsyncSession, biz_id: int) -> bool:
-    dyn = (
-        await session.exec(
-            select(TMoment).where(
-                col(TMoment.dynId) == biz_id,
-                col(TMoment.deletedAt).is_(None),
-            )
-        )
-    ).one_or_none()
-    return dyn is not None
-
-
-# be-message 启动时注册 dynamic 校验（幂等）
-InteractionResourceValidator.register(InteractionBizTypeEnum.DYNAMIC, _check_dynamic)
-
-
-# 注册 lottery 资源校验器（2.20.0）：经抽奖 RPC 校验 lottery_id 是否存在
-# 弱依赖：RPC 未连接 / 失败 / 查询不到均视为不存在（点赞/收藏/转发 lottery 时 422 拒绝）
-# biz_id 可能为字符串（收藏 FavoriteAddReq.bizId / RESOURCE 节点 bizId 均为 str），统一转 int
-async def _check_lottery(session: AsyncSession, biz_id: int) -> bool:
-    from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
-
-    try:
-        bid = int(biz_id)
-    except (TypeError, ValueError):
-        return False
-    client = await get_lottery_rpc_client()
-    return await client.lottery_exists(bid)
-
-
-InteractionResourceValidator.register(InteractionBizTypeEnum.LOTTERY, _check_lottery)
+# 注：动态 / 抽奖的存在性校验已下沉为 DynamicBiz.check_exists() / LotteryBiz.check_exists()
+# （继承 InteractionResourceValidator 的注册式逻辑迁移到各资源类，见计划书 §5.11 / C20），
+# 此处不再注册校验器；``validate_exists`` / ``_validate_attach`` 经 get_biz(...).check_exists() 调用。
 
 
 # 动态资源计数读（复用 MomentStatService 语义，此处提供便捷封装避免循环导入）

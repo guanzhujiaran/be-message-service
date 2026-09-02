@@ -14,7 +14,8 @@
 
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import DmMsgTypeEnum, InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from app.models.enums import DmMsgTypeEnum
 
 
 class DmContentPayload(SQLModel):

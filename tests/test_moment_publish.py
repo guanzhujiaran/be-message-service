@@ -21,12 +21,12 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
     TMoment,
-    TMomentAuditLog,
+    TResourceAuditLog,
     TInteractionStat,
     TResourceFeed,
 )
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
@@ -152,7 +152,7 @@ def test_create_check_rejected_scene():
 async def _cleanup(moment_ids: list[int]) -> None:
     async with new_session() as s:
         for did in moment_ids:
-            await s.exec(text(f"DELETE FROM TMomentAuditLog WHERE dynId = {did}"))
+            await s.exec(text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {did}"))
             await s.exec(
                 text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}")
             )
@@ -228,7 +228,10 @@ async def test_create_word_auditing():
         # 审核日志已写
         log = (
             await s.exec(
-                select(TMomentAuditLog).where(TMomentAuditLog.dynId == data["dynId"])
+                select(TResourceAuditLog).where(
+                    TResourceAuditLog.bizType == InteractionBizTypeEnum.DYNAMIC,
+                    TResourceAuditLog.bizId == data["dynId"],
+                )
             )
         ).first()
         assert log is not None and log.actionType is MomentAuditLogActionEnum.CREATE

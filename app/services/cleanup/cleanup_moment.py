@@ -2,10 +2,12 @@
 
 清除指定 uid 用户在 be-message MySQL 的动态相关全部数据：
 
-- **发布的动态** `TMoment WHERE mid=uid`：`TMomentLike`/`TMomentAuditLog`
-  等子表对 `dynId` 均 `ondelete=CASCADE`，删主表自动级联清子表；
-  （旧动态统计双轨已删除，计数统一 `TInteractionStat`）
-- **点赞 / 浏览他人动态的痕迹**（`TMomentLike`/`TInteractionViewLog` 的 `mid`）：
+- **发布的动态** `TMoment WHERE mid=uid`：`TResourceLike` / `TResourceDislike`
+  / `TResourceAuditLog`（2.55.0 起，去 dynId 冗余列与 FK）不再有
+  `TMoment.dynId` 的 CASCADE 依赖，**改为显式按
+  `(bizType=DYNAMIC, bizId IN dyn_ids)` 删除**，与 `TResourceFeed` /
+  `TInteractionStat` 清理范式一致；
+- **点赞 / 浏览他人动态的痕迹**（`TResourceLike` / `TInteractionViewLog` 的 `mid`）：
   这些行的 `mid` 是该用户（操作者），非动态作者，需单独按 `mid` 删，
   不会随其发布动态级联。
 
@@ -18,12 +20,14 @@ from sqlmodel import col, delete, select
 
 from app.models.db import (
     TMoment,
-    TMomentLike,
+    TResourceLike,
+    TResourceDislike,
+    TResourceAuditLog,
     TInteractionStat,
     TInteractionViewLog,
     TResourceFeed,
 )
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 
 class CleanupMomentService:
@@ -34,17 +38,22 @@ class CleanupMomentService:
         """删除指定 uid 用户的全部动态数据（调用方负责 commit）。
 
         按依赖顺序：先清「操作痕迹」（mid=操作者），再删其发布动态
-        （dynId 子表自动 CASCADE）。
+        相关的明细 / 计数 / Feed 元数据（按 bizType+bizId 显式删），
+        最后删主表 `TMoment`。
         """
-        # 我点赞 / 浏览他人动态的痕迹（mid = 操作者）
+        # 我点赞 / 点踩 / 浏览他人动态的痕迹（mid = 操作者）
         await session.exec(
-            delete(TMomentLike).where(col(TMomentLike.mid) == uid)
+            delete(TResourceLike).where(col(TResourceLike.mid) == uid)
+        )
+        await session.exec(
+            delete(TResourceDislike).where(col(TResourceDislike.mid) == uid)
         )
         # 2.36.0：浏览去重统一 TInteractionViewLog（按操作者 mid 删痕迹）
         await session.exec(
             delete(TInteractionViewLog).where(col(TInteractionViewLog.mid) == uid)
         )
-        # 我发布的动态：先删统一计数/Feed 元数据（无 FK 级联），再删主表（旧子表级联）
+        # 我发布的动态：先删统一计数/Feed 元数据/审核流水（按 bizType+bizId 显式删）+ 点赞/点踩明细，
+        # 最后删主表 TMoment（不再依赖 CASCADE：2.55.0 起子表去 FK）。
         dyn_ids = select(TMoment.dynId).where(col(TMoment.mid) == uid)
         await session.exec(
             delete(TResourceFeed).where(
@@ -56,6 +65,24 @@ class CleanupMomentService:
             delete(TInteractionStat).where(
                 col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
                 col(TInteractionStat.bizId).in_(dyn_ids),
+            )
+        )
+        await session.exec(
+            delete(TResourceAuditLog).where(
+                col(TResourceAuditLog.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceAuditLog.bizId).in_(dyn_ids),
+            )
+        )
+        await session.exec(
+            delete(TResourceLike).where(
+                col(TResourceLike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceLike.bizId).in_(dyn_ids),
+            )
+        )
+        await session.exec(
+            delete(TResourceDislike).where(
+                col(TResourceDislike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceDislike.bizId).in_(dyn_ids),
             )
         )
         await session.exec(delete(TMoment).where(col(TMoment.mid) == uid))

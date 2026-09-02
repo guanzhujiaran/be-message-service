@@ -24,7 +24,7 @@
 `InteractionAclScopeEnum` 与对应校验器注册表。
 """
 
-from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.services.interaction_actions.base import (
     InteractionAclScopeEnum,
     InteractionActionError,

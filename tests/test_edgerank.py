@@ -25,14 +25,14 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
     TMoment,
-    TMomentLike,
+    TResourceLike,
     TResourceReport,
     TMomentTopic,
     TInteractionStat,
     TResourceFeed,
 )
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
@@ -588,7 +588,7 @@ async def test_comprehensive_feed_recommend_personalized_liked_author(monkeypatc
         # 历史动态（E_MID 作者，1h 前 → 不在收窄候选窗口），viewer 点赞过
         hist = await _seed_moment(s, E_MID, seconds_ago=3600, like=0)
         s.add(
-            TMomentLike(
+            TResourceLike(
                 mid=viewer,
                 bizType=InteractionBizTypeEnum.DYNAMIC,
                 bizId=hist,
@@ -607,7 +607,7 @@ async def test_comprehensive_feed_recommend_personalized_liked_author(monkeypatc
             assert [it.dynId for it in me.items][0] == a
     finally:
         async with new_session() as s:
-            await s.exec(text(f"DELETE FROM TMomentLike WHERE mid = {viewer}"))
+            await s.exec(text(f"DELETE FROM TResourceLike WHERE mid = {viewer}"))
             await s.commit()
 
 

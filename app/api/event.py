@@ -16,7 +16,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import InteractionActionTypeEnum
+from bili_common.models import InteractionActionTypeEnum
 from app.models.schemas import (
     EventAggregateResp,
     EventListResp,
@@ -94,8 +94,14 @@ async def list_event(
     """按内容聚合的互动提醒列表，对齐 B 站 x/msgfeed/* 结构。
 
     - `data.latest`：最新一条聚合记录；
-    - `data.total.items`：本页聚合条目（每条含完整 users[] + item + counts）；
-    - `data.total.cursor`：翻页游标（is_end / id / time）。
+    - `data.total.items`：本页聚合条目（每条含完整 users[] + item + counts），长度 = min(page_size, 卡片数)；
+    - `data.total.cursor`：翻页游标（is_end / id / time）；
+    - `data.total_count`：当前筛选条件下聚合卡片（分组）总数，决定总页数；
+    - `data.unread_count`：当前 event_type 下未读事件总数，**与 GET /unread 对应字段一致**。
+
+    注意：列表按「来源实体」聚合，一张卡片可能聚合 N 个用户的同类互动，故本页
+    `items` 长度天然小于 `unread_count`；以 `total_count` / `unread_count` 对账，
+    不要仅凭单页 items 长度判断「是否已全部返回」。
     """
     resp = await BaseEvent.list_msgfeed(
         session,

@@ -47,14 +47,12 @@ from app.models import StandardResponse
 from app.models.db import (
     CommentSubject,
     TMoment,
-    TMomentFavorite,
-    TMomentLike,
+    TResourceFavorite,
+    TResourceLike,
     TResourceReport,
     )
-from app.models.enums import (
-    InteractionBizTypeEnum,
-    MomentAuditStatusEnum,
-    )
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import MomentAuditStatusEnum
 from app.models.schemas.interaction import (
     InteractionStatusItem,
     InteractionStatusResp,
@@ -462,10 +460,10 @@ async def _query_status_items(
     liked_ids = set(
         (
             await session.exec(
-                select(TMomentLike.bizId).where(
-                    col(TMomentLike.bizType) == biz_type,
-                    col(TMomentLike.bizId).in_(ids),
-                    col(TMomentLike.mid) == mid,
+                select(TResourceLike.bizId).where(
+                    col(TResourceLike.bizType) == biz_type,
+                    col(TResourceLike.bizId).in_(ids),
+                    col(TResourceLike.mid) == mid,
                 )
             )
         ).all()
@@ -473,10 +471,10 @@ async def _query_status_items(
     faved_ids = set(
         (
             await session.exec(
-                select(TMomentFavorite.bizId).where(
-                    col(TMomentFavorite.bizType) == biz_type,
-                    col(TMomentFavorite.bizId).in_(ids),
-                    col(TMomentFavorite.mid) == mid,
+                select(TResourceFavorite.bizId).where(
+                    col(TResourceFavorite.bizType) == biz_type,
+                    col(TResourceFavorite.bizId).in_(ids),
+                    col(TResourceFavorite.mid) == mid,
                 )
             )
         ).all()

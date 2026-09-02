@@ -14,7 +14,7 @@ from app.models.str_int import StrInt
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser
 from app.models import StandardResponse
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas import (
     BlockReq,
     FollowCountResp,

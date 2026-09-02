@@ -12,8 +12,9 @@
 
 from sqlmodel import col, select
 
-from app.models.db.comment_tbl import CommentIndex, CommentReport
-from app.models.enums import CommentStateEnum, InteractionBizTypeEnum
+from app.models.db.comment_tbl import CommentContent, CommentIndex, CommentReport
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import CommentStateEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
 from app.services.interaction_actions.common import ops
@@ -31,26 +32,35 @@ class CommentBiz(BaseBiz):
         "invalid": "参数不合法",
     }
 
-    async def get_resource(self) -> InteractionResource:
-        """取评论并折叠为统一资源表示（不存在则 exists=False）。"""
-        row = (
+    # ==================== 资源获取（钩子实现）====================
+
+    async def _index(self):
+        """取 CommentIndex（缓存到实例；不存在返回 None）。"""
+        if getattr(self, "_index_cache", None) is None:
+            self._index_cache = (
+                await self.session.exec(
+                    select(CommentIndex).where(col(CommentIndex.rpid) == self.biz_id)
+                )
+            ).one_or_none()
+        return self._index_cache
+
+    async def check_exists(self) -> bool:
+        return (await self._index()) is not None
+
+    async def _load_meta(self) -> tuple[str | None, str | None]:
+        row = await self._index()
+        if row is None:
+            return None, None
+        content = (
             await self.session.exec(
-                select(CommentIndex).where(col(CommentIndex.rpid) == self.biz_id)
+                select(CommentContent).where(col(CommentContent.rpid) == self.biz_id)
             )
         ).one_or_none()
-        if row is None:
-            return InteractionResource(
-                bizType=InteractionBizTypeEnum.COMMENT,
-                bizId=self.biz_id,
-                exists=False,
-            )
-        return InteractionResource(
-            bizType=InteractionBizTypeEnum.COMMENT,
-            bizId=self.biz_id,
-            authorMid=int(row.mid),
-            exists=True,
-            interactable=True,
-        )
+        return (content.message if content else None), None
+
+    async def _load_author_mid(self) -> int | None:
+        row = await self._index()
+        return int(row.mid) if row is not None else None
 
     # ==================== 举报 ====================
 

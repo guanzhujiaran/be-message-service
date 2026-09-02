@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.models.enums import InteractionActionTypeEnum
+from bili_common.models import InteractionActionTypeEnum
 
 if TYPE_CHECKING:
     from .base import BaseEvent

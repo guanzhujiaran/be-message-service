@@ -15,11 +15,9 @@ from datetime import datetime
 from loguru import logger
 from sqlmodel import col, delete, select
 
-from app.models.db import TMoment, TMomentDislike, TMomentFavorite, TResourceFeed
-from app.models.db.moment_tbl import TResourceReport
+from app.models.db import TMoment, TResourceDislike, TResourceFavorite, TResourceFeed, TResourceReport
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
     MomentAuditLogActionEnum,
     MomentAuditStatusEnum,
     MomentTypeEnum,
@@ -47,34 +45,89 @@ class DynamicBiz(BaseBiz):
         "folder_not_found": "收藏夹不存在",
     }
 
-    # ==================== 资源获取 ====================
+    # ==================== 资源获取（钩子实现，统一由基类 get_resource 装配）====================
 
     async def _get_moment(self):
-        """取未软删的 `TMoment`（不存在返回 None）。"""
-        return (
-            await self.session.exec(
-                select(TMoment).where(col(TMoment.dynId) == self.biz_id)
-            )
-        ).one_or_none()
+        """取 `TMoment`（缓存到实例，同一 biz 多次访问只查一次；不存在返回 None）。"""
+        if getattr(self, "_moment_cache", None) is None:
+            self._moment_cache = (
+                await self.session.exec(
+                    select(TMoment).where(col(TMoment.dynId) == self.biz_id)
+                )
+            ).one_or_none()
+        return self._moment_cache
 
-    async def get_resource(self) -> InteractionResource:
-        """取动态并折叠为统一资源表示（仅 normal 未软删可互动）。"""
+    async def check_exists(self) -> bool:
+        """动态存在且未软删、且 auditStatus 非 REJECTED/HIDDEN（被驳回 / 管理员下架视为不存在）。"""
         dyn = await self._get_moment()
-        if dyn is None or dyn.deletedAt is not None:
-            return InteractionResource(
-                bizType=InteractionBizTypeEnum.DYNAMIC,
-                bizId=self.biz_id,
-                exists=False,
-            )
-        return InteractionResource(
-            bizType=InteractionBizTypeEnum.DYNAMIC,
-            bizId=self.biz_id,
-            authorMid=int(dyn.mid),
-            ownerMid=int(dyn.mid),
-            exists=True,
-            interactable=dyn.auditStatus == MomentAuditStatusEnum.NORMAL,
-            content=dyn.contentText,
+        return dyn is not None and dyn.deletedAt is None and dyn.auditStatus not in (
+            MomentAuditStatusEnum.REJECTED,
+            MomentAuditStatusEnum.HIDDEN,
         )
+
+    async def _load_meta(self) -> tuple[str | None, str | None]:
+        from app.services.message.insite.events.source_meta import _first_pic
+
+        dyn = await self._get_moment()
+        if dyn is None:
+            return None, None
+        return dyn.contentText, _first_pic(dyn.contentJson)
+
+    async def _load_author_mid(self) -> int | None:
+        dyn = await self._get_moment()
+        return int(dyn.mid) if dyn is not None else None
+
+    async def _load_interactable(self) -> bool | None:
+        dyn = await self._get_moment()
+        if dyn is None:
+            return None
+        return dyn.auditStatus == MomentAuditStatusEnum.NORMAL
+
+    @classmethod
+    async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
+        """动态批量回捞：一次 IN 查询，按 dynId 装配快照（计划书 §5.11 / C20）。"""
+        from sqlmodel import select as _select
+
+        from app.models.schemas.interaction import InteractionResource
+        from app.services.message.insite.events.source_meta import _first_pic
+        from app.utils.route_target import jump_target_for
+        from bili_common.models import InteractionBizTypeEnum
+
+        rpid_map = rpid_map or {}
+        moment_map: dict[int, TMoment] = {}
+        if biz_ids:
+            rows = (
+                await session.exec(_select(TMoment).where(col(TMoment.dynId).in_(biz_ids)))
+            ).all()
+            moment_map = {m.dynId: m for m in rows}
+        out: dict[int, InteractionResource] = {}
+        for bid in biz_ids:
+            dyn = moment_map.get(bid)
+            exists = dyn is not None and dyn.deletedAt is None and dyn.auditStatus not in (
+                MomentAuditStatusEnum.REJECTED,
+                MomentAuditStatusEnum.HIDDEN,
+            )
+            title = cover = None
+            author_mid = None
+            interactable = exists
+            if dyn is not None and exists:
+                title = dyn.contentText
+                cover = _first_pic(dyn.contentJson)
+                author_mid = int(dyn.mid)
+                interactable = dyn.auditStatus == MomentAuditStatusEnum.NORMAL
+            out[bid] = InteractionResource(
+                bizType=InteractionBizTypeEnum.DYNAMIC,
+                bizId=bid,
+                authorMid=author_mid,
+                exists=exists,
+                interactable=interactable,
+                title=title,
+                cover=cover,
+                jumpTarget=jump_target_for(
+                    InteractionBizTypeEnum.DYNAMIC, bid, rpid_map.get(bid)
+                ),
+            )
+        return out
 
     # ==================== 互动操作 ====================
 
@@ -98,10 +151,10 @@ class DynamicBiz(BaseBiz):
             raise ValueError("up 参数不合法（1=点踩, 2=取消点踩）")
         existing = (
             await self.session.exec(
-                select(TMomentDislike.pk).where(
-                    col(TMomentDislike.bizType) == InteractionBizTypeEnum.DYNAMIC,
-                    col(TMomentDislike.bizId) == self.biz_id,
-                    col(TMomentDislike.mid) == self.actor_mid,
+                select(TResourceDislike.pk).where(
+                    col(TResourceDislike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TResourceDislike.bizId) == self.biz_id,
+                    col(TResourceDislike.mid) == self.actor_mid,
                 )
             )
         ).first()
@@ -109,10 +162,9 @@ class DynamicBiz(BaseBiz):
             if existing is not None:
                 return True, await self._read_stat("dislikeCount")
             self.session.add(
-                TMomentDislike(
+                TResourceDislike(
                     bizType=InteractionBizTypeEnum.DYNAMIC,
                     bizId=self.biz_id,
-                    dynId=self.biz_id,
                     mid=self.actor_mid,
                 )
             )
@@ -123,7 +175,7 @@ class DynamicBiz(BaseBiz):
         if existing is None:
             return False, await self._read_stat("dislikeCount")
         await self.session.exec(  # type: ignore[call-overload]
-            TMomentDislike.__table__.delete().where(col(TMomentDislike.pk) == existing)
+            TResourceDislike.__table__.delete().where(col(TResourceDislike.pk) == existing)
         )
         await MomentStatService.decr_stat(
             self.session, self.biz_id, "dislikeCount", floor_zero=True
@@ -147,10 +199,10 @@ class DynamicBiz(BaseBiz):
                 folder_id = int(folder_id)
             exists = (
                 await self.session.exec(
-                    select(TMomentFavorite.pk).where(
-                        col(TMomentFavorite.bizType) == biz_type,
-                        col(TMomentFavorite.bizId) == self.biz_id,
-                        col(TMomentFavorite.folderId) == folder_id,
+                    select(TResourceFavorite.pk).where(
+                        col(TResourceFavorite.bizType) == biz_type,
+                        col(TResourceFavorite.bizId) == self.biz_id,
+                        col(TResourceFavorite.folderId) == folder_id,
                     )
                 )
             ).first()
@@ -158,10 +210,9 @@ class DynamicBiz(BaseBiz):
                 await self.session.commit()
                 return False, folder_id
             self.session.add(
-                TMomentFavorite(
+                TResourceFavorite(
                     bizType=biz_type,
                     bizId=self.biz_id,
-                    dynId=self.biz_id,
                     folderId=folder_id,
                     mid=self.actor_mid,
                 )
@@ -178,11 +229,11 @@ class DynamicBiz(BaseBiz):
             folder_id = int(folder_id)
             row = (
                 await self.session.exec(
-                    select(TMomentFavorite).where(
-                        col(TMomentFavorite.bizType) == biz_type,
-                        col(TMomentFavorite.bizId) == self.biz_id,
-                        col(TMomentFavorite.folderId) == folder_id,
-                        col(TMomentFavorite.mid) == self.actor_mid,
+                    select(TResourceFavorite).where(
+                        col(TResourceFavorite.bizType) == biz_type,
+                        col(TResourceFavorite.bizId) == self.biz_id,
+                        col(TResourceFavorite.folderId) == folder_id,
+                        col(TResourceFavorite.mid) == self.actor_mid,
                     )
                 )
             ).first()
@@ -190,11 +241,11 @@ class DynamicBiz(BaseBiz):
                 await self.session.commit()
                 return False, folder_id
             await self.session.exec(
-                delete(TMomentFavorite).where(
-                    col(TMomentFavorite.bizType) == biz_type,
-                    col(TMomentFavorite.bizId) == self.biz_id,
-                    col(TMomentFavorite.folderId) == folder_id,
-                    col(TMomentFavorite.mid) == self.actor_mid,
+                delete(TResourceFavorite).where(
+                    col(TResourceFavorite.bizType) == biz_type,
+                    col(TResourceFavorite.bizId) == self.biz_id,
+                    col(TResourceFavorite.folderId) == folder_id,
+                    col(TResourceFavorite.mid) == self.actor_mid,
                 )
             )
             other = await self._fav_other(folder_id)
@@ -210,11 +261,11 @@ class DynamicBiz(BaseBiz):
         """该用户在**其它**收藏夹是否也收藏了本动态（用户去重计数用）。"""
         return (
             await self.session.exec(
-                select(TMomentFavorite.pk).where(
-                    col(TMomentFavorite.mid) == self.actor_mid,
-                    col(TMomentFavorite.bizType) == InteractionBizTypeEnum.DYNAMIC,
-                    col(TMomentFavorite.bizId) == self.biz_id,
-                    col(TMomentFavorite.folderId) != folder_id,
+                select(TResourceFavorite.pk).where(
+                    col(TResourceFavorite.mid) == self.actor_mid,
+                    col(TResourceFavorite.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TResourceFavorite.bizId) == self.biz_id,
+                    col(TResourceFavorite.folderId) != folder_id,
                 )
             )
         ).first()
@@ -349,7 +400,8 @@ class DynamicBiz(BaseBiz):
             await MomentStatService.incr_repost_count(self.session, dyn.repostSrcDynId, 1)
         self.session.add(
             _build_audit_log(
-                moment_id=self.biz_id,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=self.biz_id,
                 operator_mid=self.actor_mid,
                 to_status=MomentAuditStatusEnum.NORMAL,
                 action=MomentAuditLogActionEnum.APPROVE,
@@ -395,7 +447,8 @@ class DynamicBiz(BaseBiz):
             await MomentStatService.incr_repost_count(self.session, dyn.repostSrcDynId, -1)
         self.session.add(
             _build_audit_log(
-                moment_id=self.biz_id,
+                biz_type=InteractionBizTypeEnum.DYNAMIC,
+                biz_id=self.biz_id,
                 operator_mid=self.actor_mid,
                 to_status=MomentAuditStatusEnum.REJECTED,
                 action=MomentAuditLogActionEnum.REJECT,

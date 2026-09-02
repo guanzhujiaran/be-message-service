@@ -32,7 +32,7 @@ from app.models.db import (
     MomentAuthorQuality,
     TInteractionStat,
     TMoment,
-    TMomentLike,
+    TResourceLike,
     TMomentTopicRel,
 )
 from app.services.moment.edgerank import (
@@ -85,7 +85,7 @@ async def load_personal_signals(
 
     - ``follow``：关注作者（``msg_user_follow``）；
     - ``liked_author`` / ``topic``：最近 ``edgerank_personalized_like_history_limit``
-      条点赞历史（``TMomentLike``）批量 join ``TMoment`` / ``TMomentTopicRel``；
+      条点赞历史（``TResourceLike``）批量 join ``TMoment`` / ``TMomentTopicRel``；
     - ``clicked_author`` / ``clicked_topic``：``last_clicklist``（客户端已互动列表）
       对应作者/话题（2.35.0 反馈闭环）。
 
@@ -119,10 +119,13 @@ async def load_personal_signals(
 
     like_rows = (
         await session.exec(
-            select(TMomentLike.dynId)
-            .where(col(TMomentLike.mid) == viewer_mid)
-            .where(col(TMomentLike.dynId).isnot(None))
-            .order_by(col(TMomentLike.created_at).desc())
+            select(TResourceLike.bizId)
+            .where(
+                col(TResourceLike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceLike.mid) == viewer_mid,
+                col(TResourceLike.bizId).isnot(None),
+            )
+            .order_by(col(TResourceLike.created_at).desc())
             .limit(limit)
         )
     ).all()

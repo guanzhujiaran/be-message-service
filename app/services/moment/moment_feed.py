@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.models.db import (
     MomentAuthorQuality,
     TMoment,
-    TMomentLike,
+    TResourceLike,
     TMomentTopic,
     TMomentTopicRel,
     TInteractionStat,
@@ -36,13 +36,13 @@ from app.models.db import (
     TResourceReport,
     )
 from app.models.db.comment_tbl import CommentSubject
+from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    InteractionBizTypeEnum,
     MomentAuditStatusEnum,
     MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
-    )
+)
 from app.models.schemas.moment import (
     MomentContentNode,
     MomentDetailResp,
@@ -504,9 +504,12 @@ async def _load_like_states(
         return {}
     rows = (
         await session.exec(
-            select(TMomentLike.dynId)
-            .where(col(TMomentLike.dynId).in_(moment_ids))
-            .where(col(TMomentLike.mid) == viewer_mid)
+            select(TResourceLike.bizId)
+            .where(
+                col(TResourceLike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                col(TResourceLike.bizId).in_(moment_ids),
+                col(TResourceLike.mid) == viewer_mid,
+            )
         )
     ).all()
     return {int(d): True for d in rows}
@@ -596,10 +599,11 @@ async def _recall_dynamic_candidates(
         liked_dyn_ids = list(
             (
                 await session.exec(
-                    select(TMomentLike.dynId)
+                    select(TResourceLike.bizId)
                     .where(
-                        col(TMomentLike.mid) == viewer_mid,
-                        col(TMomentLike.dynId).isnot(None),
+                        col(TResourceLike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                        col(TResourceLike.mid) == viewer_mid,
+                        col(TResourceLike.bizId).isnot(None),
                     )
                     .limit(200)
                 )
@@ -1403,9 +1407,9 @@ class MomentFeedService:
         page_num: int = 1,
         page_size: int = 20,
     ) -> MomentLikerListResp:
-        """点赞明细列表（按 TMomentLike.created_at 倒序）。
+        """点赞明细列表（按 TResourceLike.created_at 倒序）。
 
-        数据源：``TMomentLike``（mid/dynId/created_at）。无 status 字段，
+        数据源：``TResourceLike``（mid/dynId/created_at）。无 status 字段，
         任意点赞都算（与 ``interaction_actions`` 的 like 写入保持一致）。
         关联 ``PptrUser.get_many`` 取作者简要（uname/face）。
         """
@@ -1428,9 +1432,12 @@ class MomentFeedService:
         # 2) 明细
         rows = (
             await session.exec(
-                select(TMomentLike)
-                .where(col(TMomentLike.dynId) == dyn_id)
-                .order_by(col(TMomentLike.created_at).desc())
+                select(TResourceLike)
+                .where(
+                    col(TResourceLike.bizType) == InteractionBizTypeEnum.DYNAMIC,
+                    col(TResourceLike.bizId) == dyn_id,
+                )
+                .order_by(col(TResourceLike.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
             )

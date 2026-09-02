@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from bili_common.models.interaction import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 
 __all__ = [
     "biz_type_label",

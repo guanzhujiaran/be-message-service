@@ -16,12 +16,10 @@ from app.models.enums import (
     DmMsgTypeEnum,
     DmRelationEnum,
     DmSessionTypeEnum,
-    InteractionActionTypeEnum,
     MessageModuleEnum,
     NotifyLevelEnum,
     NotifyStatusEnum,
     NotifyTargetTypeEnum,
-    InteractionBizTypeEnum,
 )
 from app.models.push import (
     FeedbackRequest,
@@ -38,7 +36,6 @@ __all__ = [
     "DmMsgTypeEnum",
     "DmRelationEnum",
     "DmSessionTypeEnum",
-    "InteractionActionTypeEnum",
     "FeedbackRequest",
     "MessageModuleEnum",
     "MessageUser",
@@ -46,7 +43,6 @@ __all__ = [
     "NotifyStatusEnum",
     "NotifyTargetTypeEnum",
     "PushChannelConfig",
-    "InteractionBizTypeEnum",
     "PushMessage",
     "PushMessagePayload",
     "StandardResponse",

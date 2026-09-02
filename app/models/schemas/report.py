@@ -7,7 +7,7 @@
 
 from sqlmodel import Field, SQLModel
 
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.str_int import StrInt
 
 

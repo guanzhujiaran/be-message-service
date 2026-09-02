@@ -25,7 +25,7 @@ from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 
 
 class EventMessage(TimestampMixin, table=True):

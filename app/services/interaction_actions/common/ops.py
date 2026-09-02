@@ -14,15 +14,14 @@ from sqlmodel import col, delete, select
 from app.models.db import (
     TFavoriteFolder,
     TInteractionStat,
-    TMomentDislike,
-    TMomentFavorite,
-    TMomentLike,
+    TResourceDislike,
+    TResourceFavorite,
+    TResourceLike,
 )
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.services.interaction_actions.base import InteractionActionError
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
-    InteractionResourceValidator,
 )
 
 __all__ = [
@@ -38,8 +37,19 @@ __all__ = [
 
 
 async def validate_exists(session, biz_type: InteractionBizTypeEnum, biz_id: int) -> None:
-    """资源存在性校验（注册式校验器；未注册类型默认放行）。"""
-    await InteractionResourceValidator.validate(session, biz_type, biz_id)
+    """资源存在性校验（委托给对应资源类的 ``check_exists``；未实现资源类默认放行）。
+
+    原注册式 ``InteractionResourceValidator`` 的存在性逻辑已下沉为各 Biz 子类的
+    ``check_exists()`` 方法（计划书 §5.11 / C20）。
+    """
+    from app.services.interaction_actions.base_biz import get_biz
+
+    try:
+        biz = get_biz(biz_type, session, biz_id)
+    except ValueError:
+        return
+    if not await biz.check_exists():
+        raise ValueError("资源不存在")
 
 
 async def do_like_generic(
@@ -50,10 +60,10 @@ async def do_like_generic(
         raise InteractionActionError("up 参数不合法（1=点赞, 2=取消点赞）")
     existing = (
         await session.exec(
-            select(TMomentLike.pk).where(
-                col(TMomentLike.bizType) == biz_type,
-                col(TMomentLike.bizId) == biz_id,
-                col(TMomentLike.mid) == actor_mid,
+            select(TResourceLike.pk).where(
+                col(TResourceLike.bizType) == biz_type,
+                col(TResourceLike.bizId) == biz_id,
+                col(TResourceLike.mid) == actor_mid,
             )
         )
     ).first()
@@ -66,10 +76,9 @@ async def do_like_generic(
         if existing is not None:
             return True, await _count()
         session.add(
-            TMomentLike(
+            TResourceLike(
                 bizType=biz_type,
                 bizId=biz_id,
-                dynId=None,
                 mid=actor_mid,
                 likeType=1,
             )
@@ -86,7 +95,7 @@ async def do_like_generic(
     if existing is None:
         return False, await _count()
     await session.exec(  # type: ignore[call-overload]
-        TMomentLike.__table__.delete().where(col(TMomentLike.pk) == existing)
+        TResourceLike.__table__.delete().where(col(TResourceLike.pk) == existing)
     )
     await InteractionStatService.decr(session, biz_type, biz_id, "likeCount")
     await session.commit()
@@ -96,7 +105,11 @@ async def do_like_generic(
 async def do_like_dynamic(
     session, biz_id: int, actor_mid: int, up: int = 1
 ) -> tuple[bool, int]:
-    """动态点赞 / 取消点赞（幂等；明细 `dynId` 填实际值 + `MomentStatService` 计数）。"""
+    """动态点赞 / 取消点赞（幂等；明细 `bizType=DYNAMIC` + `MomentStatService` 计数）。
+
+    2.55.0 起 `TResourceLike` 不再冗余 `dynId` 列，定位一律通过 `(bizType, bizId)`，
+    动态行 `bizId` = `dyn_id`；与通用资源点赞共用同一张明细表。
+    """
     from app.services.moment.moment_stat import MomentStatService
 
     biz_type = InteractionBizTypeEnum.DYNAMIC
@@ -104,10 +117,10 @@ async def do_like_dynamic(
         raise InteractionActionError("up 参数不合法（1=点赞, 2=取消点赞）")
     existing = (
         await session.exec(
-            select(TMomentLike.pk).where(
-                col(TMomentLike.bizType) == biz_type,
-                col(TMomentLike.bizId) == biz_id,
-                col(TMomentLike.mid) == actor_mid,
+            select(TResourceLike.pk).where(
+                col(TResourceLike.bizType) == biz_type,
+                col(TResourceLike.bizId) == biz_id,
+                col(TResourceLike.mid) == actor_mid,
             )
         )
     ).first()
@@ -127,10 +140,9 @@ async def do_like_dynamic(
         if existing is not None:
             return True, await _count()
         session.add(
-            TMomentLike(
+            TResourceLike(
                 bizType=biz_type,
                 bizId=biz_id,
-                dynId=biz_id,
                 mid=actor_mid,
                 likeType=1,
             )
@@ -147,7 +159,7 @@ async def do_like_dynamic(
     if existing is None:
         return False, await _count()
     await session.exec(  # type: ignore[call-overload]
-        TMomentLike.__table__.delete().where(col(TMomentLike.pk) == existing)
+        TResourceLike.__table__.delete().where(col(TResourceLike.pk) == existing)
     )
     await MomentStatService.decr_stat(session, biz_id, "likeCount", floor_zero=True)
     await session.commit()
@@ -157,15 +169,15 @@ async def do_like_dynamic(
 async def do_dislike(
     session, biz_type: InteractionBizTypeEnum, biz_id: int, actor_mid: int, up: int = 1
 ) -> tuple[bool, int]:
-    """点踩 / 取消点踩（幂等；明细 `TMomentDislike` + `dislikeCount`）。"""
+    """点踩 / 取消点踩（幂等；明细 `TResourceDislike` + `dislikeCount`）。"""
     if up not in (1, 2):
         raise InteractionActionError("up 参数不合法（1=点踩, 2=取消点踩）")
     existing = (
         await session.exec(
-            select(TMomentDislike.pk).where(
-                col(TMomentDislike.bizType) == biz_type,
-                col(TMomentDislike.bizId) == biz_id,
-                col(TMomentDislike.mid) == actor_mid,
+            select(TResourceDislike.pk).where(
+                col(TResourceDislike.bizType) == biz_type,
+                col(TResourceDislike.bizId) == biz_id,
+                col(TResourceDislike.mid) == actor_mid,
             )
         )
     ).first()
@@ -178,10 +190,9 @@ async def do_dislike(
         if existing is not None:
             return True, await _count()
         session.add(
-            TMomentDislike(
+            TResourceDislike(
                 bizType=biz_type,
                 bizId=biz_id,
-                dynId=None,
                 mid=actor_mid,
             )
         )
@@ -197,10 +208,10 @@ async def do_dislike(
     if existing is None:
         return False, await _count()
     await session.exec(
-        delete(TMomentDislike).where(
-            col(TMomentDislike.bizType) == biz_type,
-            col(TMomentDislike.bizId) == biz_id,
-            col(TMomentDislike.mid) == actor_mid,
+        delete(TResourceDislike).where(
+            col(TResourceDislike.bizType) == biz_type,
+            col(TResourceDislike.bizId) == biz_id,
+            col(TResourceDislike.mid) == actor_mid,
         )
     )
     await InteractionStatService.decr(session, biz_type, biz_id, "dislikeCount")
@@ -252,10 +263,10 @@ async def _favorite_add(
 
     exists = (
         await session.exec(
-            select(TMomentFavorite.pk).where(
-                col(TMomentFavorite.bizType) == biz_type,
-                col(TMomentFavorite.bizId) == biz_id,
-                col(TMomentFavorite.folderId) == folder_id,
+            select(TResourceFavorite.pk).where(
+                col(TResourceFavorite.bizType) == biz_type,
+                col(TResourceFavorite.bizId) == biz_id,
+                col(TResourceFavorite.folderId) == folder_id,
             )
         )
     ).first()
@@ -264,10 +275,9 @@ async def _favorite_add(
         return False, folder_id
 
     session.add(
-        TMomentFavorite(
+        TResourceFavorite(
             bizType=biz_type,
             bizId=biz_id,
-            dynId=None,
             folderId=folder_id,
             mid=actor_mid,
         )
@@ -277,11 +287,11 @@ async def _favorite_add(
     # 用户去重：该用户在其它夹也未收藏过同一资源才计数 +1
     already = (
         await session.exec(
-            select(TMomentFavorite.pk).where(
-                col(TMomentFavorite.mid) == actor_mid,
-                col(TMomentFavorite.bizType) == biz_type,
-                col(TMomentFavorite.bizId) == biz_id,
-                col(TMomentFavorite.folderId) != folder_id,
+            select(TResourceFavorite.pk).where(
+                col(TResourceFavorite.mid) == actor_mid,
+                col(TResourceFavorite.bizType) == biz_type,
+                col(TResourceFavorite.bizId) == biz_id,
+                col(TResourceFavorite.folderId) != folder_id,
             )
         )
     ).first()
@@ -300,11 +310,11 @@ async def _favorite_remove(
     folder_id = int(folder_id)
     row = (
         await session.exec(
-            select(TMomentFavorite).where(
-                col(TMomentFavorite.bizType) == biz_type,
-                col(TMomentFavorite.bizId) == biz_id,
-                col(TMomentFavorite.folderId) == folder_id,
-                col(TMomentFavorite.mid) == actor_mid,
+            select(TResourceFavorite).where(
+                col(TResourceFavorite.bizType) == biz_type,
+                col(TResourceFavorite.bizId) == biz_id,
+                col(TResourceFavorite.folderId) == folder_id,
+                col(TResourceFavorite.mid) == actor_mid,
             )
         )
     ).first()
@@ -312,21 +322,21 @@ async def _favorite_remove(
         await session.commit()
         return False, folder_id
     await session.exec(
-        delete(TMomentFavorite).where(
-            col(TMomentFavorite.bizType) == biz_type,
-            col(TMomentFavorite.bizId) == biz_id,
-            col(TMomentFavorite.folderId) == folder_id,
-            col(TMomentFavorite.mid) == actor_mid,
+        delete(TResourceFavorite).where(
+            col(TResourceFavorite.bizType) == biz_type,
+            col(TResourceFavorite.bizId) == biz_id,
+            col(TResourceFavorite.folderId) == folder_id,
+            col(TResourceFavorite.mid) == actor_mid,
         )
     )
     # 用户去重：该用户在其它夹也不再收藏同一资源才计数 -1
     other = (
         await session.exec(
-            select(TMomentFavorite.pk).where(
-                col(TMomentFavorite.mid) == actor_mid,
-                col(TMomentFavorite.bizType) == biz_type,
-                col(TMomentFavorite.bizId) == biz_id,
-                col(TMomentFavorite.folderId) != folder_id,
+            select(TResourceFavorite.pk).where(
+                col(TResourceFavorite.mid) == actor_mid,
+                col(TResourceFavorite.bizType) == biz_type,
+                col(TResourceFavorite.bizId) == biz_id,
+                col(TResourceFavorite.folderId) != folder_id,
             )
         )
     ).first()

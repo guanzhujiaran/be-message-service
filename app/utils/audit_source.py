@@ -18,7 +18,8 @@
 """
 
 from app.models.biz_type import comment_type_label, comment_type_to_biz_type
-from app.models.enums import FrontendRouteEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import FrontendRouteEnum
 from app.models.schemas.audit import AuditSourceInfo
 from app.utils.route_target import build_route_target
 

@@ -10,7 +10,7 @@
   （`is_default=1`）；新用户首次进入收藏流程时由 `ensure_default` 自动创建。
 - **收藏夹字段**：自定义封面（`cover_url`，**仅存 URL 不转存图片**）、名称、描述；
   封面「先审后发」（`TFolderCoverAudit` pending → 审核通过才公开）。
-- **收藏明细**：`TMomentFavorite` 唯一约束 `(bizType, bizId, folderId)` 保证同一夹内
+- **收藏明细**：`TResourceFavorite` 唯一约束 `(bizType, bizId, folderId)` 保证同一夹内
   同一资源不重复收藏；同一资源可被收藏到多个不同夹。
 - **favoriteCount 语义（按用户去重）**：用户首次收藏某资源（其它夹也未曾收藏过）才
   `+1`；仅当该用户在所有夹都不再收藏该资源时才 `-1`。
@@ -26,10 +26,11 @@ from app.core.sharding import generate_moment_id
 from app.models.db import (
     TFavoriteFolder,
     TFolderCoverAudit,
-    TMomentFavorite,
+    TResourceFavorite,
     TUserFavoriteSetting,
 )
-from app.models.enums import FolderCoverAuditStatusEnum, InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import FolderCoverAuditStatusEnum
 from app.services.user.avatar_check import verify_avatar_url
 from app.services.user.folder_cover_audit import FolderCoverAuditService
 from app.services.moment.interaction import (
@@ -217,8 +218,8 @@ class FavoriteFolderAction:
         # 删除收藏夹下所有收藏明细，同时按用户去重回退 favoriteCount
         detail_rows = (
             await session.exec(
-                select(TMomentFavorite).where(
-                    col(TMomentFavorite.folderId) == folder_id
+                select(TResourceFavorite).where(
+                    col(TResourceFavorite.folderId) == folder_id
                 )
             )
         ).all()
@@ -227,18 +228,18 @@ class FavoriteFolderAction:
             # 该用户是否还在其它夹收藏同一资源？
             other = (
                 await session.exec(
-                    select(TMomentFavorite.pk).where(
-                        col(TMomentFavorite.mid) == mid,
-                        col(TMomentFavorite.bizType) == detail.bizType,
-                        col(TMomentFavorite.bizId) == detail.bizId,
-                        col(TMomentFavorite.folderId) != folder_id,
+                    select(TResourceFavorite.pk).where(
+                        col(TResourceFavorite.mid) == mid,
+                        col(TResourceFavorite.bizType) == detail.bizType,
+                        col(TResourceFavorite.bizId) == detail.bizId,
+                        col(TResourceFavorite.folderId) != folder_id,
                     )
                 )
             ).first()
             if other is None:
                 affected.append((detail.bizType, detail.bizId))
         await session.exec(
-            delete(TMomentFavorite).where(col(TMomentFavorite.folderId) == folder_id)
+            delete(TResourceFavorite).where(col(TResourceFavorite.folderId) == folder_id)
         )
         await session.exec(
             delete(TFavoriteFolder).where(col(TFavoriteFolder.folder_id) == folder_id)
@@ -261,11 +262,11 @@ class FavoriteFolderAction:
             await session.exec(
                 select(
                     TFavoriteFolder,
-                    func.count(TMomentFavorite.pk).label("favoriteCount"),
+                    func.count(TResourceFavorite.pk).label("favoriteCount"),
                 )
                 .outerjoin(
-                    TMomentFavorite,
-                    col(TMomentFavorite.folderId) == col(TFavoriteFolder.folder_id),
+                    TResourceFavorite,
+                    col(TResourceFavorite.folderId) == col(TFavoriteFolder.folder_id),
                 )
                 .where(col(TFavoriteFolder.mid) == self.actor_mid)
                 .group_by(TFavoriteFolder.folder_id)
@@ -322,22 +323,22 @@ class FavoriteFolderAction:
         """
         session = self.session
         where = [
-            col(TMomentFavorite.mid) == self.actor_mid,
-            col(TMomentFavorite.folderId) == folder_id,
+            col(TResourceFavorite.mid) == self.actor_mid,
+            col(TResourceFavorite.folderId) == folder_id,
         ]
         if biz_type is not None:
             bt = InteractionBizTypeEnum.from_text(biz_type)
-            where.append(col(TMomentFavorite.bizType) == bt)
+            where.append(col(TResourceFavorite.bizType) == bt)
         total = (
             await session.exec(
-                select(func.count()).select_from(TMomentFavorite).where(*where)
+                select(func.count()).select_from(TResourceFavorite).where(*where)
             )
         ).one()
         rows = (
             await session.exec(
-                select(TMomentFavorite.bizType, TMomentFavorite.bizId)
+                select(TResourceFavorite.bizType, TResourceFavorite.bizId)
                 .where(*where)
-                .order_by(col(TMomentFavorite.createdAt).desc())
+                .order_by(col(TResourceFavorite.createdAt).desc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )
@@ -352,10 +353,10 @@ class FavoriteFolderAction:
         bt = InteractionBizTypeEnum.from_text(biz_type)
         rows = (
             await self.session.exec(
-                select(TMomentFavorite.folderId).where(
-                    col(TMomentFavorite.mid) == self.actor_mid,
-                    col(TMomentFavorite.bizType) == bt,
-                    col(TMomentFavorite.bizId) == biz_id,
+                select(TResourceFavorite.folderId).where(
+                    col(TResourceFavorite.mid) == self.actor_mid,
+                    col(TResourceFavorite.bizType) == bt,
+                    col(TResourceFavorite.bizId) == biz_id,
                 )
             )
         ).all()
@@ -431,21 +432,21 @@ class FavoriteFolderAction:
         total = (
             await session.exec(
                 select(func.count())
-                .select_from(TMomentFavorite)
+                .select_from(TResourceFavorite)
                 .where(
-                    col(TMomentFavorite.mid) == target_mid,
-                    col(TMomentFavorite.folderId) == folder_id,
+                    col(TResourceFavorite.mid) == target_mid,
+                    col(TResourceFavorite.folderId) == folder_id,
                 )
             )
         ).one()
         rows = (
             await session.exec(
-                select(TMomentFavorite.bizType, TMomentFavorite.bizId)
+                select(TResourceFavorite.bizType, TResourceFavorite.bizId)
                 .where(
-                    col(TMomentFavorite.mid) == target_mid,
-                    col(TMomentFavorite.folderId) == folder_id,
+                    col(TResourceFavorite.mid) == target_mid,
+                    col(TResourceFavorite.folderId) == folder_id,
                 )
-                .order_by(col(TMomentFavorite.createdAt).desc())
+                .order_by(col(TResourceFavorite.createdAt).desc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )

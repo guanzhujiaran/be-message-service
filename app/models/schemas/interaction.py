@@ -9,7 +9,7 @@ from sqlmodel import Field, SQLModel
 from bili_common.rpc.rpa import ResourceDetail
 
 
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.base import AutoStrMixin
 class InteractionResource(SQLModel):
     """互动目标资源的**统一表示**（2.47.0；非 DB 表）。
@@ -29,6 +29,11 @@ class InteractionResource(SQLModel):
     interactable: bool = Field(default=True, description="是否可互动（如动态需 normal 未软删；收藏语义允许 auditing）")
     title: str | None = Field(default=None, description="附加展示字段（可选，通知等使用）")
     content: str | None = Field(default=None, description="内容摘要（可选，通知等使用）")
+    cover: str | None = Field(default=None, description="封面图（动态首图 / 资源卡封面，可选）")
+    jumpTarget: str | None = Field(
+        default=None,
+        description="后端下发的跳转目标 route:{name}?{query}（事件提醒等读取侧随资源返回；见计划书 §2.10 / §5.11）",
+    )
 
 
 class InteractionStatusItem(SQLModel, AutoStrMixin):

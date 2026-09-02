@@ -24,7 +24,7 @@ from loguru import logger
 
 from app.consumers.retry import DEFAULT_MAX_RETRIES, retry_count
 from app.core.database import new_session
-from app.models.enums import InteractionBizTypeEnum
+from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas import InteractionViewPayload
 from app.services.interaction_actions import get_biz
 

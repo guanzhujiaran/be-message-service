@@ -14,10 +14,15 @@
 ③ 用户级互动：收藏夹创建/封面审核、收藏、收藏设置、关注、拉黑、事件通知、系统通知
 ④ 消息与管理：私信发送/审核/撤回/删除全流程、通用计数、用户举报、封禁、头像审核流
 
-**大数据灌数（基于 biliopusdb 真实动态，走 API，软降级跳过）**
-从 biliopusdb 拉取真实动态/话题，经 be-message HTTP 接口批量灌入动态 + 点赞/评论/@/浏览，用于性能/联调。
-其中评论（正文末尾随机 @）走真实评论链路，触发 REPLY（动态作者）/ AT（被 @ 用户）事件通知，
-使「收到的赞/回复/@」消息中心拥有可联调的真实数据。
+**大数据灌数（基于 biliopusdb 真实动态 + crawler 真实 lottery + pptr 用户池私信，走 API，软降级跳过）**
+从 biliopusdb 拉取真实动态/话题，从 crawler 的 GetAllLottery 接口（不可达时降级直连 dyndetail.lotdata）
+取真实 lottery_id，从 pptr Postgres 取真实用户池，经 be-message HTTP 接口批量灌入动态 +
+点赞/评论/@/浏览 + lottery 评论套件 + 私信，用于性能/联调。
+每个资源（动态 / lottery）走统一评论套件 ``_seed_bulk_comment_suite``：一级评论（正文末尾随机 @）+
+楼中楼（二级评论）+ 评论点赞/点踩 + 显式 @ + 举报 + 置顶；lottery 资源额外补发 LIKE 事件
+（通用资源点赞后端不自动生成）。私信走 ``_seed_bulk_dm``：在 pptr 用户池上 O(n²) 批量互发，
+覆盖动态 / 评论 / @ 外，也覆盖「用户对网络」广度，使登录 demo 的任意 pptr 用户（如测试账号 127763472）
+都有私信内容可读。评论/私信均走真实链路，触发 REPLY/AT 事件通知与站内信，使消息中心拥有可联调的真实数据。
 
 **动态 + lottery 混合资源池（全互动联调阶段）**
 调 crawler 的 GetAllLottery HTTP 接口取真实 lottery_id（接口不可达时降级直连
@@ -77,15 +82,14 @@ from app.core.database import new_pptr_session, new_session
 from app.models.db.dm_tbl import DmMessageIndex, DmSession
 from app.models.db.follow_tbl import UserFollow
 from app.models.db.setting_tbl import UserMessageSetting
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     DmMsgStatusEnum,
     DmRelationEnum,
     FollowStatusEnum,
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
     NotifyTargetTypeEnum,
     BanDurationTypeEnum,
-    )
+)
 from app.models.pptr_db import PptrUserDetail, PptrUserInfo
 
 # ---------------------------------------------------------------------------
@@ -2435,6 +2439,149 @@ async def _seed_topics(
     return [t for t in results if isinstance(t, int)]
 
 
+async def _seed_bulk_comment_suite(
+    client: SeedClient,
+    rng: random.Random,
+    user_pool: list[tuple[int, str | None]],
+    oid: int,
+    up_mid: int,
+    biz_type: InteractionBizTypeEnum,
+    *,
+    like_event_recipient: int | None = None,
+) -> None:
+    """大数据灌数：单个资源（动态 / lottery）的完整评论套件（软降级，单条失败不阻断）。
+
+    覆盖：资源点赞（按 biz_type 分流 DYNAMIC→thumb / LOTTERY→thumb_lottery）、
+    一级评论（正文末尾随机 @）、楼中楼（二级评论，带 @）、评论点赞/点踩、
+    显式 @ 评论、举报、置顶；lottery 资源额外补发 LIKE 事件（通用资源点赞后端不自动
+    生成事件，与 ``seed_lottery_resource`` 行为一致），统一落点 ``like_event_recipient``
+    便于登录消息中心查看「收到的赞」。
+    """
+    if len(user_pool) < 2:
+        return
+    if up_mid and any(u[0] == up_mid for u in user_pool):
+        commenters = [u for u in user_pool if u[0] != up_mid]
+    else:
+        # up_mid 不在用户池（lottery 等无作者资源）时随机指派一个资源作者
+        up_mid = rng.choice(user_pool)[0]
+        commenters = [u for u in user_pool if u[0] != up_mid]
+    if not commenters:
+        return
+
+    async def _safe(coro) -> None:
+        """单条评论动作失败软降级跳过。"""
+        try:
+            await coro
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"灌数评论动作失败（已跳过）: {e}")
+
+    async def _safe_add(coro):
+        """评论发布失败软降级，返回 rpid 或 None。"""
+        try:
+            return await coro
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"灌数评论发布失败（已跳过）: {e}")
+            return None
+
+    # 0) 资源点赞（按 biz_type 分流）
+    liker = rng.choice(commenters)
+    if biz_type is InteractionBizTypeEnum.LOTTERY:
+        await _safe(client.thumb_lottery(liker[0], oid))
+    else:
+        await _safe(client.thumb(liker[0], oid))
+
+    # 1) 一级评论（2~3 条）+ 审核通过（正文末尾随机 @，不 @ 自己）
+    root_rpids: list[str] = []
+    for commenter in rng.sample(commenters, min(rng.randint(2, 3), len(commenters))):
+        rpid = await _safe_add(
+            client.add_comment(
+                commenter[0],
+                oid,
+                up_mid,
+                biz_type=biz_type,
+                at_users=_random_at_targets(
+                    user_pool, exclude_mid=commenter[0], rng=rng
+                ),
+            )
+        )
+        if not rpid:
+            continue
+        await _safe(client.approve_comment(rpid))
+        root_rpids.append(rpid)
+
+    # 2) 楼中楼（二级评论）：对每根一级评论回复 1~2 层，正文末尾随机 @
+    for root_rpid in root_rpids:
+        parent = root_rpid
+        for _ in range(rng.randint(1, 2)):
+            replier = rng.choice(commenters)
+            rpid = await _safe_add(
+                client.add_comment(
+                    replier[0],
+                    oid,
+                    up_mid,
+                    biz_type=biz_type,
+                    root=root_rpid,
+                    parent=parent,
+                    message=rng.choice(_REPLIES),
+                    at_users=_random_at_targets(
+                        user_pool, exclude_mid=replier[0], rng=rng
+                    ),
+                )
+            )
+            if not rpid:
+                continue
+            await _safe(client.approve_comment(rpid))
+            parent = rpid
+
+    # 3) 评论点赞 / 点踩（落在一级评论上）
+    for rpid in root_rpids:
+        actor = rng.choice(commenters)
+        await _safe(client.comment_action(actor[0], rpid, rng.choice([1, 2])))
+
+    # 4) 显式 @ 评论（@ + 末尾随机 @ 共存）
+    if len(commenters) >= 2:
+        at_target = commenters[0]
+        at_name = at_target[1] or f"user{at_target[0]}"
+        subject = "抽奖" if biz_type is InteractionBizTypeEnum.LOTTERY else "动态"
+        await _safe(
+            client.add_comment(
+                commenters[1][0],
+                oid,
+                up_mid,
+                biz_type=biz_type,
+                message=f"@{at_name} 这个{subject}真不错",
+                at_mids=[at_target[0]],
+                at_name_to_mid={at_name: at_target[0]},
+                at_users=_random_at_targets(
+                    user_pool, exclude_mid=commenters[1][0], rng=rng
+                ),
+            )
+        )
+
+    # 5) 举报一条评论
+    if root_rpids:
+        await _safe(client.report_comment(rng.choice(commenters)[0], root_rpids[-1]))
+
+    # 6) 评论置顶（资源作者身份）
+    if root_rpids:
+        await _safe(client.top_comment(up_mid, oid, root_rpids[-1], biz_type=biz_type))
+
+    # lottery 资源点赞后端不自动生成 LIKE 事件 → 补发（与 seed_lottery_resource 一致）
+    if biz_type is InteractionBizTypeEnum.LOTTERY and like_event_recipient is not None:
+        actor = rng.choice(commenters)
+        await _safe(
+            client.report_event(
+                like_event_recipient,
+                InteractionActionTypeEnum.LIKE,
+                oid,
+                actor[0],
+                actor[1],
+                str(oid),
+                biz_type=InteractionBizTypeEnum.LOTTERY,
+            )
+        )
+
+
 async def _seed_dynamic(
     client: SeedClient,
     rng: random.Random,
@@ -2446,10 +2593,10 @@ async def _seed_dynamic(
     """单条动态：创建 → 审核通过 → 按分布点赞/评论/@/浏览（并发）。
 
     正文末尾追加随机 @（不 @ 作者本人），让灌数数据同样覆盖动态 @ 链路；
-    另按分布对动态发表评论（正文末尾随机 @），覆盖评论 @ 链路，并触发
-    REPLY（给动态作者）/ AT（给被 @ 用户）事件通知，使「收到的赞/回复/@」
-    消息中心有真实数据；极长正文（已接近 2000 字上限）跳过 @，避免触发
-    长度校验导致整条动态灌入失败。
+    评论走 ``_seed_bulk_comment_suite``（一级评论 + 楼中楼 + 评论赞踩 + 显式 @ +
+    举报 + 置顶，正文末尾随机 @），覆盖评论 @ 链路并触发 REPLY（给动态作者）/
+    AT（给被 @ 用户）事件通知，使「收到的赞/回复/@」消息中心有真实数据；
+    极长正文（已接近 2000 字上限）跳过 @，避免触发长度校验导致整条动态灌入失败。
     """
     async with sem:
         try:
@@ -2483,33 +2630,99 @@ async def _seed_dynamic(
                 for u in rng.sample(user_pool, min(view_target, len(user_pool))):
                     tasks.append(client.browse(u[0], new_dyn_id))
 
-            # 评论 + @：对动态发评论（正文末尾随机 @），生成 REPLY（动态作者）/ AT（被 @ 用户）事件。
-            # 评论需先审后发，故 add + approve 两步串行；单条评论失败不影响整体。
-            async def _post_one_comment() -> None:
-                commenter = rng.choice(user_pool)
-                if commenter[0] == author:
-                    return
-                at_targets = _random_at_targets(
-                    user_pool, exclude_mid=commenter[0], max_n=1, rng=rng
+            # 评论套件：对动态跑完整评论链路（一级评论/@ + 楼中楼 + 评论赞踩 +
+            # 显式 @ + 举报 + 置顶），生成 REPLY（动态作者）/ AT（被 @ 用户）事件，
+            # 使「收到的赞/回复/@」消息中心有真实数据；单条失败不影响整体。
+            # comment_target 为 0（多数动态无评论）时跳过整段评论，与分布一致。
+            if comment_target > 0 and user_pool:
+                tasks.append(
+                    _seed_bulk_comment_suite(
+                        client,
+                        rng,
+                        user_pool,
+                        new_dyn_id,
+                        author,  # up_mid：动态作者，接收 REPLY 事件
+                        InteractionBizTypeEnum.DYNAMIC,
+                    )
                 )
-                rpid = await client.add_comment(
-                    commenter[0],
-                    new_dyn_id,
-                    author,  # up_mid：动态作者，接收 REPLY 事件
-                    at_users=at_targets,
-                )
-                await client.approve_comment(rpid)
-
-            for _ in range(comment_target):
-                if not user_pool:
-                    break
-                tasks.append(_post_one_comment())
 
             if tasks:
                 # 单条动态的点赞/评论/@/浏览并发发起，单条失败不影响整体
                 await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"动态灌入失败（跳过）: {e}")
+
+
+async def _seed_bulk_dm(
+    client: SeedClient,
+    users: list[tuple[int, str | None]],
+    count: int,
+    dm_concurrency: int,
+    blocked: set[tuple[int, int]] | None = None,
+) -> None:
+    """大数据灌数：在 pptr 用户池上批量互发私信，填充 DM 内容（软降级跳过业务拒绝）。
+
+    复用与 ``seed_message`` 场景 E 一致的 O(n²) 遍历逻辑：取前 ``count`` 个有序用户对
+    （剔除「接收方已拉黑发送方」方向），每对发 1 条并审核通过。覆盖「用户对网络」广度，
+    使 pptr 用户池内任意用户（如登录查看 demo 的测试账号）都有私信内容可读。
+    接收方关闭陌生人私信时，来自陌生人的消息被过滤（仅发送方自见），此处宽容跳过该对，
+    不阻断整体；发送方自己的消息始终可见，故发起方视角必有私信内容。
+    """
+    if len(users) < 2:
+        logger.warning("用户数不足，跳过大数据灌数私信。")
+        return
+    blocked = blocked or set()
+    sem = asyncio.Semaphore(dm_concurrency)
+
+    async def _send_one_directed(sender, receiver) -> bool:
+        """单向发 1 条并审核通过；业务拒绝返回 False（不报 warning）。"""
+        async with sem:
+            try:
+                mk = await client.dm_send(sender[0], receiver[0], receiver[1])
+                await client.approve_dm(mk)
+                return True
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                if any(k in msg for k in ("拉黑", "黑名单", "陌生", "对方已")):
+                    logger.info(
+                        f"批量私信 {sender[0]}→{receiver[0]} 被业务规则拒绝（预期内跳过）: {msg}"
+                    )
+                else:
+                    logger.warning(
+                        f"批量私信 {sender[0]}→{receiver[0]} 发送失败（跳过）: {e}"
+                    )
+                return False
+
+    # O(n²) 遍历全部有序用户对（剔除「接收方已拉黑发送方」的必拒方向），
+    # 取前 count 对——每对只发 1 条，故总发送量 = min(count, 可发对数)
+    directed = [
+        (sender, receiver)
+        for sender in users
+        for receiver in users
+        if sender[0] != receiver[0]
+        and not _is_dm_blocked(blocked, sender[0], receiver[0])
+    ][:count]
+
+    total = 0
+    if directed:
+        pending = [
+            asyncio.create_task(_send_one_directed(s, r)) for s, r in directed
+        ]
+        for f in tqdm(
+            asyncio.as_completed(pending),
+            total=len(pending),
+            desc="bulk dm",
+            unit="条",
+        ):
+            try:
+                if await f:
+                    total += 1
+            except Exception:  # noqa: BLE001
+                pass
+    logger.success(
+        f"[大数据灌数] 私信填充完成：遍历用户对取前 {len(directed)} 对（每对 1 条），"
+        f"实际发送 {total} 条（目标 {count} 条）"
+    )
 
 
 async def run_bulk(args: argparse.Namespace) -> None:
@@ -2538,8 +2751,10 @@ async def run_bulk(args: argparse.Namespace) -> None:
         comment_total = sum(_sample(COMMENT_DISTRIBUTION) for _ in reals)
         logger.info(
             f"[dry-run] 将经 API 灌入：动态 {len(reals)}、话题 {len(topic_names)}、"
-            f"点赞约 {like_total}、评论/@约 {comment_total}（触发 REPLY/AT 事件）、"
-            f"浏览约 {view_total}；不调用接口"
+            f"点赞约 {like_total}、一级评论/@约 {comment_total}（每条再附带楼中楼/赞踩/"
+            f"举报/置顶，触发 REPLY/AT 事件）、浏览约 {view_total}；"
+            f"另取 {_LOTTERY_POOL_SIZE} 个真实 lottery_id 跑等价评论套件（含资源点赞补 LIKE 事件）；"
+            f"不调用接口"
         )
         return
 
@@ -2588,6 +2803,62 @@ async def run_bulk(args: argparse.Namespace) -> None:
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"单条动态任务异常（已跳过）: {e}")
 
+        # 4. lottery 资源：取真实 lottery_id，跑与动态等价的完整评论套件
+        #    （一级评论/@ + 楼中楼 + 评论赞踩 + 显式 @ + 举报 + 置顶 + 资源点赞
+        #    补 LIKE 事件），补齐「大数据灌数」阶段对通用资源评论链路的覆盖。
+        logger.info("经 API 灌入 lottery 资源评论套件…")
+        lottery_ids = await _fetch_lottery_ids_via_api(
+            args.crawler_base_url, _LOTTERY_POOL_SIZE
+        )
+        if not lottery_ids:
+            lottery_ids = await _fetch_lottery_ids(_LOTTERY_POOL_SIZE)
+        if lottery_ids and user_pool:
+            like_recipient = user_pool[0][0]  # LIKE 事件统一落点（可登录查看消息中心）
+            lot_tasks = [
+                _seed_bulk_comment_suite(
+                    client,
+                    rng,
+                    user_pool,
+                    int(lid),
+                    rng.choice(user_pool)[0],  # lottery 无作者，随机指派资源作者
+                    InteractionBizTypeEnum.LOTTERY,
+                    like_event_recipient=like_recipient,
+                )
+                for lid in lottery_ids
+            ]
+            for f in tqdm(
+                asyncio.as_completed(lot_tasks),
+                total=len(lot_tasks),
+                desc="seed lottery",
+                unit="个",
+            ):
+                try:
+                    await f
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"lottery 资源灌数失败（已跳过）: {e}")
+            logger.info(
+                f"  lottery 资源 {len(lottery_ids)} 个评论套件完成"
+                f"（点赞 + LIKE 事件→{like_recipient} 已覆盖）"
+            )
+        else:
+            logger.warning(
+                "无可用 lottery_id（接口与直连库均失败），跳过 lottery 资源灌数"
+            )
+
+        # 5. 私信：在 pptr 用户池上批量互发，填充 DM 内容（含 127763472 等任意 pptr 用户）。
+        #    全互动阶段仅在随机 12 人子集上跑私信，大数据灌数阶段用完整 pptr 池补覆盖，
+        #    使登录 demo 的测试账号也能看到私信内容（发送方自己的消息始终可见）。
+        if user_pool:
+            logger.info("经 API 灌入私信（pptr 用户池批量互发）…")
+            await _seed_bulk_dm(
+                client,
+                user_pool,
+                args.count,
+                args.concurrency,
+            )
+        else:
+            logger.warning("无可用用户池，跳过大数据灌数私信")
+
     logger.info("灌数完成！浏览计数由热路径原子 ±1 维护（2.42.0 起对账脚本已移除，浏览明细每用户每资源一行）。")
 
 
@@ -2622,6 +2893,7 @@ def _bulk_namespace(args: argparse.Namespace) -> argparse.Namespace:
     ns.concurrency = args.full_concurrency
     ns.users_pool_size = args.bulk_users_pool
     ns.dry_run = args.dry_run
+    ns.crawler_base_url = args.crawler_base_url
     return ns
 
 
