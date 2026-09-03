@@ -34,7 +34,6 @@ from app.models.enums import (
 from app.models.schemas.moment import (
     MomentContentNode,
     MomentCreateReq,
-    MomentEditReq,
     MomentRemoveReq,
     MomentTopReq,
 )
@@ -286,40 +285,6 @@ async def test_create_forward_ok_and_no_repost_incr():
         await _cleanup([src, data["dynId"]])
 
 
-async def test_edit_normal_forward_decrs_src():
-    async with new_session() as s:
-        src = await _seed_dynamic(s, D_MID2, MomentTypeEnum.WORD)
-        # 构造一条 normal 的转发动态
-        fwd = await _seed_dynamic(
-            s, D_MID, MomentTypeEnum.FORWARD, repost_src=src
-        )
-        # 模拟来源已被审核通过（normal）+ repostCount 已被 P6 加过 1
-        await s.exec(
-            text(f"UPDATE TInteractionStat SET repostCount = 1 WHERE bizType = 1 AND bizId = {src}")
-        )
-        await s.commit()
-
-        req = MomentEditReq(
-            dynId=fwd,
-            scene="FORWARD",
-            content=[_words("改一下转发语")],
-        )
-        data = await MomentPublishService.edit(s, D_MID, req)
-        # 编辑后回 auditing
-        assert data["auditStatus"] == MomentAuditStatusEnum.AUDITING
-        # 源动态 repostCount -1（触发点③）
-        src_stat = (
-            await s.exec(
-                select(TInteractionStat).where(
-                    col(TInteractionStat.bizType) == InteractionBizTypeEnum.DYNAMIC,
-                    col(TInteractionStat.bizId) == src,
-                )
-            )
-        ).one()
-        assert src_stat.repostCount == 0
-        await _cleanup([src, fwd])
-
-
 async def test_remove_normal_forward_decrs_src():
     async with new_session() as s:
         src = await _seed_dynamic(s, D_MID2, MomentTypeEnum.WORD)
@@ -367,7 +332,6 @@ __all__ = [
     "test_create_forward_ok_and_no_repost_incr",
     "test_create_forward_requires_normal_src",
     "test_create_word_auditing",
-    "test_edit_normal_forward_decrs_src",
     "test_nodes_to_text_and_count_at",
     "test_precheck_content_at_limit",
     "test_precheck_content_empty",

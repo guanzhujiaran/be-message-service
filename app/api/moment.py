@@ -3,8 +3,7 @@
 覆盖 P2-T7（发布）+ P4-T7（互动）+ P5-T7（话题 / @ / POI）：
 
 发布类：
-- POST /create        创建动态（WORD / FORWARD），响应 auditStatus='auditing'
-- POST /edit          编辑动态（rejected / auditing 编辑后回 auditing）
+- POST /create        创建动态（WORD / FORWARD），响应 auditStatus='auditing'；WORD 受每日上限
 - POST /remove        删除动态（软删，仅作者本人）
 - POST /admin/remove  管理员删除动态（软删，2.22.1，仅 root，可删任意动态）
 - POST /repost        转发动态（FORWARD）
@@ -60,8 +59,6 @@ from app.models.schemas.moment import (
     MomentCreateResp,
     MomentDislikeReq,
     MomentDislikeResp,
-    MomentEditReq,
-    MomentEditResp,
     MomentPoiResp,
     MomentRemoveReq,
     MomentRemoveResp,
@@ -90,8 +87,14 @@ from app.services.interaction_actions.interaction_status import (
 )
 from app.services.moment.moment_feed import MomentFeedService
 from app.services.moment.topic_feed import TopicFeedService
-from app.services.moment.moment_publish import MomentPublishService
-from app.services.moment.moment_topic import MomentTopicService
+from app.services.moment.moment_publish import (
+    MomentDailyCreateLimitError,
+    MomentPublishService,
+)
+from app.services.moment.moment_topic import (
+    MomentTopicDailyCreateLimitError,
+    MomentTopicService,
+)
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/community", tags=["moment"])
@@ -123,29 +126,11 @@ async def create_dynamic(
         data = await MomentPublishService.create(
             session, user.mid, req, client_ip=ip, user_agent=ua
         )
+    except MomentDailyCreateLimitError as e:
+        return StandardResponse(code=int(e.code), msg=str(e), data=None)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=MomentCreateResp(**data))
-
-
-@router.post(
-    "/edit", response_model=StandardResponse[MomentEditResp], summary="编辑动态"
-)
-async def edit_dynamic(
-    session: SessionDep,
-    user: RequiredUser,
-    req: MomentEditReq,
-    request: Request,
-    user_agent: str | None = Header(default=None, alias="user-agent"),
-) -> StandardResponse[MomentEditResp]:
-    ip, ua = _client_ctx(request, user_agent)
-    try:
-        data = await MomentPublishService.edit(
-            session, user.mid, req, client_ip=ip, user_agent=ua
-        )
-    except ValueError as e:
-        return StandardResponse(code=400, msg=str(e))
-    return StandardResponse(data=MomentEditResp(**data))
 
 
 @router.post(
@@ -626,6 +611,8 @@ async def topic_create(
 ) -> StandardResponse[MomentTopicCreateResp]:
     try:
         data = await MomentTopicService.create_topic(session, mid=user.mid, req=req)
+    except MomentTopicDailyCreateLimitError as e:
+        return StandardResponse(code=int(e.code), msg=str(e), data=None)
     except ValueError as e:
         return StandardResponse(code=422, msg=str(e))
     return StandardResponse(data=data, msg="话题已提交审核")

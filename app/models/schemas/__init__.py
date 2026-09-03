@@ -59,6 +59,8 @@ from app.models.schemas.dm import (
     DmSessionItem,
     DmSessionListResp,
     DmStatsResp,
+    DmTopReq,
+    DmTopResp,
 )
 from app.models.schemas.favorite import (
     FavoriteAddReq,
@@ -221,6 +223,8 @@ __all__ = [
     "DmSessionItem",
     "DmSessionListResp",
     "DmStatsResp",
+    "DmTopReq",
+    "DmTopResp",
     # 收藏
     "FavoriteAddReq",
     "FavoriteAddResp",

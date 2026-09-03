@@ -53,7 +53,12 @@ class DmSessionItem(SQLModel, AutoStrMixin):
     last_sender_uid: int | None = None
     unread_count: int = 0
     relation: DmRelationEnum = DmRelationEnum.NORMAL
-    is_top: bool = False
+    is_top: bool = Field(
+        default=False, description="是否置顶（= top_ts != 0，兼容 flag 用法）"
+    )
+    top_ts: int = Field(
+        default=0, description="置顶时间戳(毫秒)，0=未置顶；置顶唯一真相源"
+    )
     is_muted: bool = False
     updated_at: datetime | None = None
 
@@ -131,6 +136,22 @@ class DmAckReq(SQLModel):
 
 class DmSessionDeleteReq(SQLModel):
     talker_mid: StrInt = Field(description="要删除的会话对方mid（雪花 ID，StrInt 兼容前端 str 传参）")
+
+
+class DmTopReq(SQLModel):
+    """会话置顶 / 取消置顶（2.59.0）。"""
+
+    talker_mid: StrInt = Field(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    top: bool = Field(description="true=置顶（top_ts=now）；false=取消置顶（top_ts=0）")
+
+
+class DmTopResp(SQLModel, AutoStrMixin):
+    """置顶操作结果。"""
+
+    talker_mid: int = Field(default=0, description="被置顶/取消的会话对方 mid")
+    top_ts: int = Field(default=0, description="置顶时间戳(毫秒)；0=未置顶")
+    is_top: bool = Field(default=False, description="= top_ts != 0")
+    affected: int = Field(default=0, description="受影响会话行数（0=会话不存在或幂等无操作）")
 
 
 class DmAuditItem(SQLModel, AutoStrMixin):
@@ -237,4 +258,6 @@ __all__ = [
     "DmSessionItem",
     "DmSessionListResp",
     "DmStatsResp",
+    "DmTopReq",
+    "DmTopResp",
 ]

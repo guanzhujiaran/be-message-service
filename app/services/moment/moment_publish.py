@@ -6,9 +6,8 @@
   去标签纯文本 ``contentText``（便于全文搜索）。
 - 转发动态创建（FORWARD）：校验源动态 ``auditStatus='normal'``；写 ``repostSrcDynId``
   + 转发深度；**创建时不 +repostCount**，等管理员审核通过（P6-T2）再加 1。
-- 编辑 / 删除：编辑 rejected / auditing 动态 → 重置 ``auditing`` 重新审核；
-  软删（设 ``deletedAt``）；若被操作的 FORWARD 动态 ``before=normal``，则对
-  ``repostSrcDynId`` 指向的源动态 ``repostCount -1``（状态机触发点 ④）。
+- 删除（2.58.0 起**编辑功能已移除**）：软删（设 ``deletedAt``）；若被删的 FORWARD 动态
+  ``before=normal``，则对 ``repostSrcDynId`` 指向的源动态 ``repostCount -1``（状态机触发点 ④）。
 - 空间置顶 / 取消置顶：仅本人 + ``normal`` 状态可操作。
 - 发布前置校验：MVP 仅允许 WORD / FORWARD；字数上限、@ 数量上限、权限校验。
 
@@ -24,6 +23,7 @@ from loguru import logger
 from sqlmodel import col, delete, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
@@ -33,7 +33,11 @@ from app.models.db import (
     TMomentTopicRel,
     TResourceFeed,
     )
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import (
+    InteractionActionTypeEnum,
+    InteractionBizTypeEnum,
+    ResponseCode,
+)
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
@@ -47,13 +51,13 @@ from app.models.schemas.moment import (
     MomentAttachRef,
     MomentContentNode,
     MomentCreateReq,
-    MomentEditReq,
     MomentRemoveReq,
     MomentRepostReq,
     MomentTopicRef,
     MomentTopReq,
     )
 from app.services.user.account import PptrUser
+from app.services.common.daily_limit import count_created_today
 
 # 业务上限（MVP）
 _CONTENT_MAX_LENGTH = 2000
@@ -233,7 +237,7 @@ async def _validate_attach(
             raise ValueError("资源不存在")
 
 
-def _resolve_topics(req: MomentCreateReq | MomentEditReq) -> list[MomentTopicRef]:
+def _resolve_topics(req: MomentCreateReq) -> list[MomentTopicRef]:
     """合并发布/编辑请求的多话题（2.22.0）。
 
     - 兼容字段：`req.topics`（新，数组）与 `req.topic`（旧，单话题）合并；
@@ -351,6 +355,37 @@ def _resolve_ip_geo(
         return None, None, None, None, None
 
 
+# ==================== 动态每日创建上限（2.58.0）====================
+# 仅「创建 WORD」计次数；FORWARD 转发不计（用户口径）；编辑已移除（2.58.0）。
+# 软删（设 deletedAt）不改写 mid/created_at，故删除后仍计入当日次数。
+
+
+class MomentDailyCreateLimitError(Exception):
+    """单用户当日创建(WORD)动态数达到上限（moment_daily_create_limit）。"""
+
+    code = ResponseCode.MOMENT_DAILY_CREATE_LIMIT
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"今日发布动态已达每日上限（{limit} 条），请明天再试")
+
+
+async def _check_moment_daily_create_limit(session: AsyncSession, mid: int) -> None:
+    """动态 WORD 创建每日上限闸门（落库前调用）。"""
+    limit = settings.moment_daily_create_limit
+    if limit <= 0:
+        return
+    cnt = await count_created_today(
+        session,
+        TMoment,
+        author_column=TMoment.mid,
+        author_mid=mid,
+        extra_conditions=(TMoment.dynType == MomentTypeEnum.WORD,),
+    )
+    if cnt >= limit:
+        logger.warning(f"用户 {mid} 今日 WORD 动态创建已达上限（{cnt}/{limit}），本次被拒绝")
+        raise MomentDailyCreateLimitError(limit)
+
+
 # ==================== 创建：WORD / FORWARD（P2-T2 / P2-T3）====================
 
 
@@ -377,6 +412,10 @@ class MomentPublishService:
         await _validate_attach(session, attach)
         # 2.22.0：多话题（合并 topics+topic 去重，数量≤5，逐一校验 normal）
         topics = await _validate_topics(session, _resolve_topics(req))
+
+        # 每日 WORD 创建上限（2.58.0）：仅创建(WORD)计次数，FORWARD 转发不计、编辑已移除。
+        if dyn_type is MomentTypeEnum.WORD:
+            await _check_moment_daily_create_limit(session, mid)
 
         if dyn_type is MomentTypeEnum.FORWARD:
             data = await MomentPublishService._create_forward(
@@ -581,100 +620,6 @@ class MomentPublishService:
         await session.commit()
         await session.refresh(dyn)
         logger.info(f"用户 {mid} 转发动态(repost) srcDynId={src_dyn.dynId} → dynId={moment_id}")
-        return _to_base_resp(dyn)
-
-    # ==================== 编辑（P2-T4）====================
-
-    @staticmethod
-    async def edit(
-        session: AsyncSession,
-        mid: int,
-        req: MomentEditReq,
-        *,
-        client_ip: str | None = None,
-        user_agent: str | None = None,
-    ) -> dict[str, Any]:
-        """编辑动态。
-
-        - rejected / auditing 编辑后自动回 auditing 重新审核；
-        - normal 状态编辑 → 按状态机触发点 ③（离开 counting）→ 源动态 repostCount -1，
-          本动态回到 auditing。
-        """
-        dyn_type = _precheck_scene(req.scene)
-        attach, nodes = _resolve_attach(req)
-        _precheck_content(nodes)
-        await _validate_attach(session, attach)
-        # 2.22.0：多话题（合并 topics+topic 去重，数量≤5，逐一校验 normal）
-        topics = await _validate_topics(session, _resolve_topics(req))
-
-        dyn = await _get_dynamic_or_404(session, req.dynId)
-        if dyn.mid != mid:
-            raise ValueError("只能编辑自己的动态")
-        if dyn.deletedAt is not None:
-            raise ValueError("动态已删除，无法编辑")
-
-        was_normal = dyn.auditStatus == MomentAuditStatusEnum.NORMAL
-        from_status = dyn.auditStatus
-
-        # 状态机触发点 ③：编辑 normal 转发动态 → 源动态 repostCount -1
-        if was_normal and dyn.dynType is MomentTypeEnum.FORWARD and dyn.repostSrcDynId:
-            await MomentPublishService._decr_src_repost_count(session, dyn.repostSrcDynId)
-
-        now = datetime.now()
-        dyn.dynType = dyn_type
-        dyn.contentText = _nodes_to_text(nodes)
-        dyn.contentJson = [n.model_dump() for n in nodes]
-        # 2.21.0：attach 卡随编辑更新 bizType/bizRid
-        dyn.bizType = attach.bizType if attach else None
-        dyn.bizRid = int(attach.bizId) if attach and attach.bizId else None
-        # 2.22.0：多话题——主话题写 TMoment.topicId，关系表先删后插重建
-        dyn.topicId = topics[0].topicId if topics else None
-        await session.exec(delete(TMomentTopicRel).where(col(TMomentTopicRel.dynId) == dyn.dynId))
-        if topics:
-            await _persist_topic_rels(session, dyn.dynId, [t.topicId for t in topics])
-        dyn.closeComment = req.option.closeComment if req.option else dyn.closeComment
-        # 2.46.0：可见范围——FORWARD 恒 PUBLIC（服务端忽略传入值），WORD 可编辑时修改
-        if dyn.dynType is MomentTypeEnum.FORWARD:
-            dyn.visibleScope = MomentVisibleScopeEnum.PUBLIC
-        elif req.option and req.option.visibleScope is not None:
-            dyn.visibleScope = req.option.visibleScope
-        # 回到审核中：清空驳回原因、pubTime，isTop 取消
-        dyn.auditStatus = MomentAuditStatusEnum.AUDITING
-        dyn.auditRejectReason = None
-        dyn.pubTime = None
-        dyn.isTop = 0
-        dyn.topTime = None
-        dyn.updated_at = now
-        # 2.36.0：同步通用 Feed 元数据（回审核 + pubTime 置空 + 更新话题 tags）
-        await session.exec(
-            update(TResourceFeed)
-            .where(
-                col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
-                col(TResourceFeed.bizId) == dyn.dynId,
-            )
-            .values(
-                auditStatus="auditing",
-                pubTime=None,
-                tags=[t.topicId for t in topics] if topics else [],
-                visibleScope=dyn.visibleScope,
-            )
-        )
-
-        session.add(
-            _build_audit_log(
-                biz_type=InteractionBizTypeEnum.DYNAMIC,
-                biz_id=dyn.dynId,
-                operator_mid=mid,
-                to_status=MomentAuditStatusEnum.AUDITING,
-                action=MomentAuditLogActionEnum.EDIT,
-                from_status=from_status,
-                client_ip=client_ip,
-                user_agent=user_agent,
-            )
-        )
-        await session.commit()
-        await session.refresh(dyn)
-        logger.info(f"用户 {mid} 编辑动态 dynId={dyn.dynId}（before={from_status.value}）")
         return _to_base_resp(dyn)
 
     # ==================== 删除（P2-T4）====================

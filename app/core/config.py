@@ -244,6 +244,23 @@ class Settings(BaseSettings):
     dm_default_page_size: int = 20
     # 私信内容异步落库失败时是否降级为同步写入
     dm_content_sync_fallback: bool = True
+    # 私信发送限制（2.57.0）：单用户每自然日可发送私信总量上限（0 表示不限制）
+    dm_daily_send_limit: int = 1000
+    # 陌生人单条闸门开关：对方未关注我且从未回过我消息时，我仅可发陌生人单条额度
+    dm_stranger_gate_enabled: bool = True
+    # 陌生人单条闸门额度：对方未关注我、且从未回过我消息时，我可发送的条数上限
+    dm_stranger_gate_limit: int = 1
+
+    # ==================== 内容发布每日上限（2.58.0）====================
+    # 单用户每自然日可创建的评论数上限（0 表示不限制）；按「当天创建行」计数，
+    # 软删仍保留行故删除也计入。超限回业务码 4101。
+    comment_daily_create_limit: int = 100
+    # 单用户每自然日可创建(WORD)的动态数上限（0 表示不限制）；FORWARD 转发不计、
+    # 编辑已移除。按「当天创建行 + dynType=WORD」计数。超限回业务码 4102。
+    moment_daily_create_limit: int = 30
+    # 单用户每自然日可创建的话题数上限（0 表示不限制）；按「当天创建行」计数
+    # （话题创建即 auditing、无软删）。超限回业务码 4103。
+    topic_daily_create_limit: int = 10
 
     # ==================== 评论系统 ====================
     # 单条评论最多携带的图片数（对齐 B 站九宫格）

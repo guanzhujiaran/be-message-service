@@ -116,20 +116,6 @@ class MomentCreateReq(SQLModel, AutoStrMixin):
     option: MomentCreateOption | None = Field(default=None, description="发布选项")
 
 
-class MomentEditReq(SQLModel, AutoStrMixin):
-    """编辑动态请求（rejected / auditing 编辑后自动回 auditing）。"""
-
-    dynId: StrInt = Field(description="动态 ID（int，兼容前端 str 传参）")
-    scene: str = Field(description="动态场景：WORD / FORWARD")
-    content: list[MomentContentNode] = Field(description="富文本正文节点列表", min_length=1)
-    attach: MomentAttachRef | None = Field(default=None, description="附加卡资源引用（2.21.0）")
-    topics: list[MomentTopicRef] | None = Field(
-        default=None, description="多话题（2.22.0）：最多 5 个，去重，仅可关联已过审话题"
-    )
-    topic: MomentTopicRef | None = Field(default=None, description="[兼容]单话题引用（2.22.0 起与 topics 合并去重）")
-    option: MomentCreateOption | None = Field(default=None, description="发布选项")
-
-
 class MomentRemoveReq(SQLModel, AutoStrMixin):
     """删除动态请求（软删）。"""
 
@@ -257,10 +243,6 @@ class MomentBaseResp(SQLModel, AutoStrMixin):
 
 class MomentCreateResp(MomentBaseResp):
     """创建动态响应。"""
-
-
-class MomentEditResp(MomentBaseResp):
-    """编辑动态响应。"""
 
 
 class MomentRemoveResp(SQLModel, AutoStrMixin):
@@ -738,8 +720,6 @@ __all__ = [
     "MomentCreateResp",
     "MomentDetailResp",
     "MomentDetailsReq",
-    "MomentEditReq",
-    "MomentEditResp",
     "MomentFeedItem",
     "MomentFeedResp",
     "MomentLbsRef",

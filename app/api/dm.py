@@ -36,11 +36,18 @@ from app.models.schemas import (
     DmSendResp,
     DmSessionDeleteReq,
     DmSessionListResp,
+    DmTopReq,
+    DmTopResp,
 )
 from app.models.str_int import StrInt
 from app.services.message.insite.activity import ActivityService
 from app.services.user.account import DmAdminUser
-from app.services.message.dm.dm import DmInbox, DmSessionObject
+from app.services.message.dm.dm import (
+    DmDailySendLimitError,
+    DmInbox,
+    DmSessionObject,
+    DmStrangerSendLimitError,
+)
 
 router = APIRouter(prefix="/api/v1/message/dm", tags=["message-dm"])
 
@@ -66,6 +73,9 @@ async def send_dm(
     响应里的 `content_async=False` 表示 MQ 不可用，已降级为同步落库。
 
     若对方关闭了陌生人私信，返回 `filtered=True`：消息只保留在发送方视角。
+
+    发送限制（2.57.0）：命中每日上限返回业务码 `4001`，命中陌生人单条闸门
+    （对方未关注我且未回过我时仅可发一条）返回 `4002`，两类情况消息均不落库。
     """
     # 封禁校验：被封禁「私信」服务的用户禁止发送私信
     if await DmAdminUser(mid=user.mid).is_banned(session, BanServiceEnum.DM.value):
@@ -75,6 +85,10 @@ async def send_dm(
         data = await DmSessionObject(session, user.mid, req.receiver_mid).send(
             req, sender_name=user.uname or user.user_name
         )
+    except DmDailySendLimitError as e:
+        return StandardResponse(code=int(e.code), msg=str(e), data=None)
+    except DmStrangerSendLimitError as e:
+        return StandardResponse(code=int(e.code), msg=str(e), data=None)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     except Exception as e:  # noqa: BLE001
@@ -115,6 +129,32 @@ async def delete_session(
         data=DmOperationResp(
             affected=affected, message="已删除会话" if affected else "会话不存在"
         )
+    )
+
+
+@router.post(
+    "/session/top",
+    response_model=StandardResponse[DmTopResp],
+    summary="会话置顶/取消置顶",
+)
+async def top_session(
+    session: SessionDep, user: RequiredUser, req: DmTopReq
+) -> StandardResponse[DmTopResp]:
+    """置顶 / 取消置顶某会话（仅自己视角）。
+
+    置顶写 `top_ts=now`，取消置顶写 `top_ts=0`；可多会话同时置顶（各自独立）。
+    """
+    affected, top_ts = await DmSessionObject(session, user.mid, req.talker_mid).top(
+        req.top
+    )
+    return StandardResponse(
+        data=DmTopResp(
+            talker_mid=int(req.talker_mid),
+            top_ts=top_ts,
+            is_top=(top_ts != 0),
+            affected=affected,
+        ),
+        msg="已置顶会话" if (affected and req.top) else "已取消置顶" if affected else "会话不存在",
     )
 
 

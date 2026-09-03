@@ -65,7 +65,7 @@ import random
 import re
 import sys
 import uuid
-from itertools import zip_longest
+from itertools import cycle, zip_longest
 from pathlib import Path
 # 允许 scripts/ 目录下直接运行：注入项目根目录到 sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -252,13 +252,20 @@ def _at_nodes(targets: list[tuple[int, str]]) -> list[dict]:
 
 
 def _content_nodes(
-    sentence: str, at_targets: list[tuple[int, str]] | None = None
+    sentence: str,
+    at_targets: list[tuple[int, str]] | None = None,
+    *,
+    with_image: bool = False,
 ) -> list[dict]:
-    """构造富文本节点（WORDS + 末尾随机 @ 节点 + 30% 概率外链图片 LINK）。"""
+    """构造富文本节点（WORDS + 末尾 @ 节点 + 可选外链图片 LINK）。
+
+    ``with_image``：是否附带一张轮遍选取的外链图片（由调用方用确定性轮遍决定，
+    不再在函数内部随机 30%）。
+    """
     nodes: list[dict] = [{"type": "WORDS", "text": sentence}]
     nodes.extend(_at_nodes(at_targets or []))
-    if random.random() < 0.3:
-        url = random.choice(_IMG_URLS)
+    if with_image:
+        url = _rr.pick(_IMG_URLS)
         nodes.append({"type": "WORDS", "text": " "})
         nodes.append(
             {
@@ -1164,16 +1171,21 @@ async def seed_moment(
     单条失败软降级跳过，不影响整体进度；转发池 ``normal_ids`` 等共享状态
     在单事件循环内由主协程聚合，无竞态。
     """
-    authors = users[: max(1, len(users) // 2)]
+    # 作者在全部用户上轮流循环（round-robin），保证每个用户都被轮到创建动态，
+    # 总次数 = count（不再只用前半用户 / 随机选）。
+    author_cycle = cycle(users)
     normal_ids: list[int] = []
     forward_ids: list[int] = []
     like_count = 0
     topic_ids: list[int] = []
 
-    # 建话题 + 审核通过（话题名全局唯一，带随机后缀）
-    creator_mid, _ = random.choice(authors)
+    # 建话题 + 审核通过（话题名全局唯一；话题名轮遍 _TOPIC_NAMES，全局唯一用递增序号后缀，
+    # 不再用 uuid4 随机后缀——序号由 _rr 游标保证不重复）。
+    creator_mid, _ = next(author_cycle)
+    topic_seq = 0
     for _ in range(2):
-        name = random.choice(_TOPIC_NAMES) + str(uuid.uuid4().hex[:4])
+        topic_seq += 1
+        name = f"{_rr.pick(_TOPIC_NAMES)}_{topic_seq}"
         try:
             tid = await client.create_topic(creator_mid, name)
             await client.approve_topic(tid)
@@ -1184,53 +1196,62 @@ async def seed_moment(
 
     sem = asyncio.Semaphore(concurrency)
 
-    async def _one() -> tuple[int | None, int | None, int | None, int]:
-        """创建一条动态并完成 发布/审核/点赞/浏览/举报/转发。"""
-        async with sem:
-            author_mid, _ = random.choice(authors)
-            sentence = random.choice(_SENTENCES)
-            # 正文末尾追加随机 @（不 @ 自己），覆盖动态 @ 落库 + 事件通知链路
-            at_targets = _random_at_targets(users, exclude_mid=author_mid)
-            topic_id = (
-                random.choice(topic_ids) if topic_ids and random.random() < 0.5 else None
-            )
+    def _rr_at_targets(exclude_mid: int | None) -> list[tuple[int, str]]:
+        """确定性轮遍 @ 目标：从 users 里（排除自己）轮流取 1 个。"""
+        pool = [u for u in users if u[0] != exclude_mid]
+        if not pool:
+            return []
+        mid, name = _rr.pick(pool)
+        return [(int(mid), (name or f"user{mid}"))]
 
-            # 1) 发布
+    async def _one() -> tuple[int | None, int | None, int | None, int]:
+        """创建一条动态并完成 发布/审核/点赞/浏览/举报/转发（全定值轮遍）。"""
+        async with sem:
+            author_mid, _ = next(author_cycle)
+            sentence = _rr.pick(_SENTENCES)
+            # 正文末尾追加 @（不 @ 自己），覆盖动态 @ 落库 + 事件通知链路
+            at_targets = _rr_at_targets(author_mid)
+            # 话题：轮流挂载（topic_ids 非空时每 2 条带 1 个话题，避免全部/全不带）
+            topic_id = _rr.pick(topic_ids) if (topic_ids and _rr.pick(range(2)) == 0) else None
+
+            # 1) 发布（正文图轮遍 _IMG_URLS，非随机 30%）
+            content = _content_nodes(sentence, at_targets, with_image=_rr.pick(range(10)) == 0)
             dyn_id = await client.create_dynamic(
                 author_mid,
                 scene="WORD",
-                content=_content_nodes(sentence, at_targets),
+                content=content,
                 topic_id=topic_id,
             )
             # 2) 审核通过 → normal
             await client.approve(dyn_id)
 
-            # 3) 点赞
+            # 3) 点赞：除作者外轮流取 3 个点赞（用户不足则全点）
             likers = [u for u in users if u[0] != author_mid]
             n_like = 0
-            for liker in random.sample(likers, min(random.randint(0, 5), len(likers))):
+            for liker in _rr.pick_n(likers, min(3, len(likers))):
                 await client.thumb(liker[0], dyn_id)
                 n_like += 1
 
-            # 4) 浏览（detail 触发浏览 MQ）
+            # 4) 浏览（detail 触发浏览 MQ）：轮遍取 1 个非作者
             if likers:
-                viewer = random.choice(likers)[0]
+                viewer = _rr.pick(likers)[0]
                 await client.browse(viewer, dyn_id)
 
-            # 5) 举报：少量动态被举报
-            if random.random() < 0.1 and likers:
-                await client.report_moment(random.choice(likers)[0], dyn_id)
+            # 5) 举报：每 10 条动态举报 1 次（确定性，不再概率随机）
+            if likers and _rr.pick(range(10)) == 0:
+                await client.report_moment(_rr.pick(likers)[0], dyn_id)
 
-            # 6) 转发：已过审动态中 ~20% 被转发 + 再次审核
+            # 6) 转发：已有过审动态时每 5 条转发 1 次（源动态轮遍取，不再概率随机）
             fwd_id: int | None = None
-            if normal_ids and random.random() < 0.2:
-                src_dyn = random.choice(normal_ids)
+            if normal_ids and _rr.pick(range(5)) == 0:
+                src_dyn = _rr.pick(normal_ids)
                 fwd_id = await client.repost(
                     author_mid,
                     src_dyn,
                     _content_nodes(
                         "转发：这个说得太对了",
-                        _random_at_targets(users, exclude_mid=author_mid),
+                        _rr_at_targets(author_mid),
+                        with_image=False,
                     ),
                 )
                 await client.approve(fwd_id)
@@ -2270,6 +2291,39 @@ def _sample(distribution: list[tuple[int, float]]) -> int:
     return random.choices(values, weights=weights, k=1)[0]
 
 
+class _RoundRobin:
+    """确定性轮遍游标：从 ``seq`` 轮流取下一项、取完回开头（single-queue 单线程安全）。
+
+    用于取代 ``random.choice / random.sample / random.randint`` 的“随机挑”，
+    让 seed 全流程**定值轮遍**（每个用户 / 每条素材都被均匀轮到、不重复）：
+    - ``pick(seq)``：取下一项；
+    - ``pick_n(seq, n)``：取连续 ``n`` 项（池足够大时不重复，循环后从头再来）。
+    取空序列抛 ``ValueError``。
+    """
+
+    __slots__ = ("_i",)
+
+    def __init__(self) -> None:
+        self._i = 0
+
+    def pick(self, seq: list) -> object:
+        if not seq:
+            raise ValueError("_RoundRobin.pick 从空序列取值")
+        v = seq[self._i % len(seq)]
+        self._i += 1
+        return v
+
+    def pick_n(self, seq: list, n: int) -> list:
+        return [self.pick(seq) for _ in range(max(0, n))]
+
+    def reset(self) -> None:
+        self._i = 0
+
+
+# 全 seed 共享的确定性轮遍游标（单事件循环顺序调用，跨阶段共用一条数据流）
+_rr = _RoundRobin()
+
+
 async def fetch_real_dyns(total: int) -> list[tuple]:
     """从 biliopusdb 流式拉取真实动态（keyset 分页，避免 OFFSET 深翻页慢）。
 
@@ -2593,8 +2647,13 @@ async def _seed_dynamic(
     topic_ids: list[int],
     real: tuple,
     sem: asyncio.Semaphore,
+    author_cycle: "cycle[tuple[int, str | None]]",
 ) -> None:
     """单条动态：创建 → 审核通过 → 按分布点赞/评论/@/浏览（并发）。
+
+    作者在 ``user_pool`` 上**轮流循环**（round-robin，``author_cycle``），
+    保证每个用户都被轮到创建动态，总次数 = ``len(reals)``（= ``count``）。
+    其余互动者（点赞 / 浏览 / @ / 评论）仍随机采样，不要求轮遍。
 
     正文末尾追加随机 @（不 @ 作者本人），让灌数数据同样覆盖动态 @ 链路；
     评论走 ``_seed_bulk_comment_suite``（一级评论 + 楼中楼 + 评论赞踩 + 显式 @ +
@@ -2605,7 +2664,7 @@ async def _seed_dynamic(
     async with sem:
         try:
             _dyn_id, _pub_time, content, _comment_count, _repost_count = real
-            author, _ = rng.choice(user_pool)
+            author, _ = next(author_cycle)
             nodes: list[dict] = [{"type": "WORDS", "text": content}]
             if len(content) <= _BULK_AT_CONTENT_MAXLEN:
                 nodes.extend(
@@ -2784,8 +2843,10 @@ async def run_bulk(args: argparse.Namespace) -> None:
         logger.info(f"  话题 {len(topic_ids)} 个（含复用已有）")
 
         # 3. 动态：并发创建 + 审核 + 点赞/浏览（正文末尾随机 @）
+        # 作者在 user_pool 上轮流循环（round-robin），每个用户都轮到创建，总次数 = len(reals)
         logger.info("经 API 灌入动态（含点赞/浏览/@）…")
         sem = asyncio.Semaphore(args.concurrency)
+        author_cycle = cycle(user_pool)
         tasks = [
             asyncio.create_task(
                 _seed_dynamic(
@@ -2795,6 +2856,7 @@ async def run_bulk(args: argparse.Namespace) -> None:
                     topic_ids,
                     real,
                     sem,
+                    author_cycle,
                 )
             )
             for real in reals

@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: f2712dc213c3
+Revision ID: 03349acc2bb4
 Revises: 
-Create Date: 2026-09-02 15:15:29.611520
+Create Date: 2026-09-04 01:52:26.825520
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f2712dc213c3'
+revision: str = '03349acc2bb4'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -36,6 +36,23 @@ def upgrade() -> None:
     op.create_index('idx_fav_folder_mid_created', 'TFavoriteFolder', ['mid', sa.literal_column('created_at DESC')], unique=False)
     op.create_index(op.f('ix_TFavoriteFolder_created_at'), 'TFavoriteFolder', ['created_at'], unique=False)
     op.create_index(op.f('ix_TFavoriteFolder_mid'), 'TFavoriteFolder', ['mid'], unique=False)
+    op.create_table('TFeedImpression',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
+    sa.Column('viewerKey', sqlmodel.sql.sqltypes.AutoString(length=96), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizId', sa.BIGINT(), nullable=False),
+    sa.Column('feedScene', sqlmodel.sql.sqltypes.AutoString(length=32), nullable=False),
+    sa.Column('impressionCount', sa.Integer(), nullable=False),
+    sa.Column('firstImpressionAt', sa.DateTime(), nullable=False),
+    sa.Column('lastImpressionAt', sa.DateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('pk', name='TFeedImpression_pkey'),
+    sa.UniqueConstraint('viewerKey', 'bizType', 'bizId', 'feedScene', name='TFeedImpression_viewerKey_bizType_bizId_feedScene_key'),
+    comment='通用 Feed 曝光记录：观众在某场景已下发资源（曝光去重，防重复刷到）'
+    )
+    op.create_index('idx_feed_impression_viewer_scene_time', 'TFeedImpression', ['viewerKey', 'feedScene', sa.literal_column('lastImpressionAt DESC')], unique=False)
+    op.create_index(op.f('ix_TFeedImpression_created_at'), 'TFeedImpression', ['created_at'], unique=False)
     op.create_table('TFolderCoverAudit',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -519,6 +536,7 @@ def upgrade() -> None:
     sa.Column('ack_msgkey', sa.BIGINT(), nullable=True),
     sa.Column('relation', sa.Enum('NORMAL', 'STRANGER', name='dmrelationenum'), nullable=False),
     sa.Column('is_top', sa.Boolean(), nullable=False),
+    sa.Column('top_ts', sa.BIGINT(), nullable=False),
     sa.Column('is_muted', sa.Boolean(), nullable=False),
     sa.Column('is_deleted', sa.Boolean(), nullable=False),
     sa.PrimaryKeyConstraint('id'),
@@ -884,6 +902,9 @@ def downgrade() -> None:
     op.drop_index('idx_folder_cover_audit_status_created', table_name='TFolderCoverAudit')
     op.drop_index('idx_folder_cover_audit_folder_status', table_name='TFolderCoverAudit')
     op.drop_table('TFolderCoverAudit')
+    op.drop_index(op.f('ix_TFeedImpression_created_at'), table_name='TFeedImpression')
+    op.drop_index('idx_feed_impression_viewer_scene_time', table_name='TFeedImpression')
+    op.drop_table('TFeedImpression')
     op.drop_index(op.f('ix_TFavoriteFolder_mid'), table_name='TFavoriteFolder')
     op.drop_index(op.f('ix_TFavoriteFolder_created_at'), table_name='TFavoriteFolder')
     op.drop_index('idx_fav_folder_mid_created', table_name='TFavoriteFolder')

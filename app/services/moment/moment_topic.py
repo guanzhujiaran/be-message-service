@@ -15,12 +15,15 @@
 
 from datetime import datetime
 
+from loguru import logger
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from bili_common.models import ResponseCode
 from app.core.config import settings
 from app.models.db import TMoment, TMomentTopic
 from app.models.enums import MomentTopicAuditStatusEnum
+from app.services.common.daily_limit import count_created_today
 from app.services.moment.edgerank import TOPIC_SQUARE_PROFILE, compute_topic_score
 from app.models.schemas.moment import (
     MomentAtListResp,
@@ -96,6 +99,35 @@ async def _query_poi(
         for r in rows[:page_size]
     ]
     return MomentPoiResp(items=items, hasMore=has_more)
+
+
+# ==================== 话题每日创建上限（2.58.0）====================
+# 话题创建即 auditStatus=auditing、无软删，无法绕过当日计数；超限直接拒绝不落库。
+
+
+class MomentTopicDailyCreateLimitError(Exception):
+    """单用户当日创建话题数达到上限（topic_daily_create_limit）。"""
+
+    code = ResponseCode.TOPIC_DAILY_CREATE_LIMIT
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"今日创建话题已达每日上限（{limit} 个），请明天再试")
+
+
+async def _check_topic_daily_create_limit(session: AsyncSession, mid: int) -> None:
+    """话题创建每日上限闸门（落库前调用）。"""
+    limit = settings.topic_daily_create_limit
+    if limit <= 0:
+        return
+    cnt = await count_created_today(
+        session,
+        TMomentTopic,
+        author_column=TMomentTopic.creatorMid,
+        author_mid=mid,
+    )
+    if cnt >= limit:
+        logger.warning(f"用户 {mid} 今日话题创建已达上限（{cnt}/{limit}），本次被拒绝")
+        raise MomentTopicDailyCreateLimitError(limit)
 
 
 class MomentTopicService:
@@ -281,6 +313,9 @@ class MomentTopicService:
         ).one_or_none()
         if existing is not None:
             raise ValueError("话题已存在")
+
+        # 话题每日创建上限（2.58.0）：超限拒绝不落库
+        await _check_topic_daily_create_limit(session, mid)
 
         topic = TMomentTopic(
             topicId=await generate_topic_id(),

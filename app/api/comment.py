@@ -40,6 +40,7 @@ from app.services.user.account import CommentAdminUser
 from app.services.comment import CommentService
 from app.services.comment.comment_action import CommentActionService
 from app.services.comment.comment_read import CommentReadService
+from app.services.comment.comment import CommentDailyCreateLimitError
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/comment", tags=["comment"])
@@ -125,6 +126,8 @@ async def add_comment(
             ip_location=ip_location,
             ip_isp=ip_isp,
         )
+    except CommentDailyCreateLimitError as e:
+        return StandardResponse(code=int(e.code), msg=str(e), data=None)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)

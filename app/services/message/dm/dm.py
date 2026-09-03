@@ -46,6 +46,7 @@ from sqlmodel import col, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from bili_common.models import ResponseCode
 from app.core.config import settings
 from app.core.sharding import generate_msgkey, parse_timestamp_ms
 from app.models.db import DmContentDeadLetter, DmMessageIndex, DmSession
@@ -106,6 +107,31 @@ def _is_deadlock(e: Exception) -> bool:
     return bool(args and args[0] == 1213)
 
 
+# ==================== 发送限制异常 ====================
+# 两类「发送被限」是带独立业务码的主动拒绝（消息不落库），须在 API 层先于通用
+# ValueError（→400）/ Exception（→500）捕获并按各自 code 回执，故不与 ValueError 混用。
+
+
+class DmDailySendLimitError(Exception):
+    """触发每日发送上限（dm_daily_send_limit）。"""
+
+    code = ResponseCode.DM_SEND_DAILY_LIMIT
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"今日私信发送已达上限（{limit} 条），请明天再试")
+
+
+class DmStrangerSendLimitError(Exception):
+    """触发陌生人单条闸门（对方未关注且未回过消息时仅可发一条）。"""
+
+    code = ResponseCode.DM_SEND_STRANGER_LIMIT
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            f"对方尚未关注你且未回复过你，只能发送 {limit} 条消息，待对方回复后可继续发送"
+        )
+
+
 # ==================== 共享底层查询 ====================
 
 
@@ -139,7 +165,8 @@ def _to_session_item(
         last_sender_uid=row.last_sender_uid,
         unread_count=row.unread_count,
         relation=row.relation,
-        is_top=row.is_top,
+        is_top=(row.top_ts != 0),
+        top_ts=row.top_ts,
         is_muted=row.is_muted,
         updated_at=row.updated_at,
     )
@@ -280,6 +307,10 @@ class DmSessionObject:
         # ---- 拦截：接收方已拉黑发送方 → 直接拒绝发送 ----
         if await FollowService.is_blocked_by(self.session, sender_mid, receiver_mid):
             raise ValueError("对方已拉黑你，无法发送私信")
+
+        # ---- 发送限制（2.57.0，命中一律不落库）----
+        await self._check_daily_send_limit(sender_mid)
+        await self._check_stranger_gate(sender_mid, receiver_mid)
 
         # ---- 1. 陌生人过滤 ----
         is_stranger = await self._is_stranger(receiver_mid, sender_mid)
@@ -679,6 +710,32 @@ class DmSessionObject:
         await self.session.commit()
         return 1
 
+    async def top(self, top: bool) -> tuple[int, int]:
+        """置顶 / 取消置顶本会话（仅自己视角，owner_mid）。
+
+        置顶唯一真相源为 `top_ts`（毫秒时间戳）：`top=True` 置顶写当前毫秒、
+        取消置顶写 0。`is_top` 列同步写（兼容字段，读取不再依赖它）。
+        幂等：会话不存在返回 `(0, 0)`；重复置顶刷新时间戳；未置顶取消 no-op。
+
+        Returns:
+            (affected, top_ts)：affected 为受影响行数（0=会话不存在），
+            top_ts 为操作后的置顶时间戳。
+        """
+        row = await self.load()
+        if row is None:
+            return 0, 0
+        now_ms = int(datetime.now().timestamp() * 1000)
+        if top:
+            row.top_ts = now_ms
+            row.is_top = True
+        else:
+            row.top_ts = 0
+            row.is_top = False
+        row.updated_at = datetime.now()
+        self.session.add(row)
+        await self.session.commit()
+        return 1, int(row.top_ts)
+
     # ==================== 内部方法 ====================
 
     async def _is_stranger(
@@ -705,6 +762,104 @@ class DmSessionObject:
             )
         ).one() or 0
         return int(replied) == 0
+
+    async def _check_daily_send_limit(self, sender_mid: int) -> None:
+        """每日发送总量闸门：单用户当天作为发送者的私信数达到上限则拒绝。
+
+        口径：统计 `owner_mid==sender AND sender_uid==sender`（发送方视角的索引行），
+        `msg_ts` 落在本自然日窗口内。写扩散每封私信在发送方视角恒有一行，故不会重复计数；
+        被陌生人过滤只留发送方视角的行同样计入「已发出」。上限由 `dm_daily_send_limit` 配置
+        （0 表示不限制）。命中抛 `DmDailySendLimitError`（消息不落库）。
+        """
+        limit = settings.dm_daily_send_limit
+        if limit <= 0:
+            return
+        now = datetime.now()
+        day_start = datetime(now.year, now.month, now.day)
+        start_ms = int(day_start.timestamp() * 1000)
+        end_ms = start_ms + 24 * 60 * 60 * 1000
+        sent = int(
+            (
+                await self.session.exec(
+                    select(func.count())
+                    .select_from(DmMessageIndex)
+                    .where(
+                        DmMessageIndex.owner_mid == sender_mid,
+                        DmMessageIndex.sender_uid == sender_mid,
+                        DmMessageIndex.msg_status != DmMsgStatusEnum.DELETED,
+                        DmMessageIndex.msg_ts >= start_ms,
+                        DmMessageIndex.msg_ts < end_ms,
+                    )
+                )
+            ).one()
+            or 0
+        )
+        if sent >= limit:
+            logger.warning(
+                f"用户 {sender_mid} 今日私信发送已达上限（{sent}/{limit}），本次发送被拒绝"
+            )
+            raise DmDailySendLimitError(limit)
+
+    async def _check_stranger_gate(self, sender_mid: int, receiver_mid: int) -> None:
+        """陌生人单条闸门：对方未关注我、且从未回过我消息时，我至多可发限内条数。
+
+        判定（发送方 S → 接收方 R）：
+        1. `R 是否关注 S`：查 `msg_user_follow`（`FollowService.is_following(R, S)`）；
+        2. `R 是否回过 S`：`DmMessageIndex` 中 `owner==R AND sender_uid==R AND talker==S` 是否有行；
+        3. 仅当「R 未关注 S 且 R 从未回过 S」时，再统计 `S` 已发给 `R` 的条数
+           （`owner==S AND sender_uid==S AND talker==R`），达到 `dm_stranger_gate_limit`
+           （默认 1）即拒绝；否则放行（本条成为对方回我前最后一条额度）。
+
+        解除条件：一旦 R 关注了 S，或 R 给 S 回过任意一条消息，本方向即不再受限。
+        开关 `dm_stranger_gate_enabled`，命中抛 `DmStrangerSendLimitError`（消息不落库）。
+        """
+        if not settings.dm_stranger_gate_enabled:
+            return
+        limit = settings.dm_stranger_gate_limit
+        if limit <= 0:
+            return
+        # 对方已关注我 → 解除限制
+        if await FollowService.is_following(self.session, receiver_mid, sender_mid):
+            return
+        # 对方曾回过我 → 解除限制
+        replied = int(
+            (
+                await self.session.exec(
+                    select(func.count())
+                    .select_from(DmMessageIndex)
+                    .where(
+                        DmMessageIndex.owner_mid == receiver_mid,
+                        DmMessageIndex.talker_mid == sender_mid,
+                        DmMessageIndex.sender_uid == receiver_mid,
+                        DmMessageIndex.msg_status != DmMsgStatusEnum.DELETED,
+                    )
+                )
+            ).one()
+            or 0
+        )
+        if replied > 0:
+            return
+        # 陌生人且对方从未回过：统计我已发条数
+        sent = int(
+            (
+                await self.session.exec(
+                    select(func.count())
+                    .select_from(DmMessageIndex)
+                    .where(
+                        DmMessageIndex.owner_mid == sender_mid,
+                        DmMessageIndex.talker_mid == receiver_mid,
+                        DmMessageIndex.sender_uid == sender_mid,
+                        DmMessageIndex.msg_status != DmMsgStatusEnum.DELETED,
+                    )
+                )
+            ).one()
+            or 0
+        )
+        if sent >= limit:
+            logger.warning(
+                f"用户 {sender_mid} 向陌生人 {receiver_mid} 连发私信触发单条闸门（已发 {sent} 条）"
+            )
+            raise DmStrangerSendLimitError(limit)
 
     async def _upsert_owner_row(
         self,
@@ -875,7 +1030,8 @@ class DmInbox:
         stmt = (
             select(DmSession)
             .where(*conditions)
-            .order_by(col(DmSession.is_top).desc(), col(DmSession.last_msg_ts).desc())  # type: ignore[union-attr]
+            # 置顶恒在前（top_ts DESC，最近置顶优先），再按最后消息时间倒序（2.59.0）
+            .order_by(col(DmSession.top_ts).desc(), col(DmSession.last_msg_ts).desc())  # type: ignore[union-attr]
             .offset((page_num - 1) * page_size)
             .limit(page_size)
         )

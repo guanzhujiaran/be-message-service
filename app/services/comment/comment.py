@@ -41,7 +41,12 @@ from app.models.db import (
     CommentSubject,
     TMoment,
     )
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models import (
+    InteractionActionTypeEnum,
+    InteractionBizTypeEnum,
+    ResponseCode,
+)
+from app.services.common.daily_limit import count_created_today
 from app.models.enums import (
     CommentAttrBit,
     CommentStateEnum,
@@ -113,6 +118,33 @@ async def _check_rate_limit(mid: int, message: str) -> None:
         if same_count >= _RATE_LIMIT_MAX:
             raise ValueError("操作过于频繁，请稍后再试")
         hist.append((now, key))
+
+
+# ==================== 评论每日创建上限（2.58.0）====================
+# 「当天已创建的评论行数」达上限即拒绝（不落库）。删除为软删（state=DELETED，行保留、
+# mid/created_at 不改写），故删除后仍计入当日次数；编辑评论不在此入口。
+
+
+class CommentDailyCreateLimitError(Exception):
+    """单用户当日评论创建数达到上限（comment_daily_create_limit）。"""
+
+    code = ResponseCode.COMMENT_DAILY_CREATE_LIMIT
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"今日评论已达每日上限（{limit} 条），请明天再试")
+
+
+async def _check_comment_daily_limit(session: AsyncSession, mid: int) -> None:
+    """评论创建每日上限闸门（落库前调用）。"""
+    limit = settings.comment_daily_create_limit
+    if limit <= 0:
+        return
+    cnt = await count_created_today(
+        session, CommentIndex, author_column=CommentIndex.mid, author_mid=mid
+    )
+    if cnt >= limit:
+        logger.warning(f"用户 {mid} 今日评论创建已达上限（{cnt}/{limit}），本次被拒绝")
+        raise CommentDailyCreateLimitError(limit)
 
 
 async def generate_rpid() -> int:
@@ -261,6 +293,8 @@ class CommentService:
 
         # 防刷：同用户同内容 10s 内超过阈值直接拒绝（Phase 2.6）
         await _check_rate_limit(mid, req.message)
+        # 评论每日创建上限（2.58.0）：当天已创建达上限则拒绝（不落库，删除仍计次数）
+        await _check_comment_daily_limit(session, mid)
 
         message = (req.message or "").strip()
         if not message:

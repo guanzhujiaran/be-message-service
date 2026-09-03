@@ -86,7 +86,10 @@ class DmSession(TimestampMixin, table=True):
         index=True,
         description="会话关系：normal / stranger",
     )
-    is_top: bool = Field(default=False, description="是否置顶")
+    is_top: bool = Field(default=False, description="是否置顶（[兼容] 2.59.0 起不再作为权威，由 top_ts 推导，保留列）")
+    top_ts: int = Field(
+        default=0, sa_type=BIGINT, description="置顶时间戳(毫秒)，0=未置顶；会话置顶唯一真相源（2.59.0）"
+    )
     is_muted: bool = Field(default=False, description="是否免打扰")
     is_deleted: bool = Field(default=False, index=True, description="是否已删除会话")
 
