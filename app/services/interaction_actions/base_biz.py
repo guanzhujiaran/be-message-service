@@ -115,6 +115,10 @@ class BaseBiz(ABC):
         self.session = session
         self.biz_id = int(biz_id)
         self.actor_mid = int(actor_mid) if actor_mid is not None else None
+        # 客户端上下文（2.56.0 显式化）：发布 / 审核日志类操作需要，由接口层注入；
+        # 默认 None，未注入时各资源方法按「无客户端信息」处理（取代原动态属性 + getattr 兜底）
+        self.client_ip: str | None = None
+        self.user_agent: str | None = None
 
     # ==================== 基本属性 ====================
 

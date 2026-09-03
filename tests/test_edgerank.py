@@ -46,8 +46,10 @@ from app.services.moment.edgerank import (
     compute_topic_score,
     decay,
 )
+from app.services.moment.feed_engine import build_extra_from_stat
 from app.services.user.follow import FollowService
 from app.services.moment.moment_feed import MomentFeedService
+from app.services.moment.topic_feed import TopicFeedService
 from app.services.moment.moment_topic import MomentTopicService
 
 # 独立区间，避免与其它模块用例冲突
@@ -72,6 +74,8 @@ def _stat(
     view: int = 0,
     favorite: int = 0,
     share: int = 0,
+    coin: int = 0,
+    dislike: int = 0,
 ) -> TInteractionStat:
     return TInteractionStat(
         bizType=InteractionBizTypeEnum.DYNAMIC,
@@ -82,6 +86,8 @@ def _stat(
         viewCount=view,
         favoriteCount=favorite,
         shareCount=share,
+        coinCount=coin,
+        dislikeCount=dislike,
     )
 
 
@@ -522,20 +528,26 @@ async def test_comprehensive_feed_anon_randomize_disabled(monkeypatch):
 
 
 async def test_comprehensive_feed_report_penalty(monkeypatch):
-    """2.37.0：pending 举报降权（resourceType+bizId 统计）——同互动被举报者排后。"""
+    """2.37.0：pending 举报降权（resourceType+bizId 统计）——同互动被举报者排后。
+
+    匿名（viewer_mid=None）会触发随机权重扰动，可能盖过小额举报降权导致顺序不稳定，
+    故本测试关闭匿名随机化，使排序退化为确定性全局 EdgeRank（举报降权可复现）。
+    """
     monkeypatch.setattr(settings, "edgerank_candidate_window_hours", 0.1)
+    monkeypatch.setattr(settings, "edgerank_anon_randomize_enabled", False)
     async with new_session() as s:
         a = await _seed_moment(s, E_MID, seconds_ago=60, like=2)
         b = await _seed_moment(s, E_MID2, seconds_ago=60, like=2)
-        # a 被举报（pending，resourceType=dynamic）
+        # a 被举报（pending，bizType=dynamic）。TResourceReport 继承 ReportBase，
+        # bizType/auditStatus 均为 INTEGER（ReportAuditStatusEnum.PENDING=1）
         s.add(
             TResourceReport(
-                bizType="dynamic",
+                bizType=int(InteractionBizTypeEnum.DYNAMIC),
                 bizId=a,
                 accusedMid=E_MID,
                 reportMid=E_MID2,
                 reasonType=1,
-                auditStatus="pending",
+                auditStatus=1,  # ReportAuditStatusEnum.PENDING
             )
         )
         await s.commit()
@@ -652,7 +664,7 @@ async def test_topic_feed_hot_uses_topic_edgerank():
         )
         await s.commit()
 
-        resp = await MomentFeedService.topic_feed(
+        resp = await TopicFeedService.topic_feed(
             s, topic_id=E_TOPIC_A, page=1, page_size=10, sort="hot", viewer_mid=None
         )
         dyn_ids = [it.dynId for it in resp.items]
@@ -672,7 +684,8 @@ async def test_topic_square_uses_topic_edgerank():
         )
         await s.commit()
 
-        resp = await MomentTopicService.topic_square(s, page=1, page_size=20)
+        # 2.46.0 推荐流：无 page 参数，page_size 截断
+        resp = await MomentTopicService.topic_square(s, page_size=20)
         ids = [it.topicId for it in resp.items]
         # 库内可能残留其它话题，只断言相对顺序：A（热门）在 B（新但冷）之前
         assert ids.index(E_TOPIC_A) < ids.index(E_TOPIC_B)
@@ -685,9 +698,81 @@ async def test_topic_square_hot_only_filters():
         _seed_topic(s, E_TOPIC_B, name="er-hot-b", is_hot=0, dyn_count=999, seconds_ago=30)
         await s.commit()
 
+        # 2.46.0 推荐流：无 page 参数，page_size 截断
         resp = await MomentTopicService.topic_square(
-            s, page=1, page_size=20, hot_only=True
+            s, page_size=20, hot_only=True
         )
         ids = [it.topicId for it in resp.items]
         assert E_TOPIC_A in ids
         assert E_TOPIC_B not in ids
+
+
+# ==================== 2.47.0：通用化 + 曝光去重 ====================
+
+
+def test_build_extra_from_stat_uses_all_interaction_fields():
+    """互动特征纯 stat 驱动：favorite/share/coin 一并计入正向互动（此前被浪费）。
+
+    验证全量互动字段参与 engagement，且无资源类型分支（任意 TInteractionStat 复用）。
+    """
+    # favorite/share/coin 各 +1：应显著抬升 engagement
+    s1 = _stat(like=2, favorite=100, share=50, coin=10, view=1)
+    eng1, exp1, dr1 = build_extra_from_stat(s1)
+    s2 = _stat(like=2, view=1)  # 仅点赞，正向互动少
+    eng2, exp2, _ = build_extra_from_stat(s2)
+    assert eng1 > eng2, (eng1, eng2)
+    # 曝光量即 viewCount
+    assert exp1 == 1.0 and exp2 == 1.0
+    # 点踩占比：dislike/(dislike+like)
+    d = _stat(like=1, dislike=3, view=10)
+    _, _, ratio = build_extra_from_stat(d)
+    assert ratio == 0.75
+    # 空 stat 不崩，全 0
+    e, x, r = build_extra_from_stat(None)
+    assert (e, x, r) == (0.0, 0.0, 0.0)
+
+
+async def test_comprehensive_feed_impression_dedup_no_repeat():
+    """综合页曝光去重：同一登录用户第二次拉取不再下发已展示过的动态。
+
+    viewer_mid 提供 → viewer_key=mid:{mid}，两次拉取间曝光落库；
+    第二次返回的 dynId 不得与第一次重复（候选充足时不触发降级回填）。
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(settings, "edgerank_candidate_window_hours", 0.1)
+    try:
+        async with new_session() as s:
+            ids = [
+                await _seed_moment(s, E_MID, seconds_ago=60, like=10 - i)
+                for i in range(4)  # like 10,9,8,7 → EdgeRank 序即 seed 序
+            ]
+            await s.commit()
+            # 清理该观众可能的历史曝光记录，保证用例可重复
+            for did in ids:
+                await s.exec(
+                    text(
+                        "DELETE FROM TFeedImpression WHERE "
+                        f"viewerKey='mid:{E_MID2}' AND bizType=1 AND bizId={did}"
+                    )
+                )
+            await s.commit()
+
+            page1 = await MomentFeedService.comprehensive_feed(
+                s, page_size=2, sort="recommend", viewer_mid=E_MID2
+            )
+            assert [it.dynId for it in page1.items] == ids[:2]
+
+            # 第二次拉取：曝光去重后应返回下一页（ids[2:4]），不得重复 ids[:2]
+            page2 = await MomentFeedService.comprehensive_feed(
+                s, page_size=2, sort="recommend", viewer_mid=E_MID2
+            )
+            assert [it.dynId for it in page2.items] == ids[2:4]
+    finally:
+        monkeypatch.undo()
+        async with new_session() as s:
+            await s.exec(
+                text(
+                    f"DELETE FROM TFeedImpression WHERE viewerKey='mid:{E_MID2}'"
+                )
+            )
+            await s.commit()

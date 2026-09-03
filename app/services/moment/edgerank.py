@@ -264,18 +264,20 @@ def build_anon_profile(
     seed: str | int | None,
     *,
     ratio: float | None = None,
+    base: EdgeRankProfile | None = None,
 ) -> EdgeRankProfile:
-    """基于 ``FEED_PROFILE`` 随机扰动生成匿名推荐 Profile（2.34.0；2.45.0 去 dict 中间态）。
+    """基于 ``base``（缺省 ``FEED_PROFILE``）随机扰动生成匿名推荐 Profile（2.34.0；2.45.0 去 dict 中间态）。
 
     未登录用户不以全局排序返回：以 ``seed``（如客户端 ``uniq_id``）为随机种子，
     对每项动态权重乘 ``[1-ratio, 1+ratio]`` 的确定性扰动（``random.Random(seed)``），
     使不同匿名用户/会话在分数相近内容间看到不同顺序（整体仍以热度为基调）。
     ``seed`` 为空时每次调用随机；``ratio`` 缺省取
-    ``settings.edgerank_anon_perturb_ratio``。
+    ``settings.edgerank_anon_perturb_ratio``。话题 Feed 等场景传入 ``base=TOPIC_FEED_PROFILE``
+    使匿名扰动基于话题权重（而非综合页权重）。
     """
     r = settings.edgerank_anon_perturb_ratio if ratio is None else ratio
     rng = random.Random(seed)
-    profile = FEED_PROFILE.model_copy()
+    profile = (base or FEED_PROFILE).model_copy()
     for field in _MOMENT_WEIGHT_FIELDS:
         setattr(
             profile,

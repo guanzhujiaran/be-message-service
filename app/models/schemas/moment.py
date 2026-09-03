@@ -162,22 +162,24 @@ class MomentDetailsReq(SQLModel, AutoStrMixin):
 
 
 class MomentThumbReq(SQLModel, AutoStrMixin):
-    """点赞 / 取消点赞请求（2.17.0 泛化支持多业务资源）。
+    """点赞 / 取消点赞请求（2.17.0 泛化支持多业务资源；2.56.0 去除 dynId 别名）。
 
-    `bizType` 默认 `dynamic`，此时 `bizId` 等价 `dynId`（二者任传其一）；
-    `bizType≠dynamic` 时 `bizId` 必填、`dynId` 忽略。
+    `bizType` 默认 `dynamic`，资源一律以 `bizId` 定位（不再接受 `dynId` 别名）。
     """
 
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
-    dynId: StrInt | None = Field(default=None, description="[兼容]动态 ID（int|str，兼容前端 str 传参）")
     up: int = Field(default=1, description="1=点赞, 2=取消点赞")
 
 
 class MomentReportReq(SQLModel, AutoStrMixin):
-    """举报动态请求。"""
+    """举报资源请求（2.56.0 通用化；去除 dynId 别名）。
 
-    dynId: StrInt = Field(description="被举报动态 ID（int，兼容前端 str 传参）")
+    `bizType` 默认 `dynamic`，资源一律以 `bizId` 定位（不再接受 `dynId` 别名）。
+    """
+
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
+    bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
     reasonType: int = Field(description="举报原因类型（MomentReportReasonEnum 值）")
     reasonDesc: str | None = Field(default=None, description="补充描述（选填）")
 
@@ -188,22 +190,18 @@ class MomentThumbResp(SQLModel, AutoStrMixin):
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: int = Field(description="资源 ID（int）")
     bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
-    dynId: int | None = Field(default=None, description="[兼容]动态 ID（动态资源时返回）")
-    dynIdStr: str | None = Field(default=None, description="[兼容]动态 ID（字符串）")
     isLike: bool = Field(default=False, description="操作后当前用户是否已赞")
     likeCount: int = Field(default=0, description="操作后点赞数")
 
 
 class MomentDislikeReq(SQLModel, AutoStrMixin):
-    """点踩 / 取消点踩请求（2.35.0）。
+    """点踩 / 取消点踩请求（2.35.0；2.56.0 支持全部资源；去除 dynId 别名）。
 
-    对齐点赞：`bizType` 默认 `dynamic`，此时 `bizId` 等价 `dynId`（二者任传其一）。
-    当前 MVP 仅支持动态资源（非动态 400）。
+    `bizType` 默认 `dynamic`，资源一律以 `bizId` 定位（不再接受 `dynId` 别名）。
     """
 
-    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（当前仅支持 dynamic）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
-    dynId: StrInt | None = Field(default=None, description="[兼容]动态 ID（int|str，兼容前端 str 传参）")
     up: int = Field(default=1, description="1=点踩, 2=取消点踩")
 
 
@@ -213,31 +211,35 @@ class MomentDislikeResp(SQLModel, AutoStrMixin):
     bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
     bizId: int = Field(description="资源 ID（int）")
     bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
-    dynId: int | None = Field(default=None, description="[兼容]动态 ID")
-    dynIdStr: str | None = Field(default=None, description="[兼容]动态 ID（字符串）")
     isDislike: bool = Field(default=False, description="操作后当前用户是否已点踩")
     dislikeCount: int = Field(default=0, description="操作后点踩数")
 
 
 class MomentShareReq(SQLModel, AutoStrMixin):
-    """分享上报请求（2.35.0）。"""
+    """分享上报请求（2.35.0；2.56.0 通用化；去除 dynId 别名）。
 
-    dynId: StrInt = Field(description="被分享动态 ID（int，兼容前端 str 传参）")
+    `bizType` 默认 `dynamic`，资源一律以 `bizId` 定位（不再接受 `dynId` 别名）。
+    """
+
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
+    bizId: StrInt | None = Field(default=None, description="资源 ID（int|str；动态时=动态 ID，兼容前端 str 传参）")
 
 
 class MomentShareResp(SQLModel, AutoStrMixin):
-    """分享上报响应（2.35.0）。"""
+    """分享上报响应（2.35.0；2.56.0 通用化）。"""
 
-    dynId: int = Field(description="动态 ID（int）")
-    dynIdStr: str = Field(description="动态 ID（字符串，避免精度丢失）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
+    bizId: int = Field(description="资源 ID（int）")
+    bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
     shareCount: int = Field(default=0, description="操作后分享数")
 
 
 class MomentReportResp(SQLModel, AutoStrMixin):
-    """举报响应。"""
+    """举报响应（2.56.0 通用化）。"""
 
-    dynId: int = Field(description="被举报动态 ID（int）")
-    dynIdStr: str = Field(description="动态 ID（字符串）")
+    bizType: InteractionBizTypeEnum = Field(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）")
+    bizId: int = Field(description="资源 ID（int）")
+    bizIdStr: str = Field(description="资源 ID（字符串，避免精度丢失）")
     success: bool = Field(default=True)
 
 
@@ -395,10 +397,19 @@ class MomentTopicInfo(SQLModel, AutoStrMixin):
 
 
 class MomentTopicSquareResp(SQLModel, AutoStrMixin):
-    """话题广场列表响应。"""
+    """话题广场列表响应（推荐流模式，对齐动态广场 ``MomentFeedResp`` 包络）。
+
+    2.46.0 起改为推荐流：无 page/offset 游标语义，以 ``last_showlist``（客户端已展示
+    topicId 列表）为去重依据，排除后按 EdgeRank 分倒序取前 ``page_size`` 条；
+    ``hasMore`` = 排除后候选是否仍有剩余；``updateBaseline``/``historyOffset``/``updateNum``
+    置空（无游标语义，与 feed 推荐模式一致）。
+    """
 
     items: list[MomentTopicInfo] = Field(default_factory=list, description="话题列表")
-    hasMore: bool = Field(default=False, description="是否还有下一页")
+    hasMore: bool = Field(default=False, description="是否还有更多（排除已展示 last_showlist 后候选仍有剩余）")
+    updateBaseline: int | None = Field(default=None, description="刷新基线（推荐流模式置空，对齐 feed）")
+    historyOffset: int | None = Field(default=None, description="历史偏移（推荐流模式置空，对齐 feed）")
+    updateNum: int = Field(default=0, description="相对基线新增条数（推荐流模式恒 0，对齐 feed）")
 
 
 class MomentTopicDetailItem(SQLModel, AutoStrMixin):

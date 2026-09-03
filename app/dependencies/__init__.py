@@ -6,10 +6,12 @@ from app.dependencies.admin import MsgAdminUser
 from app.dependencies.user import (
     AdminUser,
     CurrentUser,
+    OptionalUser,
     RequiredUser,
     RootUser,
     get_admin_user,
     get_current_user,
+    get_optional_user,
     require_permission,
     require_root,
 )
@@ -19,11 +21,13 @@ __all__ = [
     "AdminUser",
     "CurrentUser",
     "MsgAdminUser",
+    "OptionalUser",
     "RequiredUser",
     "RootUser",
     "UserPermission",
     "get_admin_user",
     "get_current_user",
+    "get_optional_user",
     "require_permission",
     "require_root",
 ]

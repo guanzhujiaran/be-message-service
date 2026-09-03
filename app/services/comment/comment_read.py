@@ -91,9 +91,9 @@ class CommentReadService:
 
         top_rpid = subject.top_rpid or 0
 
-        # ---- focus 解析：定位需要置顶展示的目标评论 ----
+        # ---- focus 解析：仅第一页把定位评论（或其根评论）置顶；后续页忽略，正常分页 ----
         focus_root = 0
-        if focus_rpid:
+        if focus_rpid and page_num == 1:
             focus_row = (
                 await session.exec(
                     select(CommentIndex).where(
@@ -204,7 +204,8 @@ class CommentReadService:
         # focus 根评论紧随置顶之后，需从主列表里剔除再插到最前（置顶之后）
         if focus_row_loaded is not None:
             items = [it for it in items if it.rpid != str(focus_root)]
-            items.insert(0 if top_item is None else 1, focus_row_loaded)
+            # 绝对置于 items 第一个位置（置顶评论走独立的 top 字段，不参与 items 排序）
+            items.insert(0, focus_row_loaded)
 
         # 作者本人的审核中评论：单独装配后插到置顶 / focus 之后、普通列表之前。
         # 它们不进主分页（主分页只取 NORMAL），这里直接拼接到列表头部即可。

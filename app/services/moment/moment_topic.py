@@ -3,8 +3,9 @@
 覆盖 P5-T1 ~ P5-T6：
 
 - 话题广场列表（P5-T1）：列 ``TMomentTopic``，按 isHot / sortWeight / dynCount 倒序。
-- 话题 Feed 流（P5-T2）：复用 ``MomentFeedService.topic_feed``（见
-  ``app/services/moment_feed.py``），以 ``topicId`` 过滤、仅 normal + 未软删。
+- 话题 Feed 流（P5-T2）：复用 ``TopicFeedService.topic_feed``（见
+  ``app/services/moment/topic_feed.py``），参考动态综合页从 ``TResourceFeed`` 召回 +
+  ``rank_feed`` EdgeRank 精排（默认 recommend），以 ``topicId`` 过滤、仅 normal + 未软删。
 - @用户推荐列表（P5-T3）：关注 / 粉丝分组，经 ``FollowService`` 取 mid，
   再由 ``PptrUser.get_many`` 只读回查昵称 / 头像（与评论系统一致，不冗余）。
 - @用户搜索（P5-T4）：``PptrUser.search_by_uname`` 按昵称前缀匹配。
@@ -106,21 +107,22 @@ class MomentTopicService:
     async def topic_square(
         session: AsyncSession,
         *,
-        page: int = 1,
+        last_showlist: list[int] | None = None,
         page_size: int = 20,
         hot_only: bool = False,
+        keyword: str | None = None,
     ) -> MomentTopicSquareResp:
-        """话题广场列表（2.27.0 起按话题 EdgeRank 排序）。
+        """话题广场列表（2.27.0 起按话题 EdgeRank 排序；2.46.0 改为推荐流模式）。
 
-        EdgeRank 分 = ``Σ(w·log(count+1))·decay(pubTime)``——dynCount / viewCount 用 log
-        压缩长尾、isHot / sortWeight 直接加权（运营可干预）、pubTime 时间衰减（12h 半衰期）。
-        候选集为全部 normal 话题（上限 ``edgerank_candidate_limit``，按 pubTime 倒序取），
-        在应用层打分后 offset 分页；``settings.edgerank_enabled=False`` 时回退为原
-        isHot / sortWeight / dynCount 静态排序。
+        推荐流模式（对齐动态广场综合页 ``sort=recommend`` / ``MomentFeedResp`` 包络）：
+        - 无 page/offset 分页语义，以 ``last_showlist``（客户端已展示 topicId 列表）为
+          去重依据，排除已展示候选后按 EdgeRank 分倒序取前 ``page_size`` 条；
+        - ``hasMore`` = 排除后候选是否仍有剩余；
+        - ``updateBaseline``/``historyOffset``/``updateNum`` 置空（无游标语义，对齐 feed）。
+        ``settings.edgerank_enabled=False`` 时回退为 isHot / sortWeight / dynCount 静态排序。
 
         ``hot_only=True`` 时仅返回热门话题（isHot=1），供 /topic/hot-search 复用。
         """
-        page = max(1, page)
         page_size = min(max(1, page_size), 50)
 
         # 2.19.0：广场/热搜仅展示审核通过的话题
@@ -129,6 +131,12 @@ class MomentTopicService:
         )
         if hot_only:
             stmt = stmt.where(col(TMomentTopic.isHot) == 1)
+        if keyword:
+            # 转义 LIKE 通配符，避免用户输入 % / _ 造成异常匹配
+            escaped = (
+                keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            stmt = stmt.where(col(TMomentTopic.topicName).like(f"%{escaped}%"))
 
         rows = (
             await session.exec(
@@ -160,8 +168,12 @@ class MomentTopicService:
                 reverse=True,
             )
 
-        has_more = len(ranked) > page * page_size
-        page_rows = ranked[(page - 1) * page_size : page * page_size]
+        # 推荐流去重：排除客户端已展示的 topicId（对齐 feed last_showlist 语义）
+        seen = set(last_showlist or [])
+        ranked = [t for t in ranked if t.topicId not in seen]
+
+        has_more = len(ranked) > page_size
+        page_rows = ranked[:page_size]
         items = [
             MomentTopicInfo(
                 topicId=t.topicId,
@@ -175,7 +187,13 @@ class MomentTopicService:
             )
             for t in page_rows
         ]
-        return MomentTopicSquareResp(items=items, hasMore=has_more)
+        return MomentTopicSquareResp(
+            items=items,
+            hasMore=has_more,
+            updateBaseline=None,
+            historyOffset=None,
+            updateNum=0,
+        )
 
     # ==================== 话题详情（对齐 B 站 top_details）====================
 

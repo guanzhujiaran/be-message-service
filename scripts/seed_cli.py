@@ -509,7 +509,11 @@ class SeedClient:
 
     async def thumb(self, mid: int, dyn_id: int) -> None:
         await self._req(
-            lambda: self._post("/api/v1/community/thumb", mid, {"dynId": dyn_id, "up": 1}),
+            lambda: self._post(
+                "/api/v1/community/thumb",
+                mid,
+                {"bizType": InteractionBizTypeEnum.DYNAMIC, "bizId": dyn_id, "up": 1},
+            ),
             f"thumb mid={mid} dyn={dyn_id}",
         )
 
@@ -764,7 +768,7 @@ class SeedClient:
             lambda: self._post(
                 "/api/v1/favorite/add",
                 mid,
-                {"bizType": InteractionBizTypeEnum.DYNAMIC, "dynId": str(dyn_id), "folderId": folder_id},
+                {"bizType": InteractionBizTypeEnum.DYNAMIC, "bizId": str(dyn_id), "folderId": folder_id},
             ),
             f"favorite add mid={mid} dyn={dyn_id}",
         )

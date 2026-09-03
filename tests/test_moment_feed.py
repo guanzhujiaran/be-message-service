@@ -158,7 +158,8 @@ async def test_comprehensive_only_normal():
             ids = {it.dynId for it in resp.items}
             assert dids[0] in ids  # normal 动态可见
             assert not ({dids[1], dids[2], dids[3]} & ids)  # auditing/rejected/软删不可见
-            assert all(it.auditStatus == MomentAuditStatusEnum.NORMAL for it in resp.items)
+            # 装配返回 auditStatus 为枚举成员名字符串（大写），与 MomentFeedItem 字段类型一致
+            assert all(it.auditStatus == "NORMAL" for it in resp.items)
     finally:
         await _cleanup_all(dids)
 
@@ -193,7 +194,8 @@ async def test_space_self_sees_all_states():
         async with new_session() as s:
             resp = await MomentFeedService.space_feed(s, host_mid=D_MID, viewer_mid=D_MID)
             statuses = {it.auditStatus for it in resp.items}
-            assert statuses == {"normal", "auditing", "rejected"}
+            # 装配返回 auditStatus 为枚举成员名字符串（大写）
+            assert statuses == {"NORMAL", "AUDITING", "REJECTED"}
     finally:
         await _cleanup_all(dids)
 
@@ -207,7 +209,7 @@ async def test_space_visitor_only_normal():
     try:
         async with new_session() as s:
             resp = await MomentFeedService.space_feed(s, host_mid=D_MID, viewer_mid=D_MID2)
-            assert all(it.auditStatus == MomentAuditStatusEnum.NORMAL for it in resp.items)
+            assert all(it.auditStatus == "NORMAL" for it in resp.items)
     finally:
         await _cleanup_all(dids)
 
@@ -236,7 +238,7 @@ async def test_detail_visitor_cannot_see_auditing():
             d = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID2)
             assert d is None
             d2 = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID)
-            assert d2 is not None and d2.auditStatus == MomentAuditStatusEnum.AUDITING
+            assert d2 is not None and d2.auditStatus == "AUDITING"
     finally:
         await _cleanup_all(dids)
 
@@ -249,7 +251,7 @@ async def test_detail_normal_visible_to_all():
     try:
         async with new_session() as s:
             d = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID2)
-            assert d is not None and d.auditStatus == MomentAuditStatusEnum.NORMAL
+            assert d is not None and d.auditStatus == "NORMAL"
     finally:
         await _cleanup_all(dids)
 

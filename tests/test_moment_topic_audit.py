@@ -30,6 +30,7 @@ from app.models.schemas.moment import (
 )
 from app.core.sharding import generate_topic_id
 from app.services.moment.moment_feed import MomentFeedService
+from app.services.moment.topic_feed import TopicFeedService
 from app.services.moment.moment_topic import MomentTopicService
 from app.services.moment.moment_topic_audit import MomentTopicAuditService
 
@@ -117,7 +118,8 @@ async def test_create_topic_default_auditing():
             req=MomentTopicCreateReq(topicName="全新话题", topicDesc="描述"),
         )
         assert resp.topicId > 0
-        assert resp.auditStatus == MomentTopicAuditStatusEnum.AUDITING.value
+        # 装配返回 auditStatus 为枚举成员名字符串（大写）
+        assert resp.auditStatus == MomentTopicAuditStatusEnum.AUDITING.name
         row = await s.get(TMomentTopic, resp.topicId)
         assert row is not None
         assert row.auditStatus is MomentTopicAuditStatusEnum.AUDITING
@@ -206,7 +208,8 @@ async def test_square_only_normal():
         topic_n = await _create_topic(s, A_MID, "广场通过话题")
         await MomentTopicAuditService.approve(s, topic_n.topicId, operator_mid=ADMIN_MID)
 
-        resp = await MomentTopicService.topic_square(s, page=1, page_size=20)
+        # 2.46.0 推荐流：无 page 参数，page_size 截断
+        resp = await MomentTopicService.topic_square(s, page_size=20)
         assert isinstance(resp, MomentTopicSquareResp)
         names = {t.topicName for t in resp.items}
         assert "广场通过话题" in names
@@ -219,7 +222,7 @@ async def test_square_only_normal():
 async def test_topic_feed_non_normal_returns_empty():
     async with new_session() as s:
         topic = await _create_topic(s, A_MID, "审核中话题Feed")
-        resp = await MomentFeedService.topic_feed(s, topic_id=topic.topicId, viewer_mid=A_MID)
+        resp = await TopicFeedService.topic_feed(s, topic_id=topic.topicId, viewer_mid=A_MID)
         assert resp.items == []
 
 
@@ -235,8 +238,9 @@ async def test_mine_returns_only_mine_with_status():
         resp = await MomentTopicService.mine(s, mid=A_MID, page_num=1, page_size=20)
         assert isinstance(resp, MomentTopicMineResp)
         by_name = {it.topicName: it for it in resp.items}
-        assert by_name["我的话题A"].auditStatus == MomentTopicAuditStatusEnum.AUDITING.value
-        assert by_name["我的话题B"].auditStatus == MomentTopicAuditStatusEnum.REJECTED.value
+        # 装配返回 auditStatus 为枚举成员名字符串（大写）
+        assert by_name["我的话题A"].auditStatus == MomentTopicAuditStatusEnum.AUDITING.name
+        assert by_name["我的话题B"].auditStatus == MomentTopicAuditStatusEnum.REJECTED.name
         assert by_name["我的话题B"].auditRejectReason == "违规"
 
 

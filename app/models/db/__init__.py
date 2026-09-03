@@ -19,6 +19,7 @@ from app.models.db.comment_tbl import (
 from app.models.db.dm_tbl import DmContentDeadLetter, DmMessageIndex, DmSession
 from app.models.db.event_tbl import EventMessage, EventReadCursor
 from app.models.db.favorite_tbl import TFavoriteFolder, TResourceFavorite, TUserFavoriteSetting
+from app.models.db.feed_impression_tbl import TFeedImpression
 from app.models.db.folder_cover_audit_tbl import TFolderCoverAudit
 from app.models.db.follow_tbl import UserFollow
 from app.models.db.interaction_tbl import TInteractionStat, TInteractionViewLog
@@ -65,6 +66,8 @@ __all__ = [  # noqa: RUF022
     "TInteractionViewLog",
     # 通用资源 Feed 元数据（2.36.0）
     "TResourceFeed",
+    # 通用 Feed 曝光记录（2.47.0，曝光去重防重复刷到）
+    "TFeedImpression",
     "DmContentDeadLetter",
     "DmMessageIndex",
     # 私信

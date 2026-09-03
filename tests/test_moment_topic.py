@@ -37,6 +37,7 @@ from app.models.schemas.moment import (
 )
 from app.services.moment.moment_feed import MomentFeedService
 from app.services.moment.moment_topic import MomentTopicService
+from app.services.moment.topic_feed import TopicFeedService
 from seed_biliopus import fetch_real_dyns, fetch_real_topics
 
 # 独立区间，避免与 Phase 2 用例（D_MID=910001）冲突
@@ -193,47 +194,47 @@ async def _cleanup(topics: list[int], moment_ids: list[int]) -> None:
 # ==================== 话题广场（P5-T1）====================
 
 
-async def test_topic_square_ordering_and_paging():
-    real_topics = await fetch_real_topics(4)
-    name_a = real_topics[0].topic_name if real_topics else "a"
-    name_b = real_topics[1].topic_name if len(real_topics) > 1 else "b"
+async def test_topic_square_ordering_and_dedup():
+    # 用确定性唯一名（时间戳后缀），避免真实话题名与库内既有数据唯一键冲突；
+    # 仅断言本测试 seed 的相对顺序（库内可能残留其它 normal 话题）
+    stamp = int(__import__('time').time() * 1000)
+    name_a = f"sq-a-{stamp}"
+    name_b = f"sq-b-{stamp}"
     async with new_session() as s:
         await _seed_topic(s, _new_topic(T_TOPIC_A, name=name_a, is_hot=0, sort_weight=1, dyn_count=5))
         await _seed_topic(s, _new_topic(T_TOPIC_B, name=name_b, is_hot=1, sort_weight=0, dyn_count=3))
 
-        # 默认广场：热门优先（isHot desc）→ sortWeight → dynCount
-        resp = await MomentTopicService.topic_square(s, page=1, page_size=20)
+        # 2.46.0 推荐流：无 page，以 last_showlist 去重，page_size 截断
+        resp = await MomentTopicService.topic_square(s, page_size=20)
         assert isinstance(resp, MomentTopicSquareResp)
+        # 库内可能残留其它话题，只断言本测试两条的相对顺序：B(isHot) 在 A 前
         names = [t.topicName for t in resp.items]
-        assert names[0] == name_b  # isHot=1 优先
-        assert names[1] == name_a
+        assert names.index(name_b) < names.index(name_a)
 
         # 仅热门
-        hot = await MomentTopicService.topic_square(s, page=1, page_size=20, hot_only=True)
-        assert [t.topicName for t in hot.items] == [name_b]
+        hot = await MomentTopicService.topic_square(s, page_size=20, hot_only=True)
+        assert name_b in [t.topicName for t in hot.items]
+        assert name_a not in [t.topicName for t in hot.items]
 
-        # 失效话题即便 dynCount 大，因 isHot=0 排在 hot 之后
-        await _cleanup([T_TOPIC_A, T_TOPIC_B], [])
-        # 分页：page_size=1 时第二页命中 hasMore
-        name_c = real_topics[2].topic_name if len(real_topics) > 2 else "c"
-        name_d = real_topics[3].topic_name if len(real_topics) > 3 else "d"
-        await _seed_topic(s, _new_topic(9200003, name=name_c, dyn_count=9))
-        await _seed_topic(s, _new_topic(9200004, name=name_d, dyn_count=1))
-        p1 = await MomentTopicService.topic_square(s, page=1, page_size=1)
+        # 推荐流去重：page_size=1 时第一页 1 条且 hasMore；排除首条后取下一页
+        p1 = await MomentTopicService.topic_square(s, page_size=1)
         assert len(p1.items) == 1
         assert p1.hasMore is True
-        p2 = await MomentTopicService.topic_square(s, page=2, page_size=1)
+        # 推荐流无游标语义：包络字段置空（对齐 feed recommend）
+        assert p1.updateBaseline is None and p1.historyOffset is None and p1.updateNum == 0
+        first_id = p1.items[0].topicId
+        p2 = await MomentTopicService.topic_square(s, page_size=1, last_showlist=[first_id])
         assert len(p2.items) == 1
-        assert p2.hasMore is False
-        await _cleanup([9200003, 9200004], [])
+        assert p2.items[0].topicId != first_id  # 排除已展示
+        await _cleanup([T_TOPIC_A, T_TOPIC_B], [])
 
 
 # ==================== 话题 Feed（P5-T2）====================
 
 
 async def test_topic_feed_filters_normal_and_topic():
-    real_topics = await fetch_real_topics(1)
-    topic_name = real_topics[0].topic_name if real_topics else "a"
+    # 用确定性唯一名（时间戳后缀），避免真实话题名与库内既有数据唯一键冲突
+    topic_name = f"topic-feed-{int(__import__('time').time() * 1000)}"
     async with new_session() as s:
         await _seed_topic(s, _new_topic(T_TOPIC_A, name=topic_name))
         # 同话题 normal
@@ -243,7 +244,7 @@ async def test_topic_feed_filters_normal_and_topic():
         # 其他话题 normal（不应出现）
         m3 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_B)
 
-        resp = await MomentFeedService.topic_feed(s, topic_id=T_TOPIC_A, viewer_mid=T_MID)
+        resp = await TopicFeedService.topic_feed(s, topic_id=T_TOPIC_A, viewer_mid=T_MID)
         ids = {it.dynId for it in resp.items}
         assert m1 in ids
         assert m2 not in ids
@@ -256,9 +257,11 @@ async def test_topic_feed_filters_normal_and_topic():
         assert ext.topicId == T_TOPIC_A
         assert ext.topicName == topic_name
 
-        # 综合 Feed / 单条详情同样回填 topicName（复用同一装配管线）
+        # 综合 Feed / 单条详情同样回填 topicName（复用同一装配管线）；
+        # 显式 sort="time" 保证 seed 的 normal 动态在候选内（recommend 走 TResourceFeed
+        # 召回 + EdgeRank，不一定命中本测试刚种下的单条动态）
         com = await MomentFeedService.comprehensive_feed(
-            s, viewer_mid=T_MID, page_size=20
+            s, viewer_mid=T_MID, page_size=20, sort="time"
         )
         com_exts = [
             m
@@ -308,10 +311,11 @@ async def test_poi_nearby_dedup_by_lbs_poi():
         resp = await MomentTopicService.poi_nearby(s, page=1, page_size=20)
         assert isinstance(resp, MomentPoiResp)
         pois = {it.poi: it.dynCount for it in resp.items}
-        assert pois.get("北京·故宫") == 2
+        assert pois.get("北京·故宫") == 2  # 两条同 POI Moment 聚合为一条
         assert pois.get("上海·外滩") == 1
-        # 去重：只返回 2 条 POI，而非 3 条 Moment
-        assert len(resp.items) == 2
+        # 去重：两条「北京·故宫」只占一个 POI 条目（库内可能有其它灌数 POI，故不约束总条数）
+        assert [it.poi for it in resp.items].count("北京·故宫") == 1
+        assert [it.poi for it in resp.items].count("上海·外滩") == 1
         await _cleanup([], [m1, m2, m3])
 
 
@@ -335,5 +339,5 @@ __all__ = [
     "test_poi_nearby_dedup_by_lbs_poi",
     "test_poi_search_keyword_match",
     "test_topic_feed_filters_normal_and_topic",
-    "test_topic_square_ordering_and_paging",
+    "test_topic_square_ordering_and_dedup",
 ]

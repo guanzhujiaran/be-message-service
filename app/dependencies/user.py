@@ -26,6 +26,7 @@ from bili_common.deps.auth import (
 from bili_common.deps.auth import (
     require_root as _require_root,
 )
+from bili_common.exceptions import NotLoggedInException
 from bili_common.models.depends import AuthInfo
 from fastapi import Depends, Header, HTTPException, status
 
@@ -93,6 +94,49 @@ async def get_admin_user(
 # JWT 回退也失败时已直接抛 401，并不存在「可选 / 匿名」分支，故两者指向同一依赖。
 CurrentUser = Annotated[AuthInfo, Depends(get_current_user)]
 RequiredUser = CurrentUser
+
+# 可选用户（匿名可读）：允许未登录访问的纯浏览/发现类只读接口使用。
+# 复用 get_current_user（保留 x-bili-mid 缺失时 JWT 回退），仅把「未登录」异常
+# 吞掉返回 None，而非抛 401 —— 匿名用户据此拿到 None，登录用户照常拿到 AuthInfo。
+async def get_optional_user(
+    x_bili_mid: str | None = Header(default=None),
+    x_bili_jwt: str | None = Header(default=None),
+    x_bili_level: str | None = Header(default=None),
+    x_bili_role: str = Header(default="normal"),
+    x_bili_permissions: str | None = Header(default=None),
+    x_bili_user_name: str | None = Header(default=None),
+    x_bili_uname: str | None = Header(default=None),
+    x_bili_sign: str | None = Header(default=None),
+    x_bili_sex: str | None = Header(default=None),
+    x_bili_email: str | None = Header(default=None),
+    x_bili_vip_status: str | None = Header(default=None),
+    x_bili_vip_type: str | None = Header(default=None),
+) -> AuthInfo | None:
+    """可选用户身份：匿名（未登录）时返回 None，不抛 401。
+
+    用于纯浏览/发现类只读接口（如话题广场、热门话题），允许未登录用户访问；
+    需要用户个性化能力的调用方自行对返回值判空。
+    """
+    try:
+        return await get_current_user(
+            x_bili_mid=x_bili_mid,
+            x_bili_jwt=x_bili_jwt,
+            x_bili_level=x_bili_level,
+            x_bili_role=x_bili_role,
+            x_bili_permissions=x_bili_permissions,
+            x_bili_user_name=x_bili_user_name,
+            x_bili_uname=x_bili_uname,
+            x_bili_sign=x_bili_sign,
+            x_bili_sex=x_bili_sex,
+            x_bili_email=x_bili_email,
+            x_bili_vip_status=x_bili_vip_status,
+            x_bili_vip_type=x_bili_vip_type,
+        )
+    except NotLoggedInException:
+        return None
+
+
+OptionalUser = Annotated[AuthInfo | None, Depends(get_optional_user)]
 
 # root 专属：查看全部评论/私信内容明文、设置过审/没过审。等价于 AdminUser（role=root）。
 AdminUser = Annotated[AuthInfo, Depends(get_admin_user)]

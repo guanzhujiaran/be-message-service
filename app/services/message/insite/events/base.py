@@ -33,7 +33,7 @@ from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 from sqlalchemy import case, func, tuple_
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.biz_type import source_type_to_biz_type
@@ -114,6 +114,38 @@ async def _load_event_resource_snapshots(
     return out
 
 
+async def _load_comment_resources(session, rpids) -> "dict[int, InteractionResource]":
+    """按 rpid 批量回捞**评论**快照（计划书 §5.12）。
+
+    与顶层资源快照（:func:`_load_event_resource_snapshots`）共用同一套 Biz 体系：
+    走 ``CommentBiz.batch_get_resources``（一次 ``IN`` 查 ``CommentIndex`` + 一次 ``IN``
+    查 ``CommentContent``），SQL 次数恒定；未命中的 rpid 返回 ``exists=False`` 空占位。
+
+    评论快照的 ``title`` = 正文、``authorMid`` = 作者，供事件下发楼层正文与作者
+    （``source_mid`` / ``target_mid``），避免事件层绕过 Biz 直接读评论正文表。
+    """
+    from app.models.schemas.interaction import InteractionResource
+    from app.services.interaction_actions.base_biz import get_biz_class
+
+    ids = sorted({int(r) for r in rpids if str(r).isdigit()})
+    if not ids:
+        return {}
+    try:
+        biz_cls = get_biz_class(InteractionBizTypeEnum.COMMENT)
+    except ValueError:  # pragma: no cover - CommentBiz 已随继承登记
+        return {}
+    snaps = await biz_cls.batch_get_resources(
+        session, ids, rpid_map={i: str(i) for i in ids}
+    )
+    return {
+        i: snaps.get(i)
+        or InteractionResource(
+            bizType=InteractionBizTypeEnum.COMMENT, bizId=i, exists=False
+        )
+        for i in ids
+    }
+
+
 async def _resolve_event_identities(
     session, rows, comment_index: "dict[int, CommentIndex] | None" = None
 ) -> "dict[int, tuple[int, str, str]]":
@@ -170,14 +202,19 @@ class MsgfeedBuildContext:
     """一次 msgfeed 聚合查询中，预回捞好的共享数据。
 
     由 ``BaseEvent.list_msgfeed`` 在拿到本页所有分组后**统一回查一次**
-    （用户 / 关注态 / 评论索引 / 评论正文 / 动态缓存），避免在循环里发查询；
+    （用户 / 关注态 / 评论索引 / 评论快照 / 评论正文 / 动态缓存），避免在循环里发查询；
     每个事件处理器在 ``build_msgfeed_content`` 里直接读这些内存映射即可。
+
+    ``comment_resources`` 是经 ``CommentBiz.batch_get_resources`` 批量回捞的**评论快照**
+    （计划书 §5.12），承载正文与作者；``comment_content`` 是其正文部分经
+    ``@{mid}`` → ``@昵称`` 替换后的结果，供内容体直接展示。
     """
 
     session: AsyncSession
     user_map: dict[int, object] = field(default_factory=dict)
     follow_targets: set[int] = field(default_factory=set)
     comment_index: dict[int, CommentIndex] = field(default_factory=dict)
+    comment_resources: "dict[int, InteractionResource]" = field(default_factory=dict)
     comment_content: dict[int, str] = field(default_factory=dict)
     dyn_cache: dict[int, object] = field(default_factory=dict)
 
@@ -202,6 +239,7 @@ class CommentLocate:
     - ``root_id / source_id / target_id``：定位**评论楼层**（根评论 / 触发评论 /
       被回复评论的 rpid），前端据此深链定位到具体楼层；
     - ``source_content / target_content``：对应楼层的评论正文（读取时实时回捞）；
+    - ``source_mid / target_mid``：对应楼层的评论作者 mid（经 ``CommentBiz`` 批量回捞，§5.12）；
     - ``comment_deleted``：触发评论已不可见（删 / 未过审 / 驳回 / 下架），
       正文不回捞，前端展示「该评论已被删除」占位。
     """
@@ -213,6 +251,8 @@ class CommentLocate:
     target_id: str = ""
     source_content: str = ""
     target_content: str = ""
+    source_mid: int = 0
+    target_mid: int = 0
     comment_deleted: bool = False
 
 
@@ -250,6 +290,17 @@ def _replace_at_mentions(message: str, at_nickname_map: dict[int, str]) -> str:
         return f"@{nickname}"
 
     return re.sub(r"@\{(\d{1,19})\}", _sub, message)
+
+
+def _comment_author(ctx: "MsgfeedBuildContext", rpid: str) -> int:
+    """按 rpid 取评论作者 mid（读 ``CommentBiz`` 批量回捞的评论快照，计划书 §5.12）。
+
+    快照缺失（评论不存在 / 已被物理删除）或无作者时返回 ``0``，前端据此跳过作者展示。
+    """
+    res = ctx.comment_resources.get(int(rpid)) if rpid and rpid.isdigit() else None
+    if res is None or res.authorMid is None:
+        return 0
+    return int(res.authorMid)
 
 
 def build_dedup_key(
@@ -553,6 +604,8 @@ class BaseEvent(ABC):
                 if target_id and target_id.isdigit()
                 else ""
             ),
+            source_mid=_comment_author(ctx, source_id),
+            target_mid=_comment_author(ctx, target_id),
         )
 
     async def _generic_content(
@@ -583,6 +636,8 @@ class BaseEvent(ABC):
             image="",
             source_content=locate.source_content,
             target_content=locate.target_content,
+            source_mid=locate.source_mid,
+            target_mid=locate.target_mid,
             comment_deleted=locate.comment_deleted,
             ctime=int(latest.created_at.timestamp()) if latest.created_at else 0,
         )
@@ -916,39 +971,67 @@ class BaseEvent(ABC):
 
         comment_biz_ints = [int(b) for b in comment_biz_ids if b.isdigit()]
         comment_index: dict[int, CommentIndex] = {}
+        comment_resources: dict = {}
         comment_content: dict[int, str] = {}
+        comment_author_names: dict[int, str] = {}
         if comment_biz_ints:
+            # 楼层关系（root / parent / oid / type / state）：结构性查询，仍查 CommentIndex
             idx_rows = (
                 await session.exec(
                     select(CommentIndex).where(CommentIndex.rpid.in_(comment_biz_ints))
                 )
             ).all()
             comment_index = {row.rpid: row for row in idx_rows}
+            # 需要正文 / 作者的 rpid：触发评论 + 其根评论 / 父评论
             all_rpids = set(comment_biz_ints)
             for row in idx_rows:
                 if row.root:
                     all_rpids.add(row.root)
                 if row.parent:
                     all_rpids.add(row.parent)
-            content_rows = (
-                await session.exec(
-                    select(CommentContent).where(CommentContent.rpid.in_(all_rpids))
-                )
-            ).all()
-            comment_content = {row.rpid: row.message for row in content_rows}
+            # 评论正文 + 作者：经 CommentBiz 批量回捞（计划书 §5.12，对齐 §5.11 的 Biz 体系）
+            comment_resources = await _load_comment_resources(session, all_rpids)
+            comment_content = {
+                rpid: (res.title or "")
+                for rpid, res in comment_resources.items()
+                if res.title
+            }
+            # 楼层评论作者 mid 集合（来自批量回捞的评论快照），用于回查作者昵称（§5.12）。
+            author_mids = {
+                int(res.authorMid)
+                for res in comment_resources.values()
+                if res.authorMid
+            }
             # 回捞被 @ 用户的昵称，把正文里的 `@{mid}` 占位符替换为 `@昵称`
             # （对齐 comment_read：正文不落昵称快照，读取时按 at_mids 回查补全）。
-            at_mids: set[int] = set()
-            for row in content_rows:
-                at_mids.update(row.at_mids or [])
-            at_nickname_map: dict[int, str] = {}
-            if at_mids:
-                profiles = await PptrUser.get_many(at_mids)
-                at_nickname_map = {
+            # 只取轻量列（rpid + at_mids）：正文已由 CommentBiz 回捞，不重复读 TEXT 大字段。
+            at_rows = (
+                await session.exec(
+                    select(CommentContent.rpid, CommentContent.at_mids).where(
+                        col(CommentContent.rpid).in_(all_rpids)
+                    )
+                )
+            ).all()
+            at_mids = set[int]()
+            for _rpid, mids in at_rows:
+                at_mids.update(mids or [])
+            # 一次批量回查昵称：评论作者（楼层用户名）+ 正文 @ 提及用户（@占位符替换），
+            # 合并查询避免重复请求（计划书 §5.12）。
+            need_mids = author_mids | at_mids
+            nickname_map: dict[int, str] = {}
+            if need_mids:
+                profiles = await PptrUser.get_many(need_mids)
+                nickname_map = {
                     int(mid): (brief.uname or "").strip()
                     for mid, brief in profiles.items()
                     if (brief.uname or "").strip()
                 }
+            comment_author_names = {
+                m: nickname_map[m] for m in author_mids if m in nickname_map
+            }
+            at_nickname_map = {
+                m: nickname_map[m] for m in at_mids if m in nickname_map
+            }
             if at_nickname_map:
                 comment_content = {
                     rpid: _replace_at_mentions(msg, at_nickname_map)
@@ -973,6 +1056,7 @@ class BaseEvent(ABC):
             user_map=user_map,
             follow_targets=follow_targets,
             comment_index=comment_index,
+            comment_resources=comment_resources,
             comment_content=comment_content,
             dyn_cache=dyn_cache,
         )
@@ -1021,6 +1105,14 @@ class BaseEvent(ABC):
             c.image = snap.cover or ""
             c.resource_deleted = not snap.exists
             c.jump_target = (snap.jumpTarget or "") if snap.exists else ""
+        # 楼层评论作者昵称：按 source_mid / target_mid 回查（一次 PptrUser.get_many，§5.12），
+        # 缺失时留空串，前端降级为「用户{mid}」或跳过作者展示。
+        for item in total_items:
+            c = item.item
+            if c.source_mid:
+                c.source_name = comment_author_names.get(int(c.source_mid), "")
+            if c.target_mid:
+                c.target_name = comment_author_names.get(int(c.target_mid), "")
 
         cursor = EventMsgfeedCursor(
             is_end=not has_more,

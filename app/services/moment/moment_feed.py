@@ -37,9 +37,9 @@ from app.models.db import (
     )
 from app.models.db.comment_tbl import CommentSubject
 from bili_common.models import InteractionBizTypeEnum
+from bili_common.models.report import ReportAuditStatusEnum
 from app.models.enums import (
     MomentAuditStatusEnum,
-    MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
 )
@@ -53,16 +53,15 @@ from app.models.schemas.moment import (
     MomentLikerItem,
     MomentLikerListResp,
     MomentModule,
-    MomentTopicFeedResp,
     MomentTopicRef,
     )
-from app.services.moment.edgerank import (
-    TOPIC_FEED_PROFILE,
-    EdgeRankExtra,
-    build_moment_counts,
-    compute_moment_score,
-    )
-from app.services.moment.feed_engine import FeedCandidate, ResourceReportCount, rank_feed
+from app.services.moment.feed_engine import (
+    AuthorQualitySignal,
+    FeedCandidate,
+    ResourceReportCount,
+    build_viewer_key,
+    rank_feed,
+)
 from app.services.user.follow import FollowService
 from app.services.user.account import PptrUser
 
@@ -896,8 +895,9 @@ class MomentFeedService:
         # 2.44.0：评论系统实体（root_count 实时计数 + updated_at 最后评论时间）
         cand_comment_subjects = await _load_comment_subjects(session, cand_ids)
 
-        # 2.35.0 作者质量：候选作者批量读 moment_author_quality（2.44.0 直传实体）
-        author_q: dict[int, MomentAuthorQuality] = {}
+        # 2.35.0 作者质量：候选作者批量读 moment_author_quality
+        # 2.47.0：映射为引擎通用信号 AuthorQualitySignal（引擎不再依赖动态专属表）
+        author_q: dict[int, AuthorQualitySignal] = {}
         cand_mids = {r.mid for r in res_rows}
         if cand_mids:
             aq_rows = (
@@ -907,7 +907,15 @@ class MomentFeedService:
                     )
                 )
             ).all()
-            author_q = {int(r.mid): r for r in aq_rows}
+            author_q = {
+                int(r.mid): AuthorQualitySignal(
+                    avg_engagement=r.avgEngagement,
+                    recent_publish=r.recentPublishCount,
+                    fans=r.fansCount,
+                    level=float(r.currentLevel),
+                )
+                for r in aq_rows
+            }
 
         # 2.37.0：pending 举报数（bizType=dynamic 按 bizId 统计，通用降权；2.44.0 为 ResourceReportCount 实体）
         report_counts: dict[int, ResourceReportCount] = {}
@@ -919,7 +927,8 @@ class MomentFeedService:
                         col(TResourceReport.bizType)
                         == int(InteractionBizTypeEnum.DYNAMIC),
                         col(TResourceReport.bizId).in_(cand_ids),
-                        col(TResourceReport.auditStatus) == "pending",
+                        col(TResourceReport.auditStatus)
+                        == int(ReportAuditStatusEnum.PENDING),
                     )
                     .group_by(col(TResourceReport.bizId))
                 )
@@ -959,6 +968,10 @@ class MomentFeedService:
             report_counts=report_counts,
             comment_subjects=cand_comment_subjects,
             now=datetime.now(),
+            # 2.47.0 曝光去重：同一观众同场景已下发过的动态不再重复下发
+            viewer_key=build_viewer_key(viewer_mid, uniq_id),
+            feed_scene="comprehensive",
+            biz_type=InteractionBizTypeEnum.DYNAMIC,
         )
 
         # 2.32.0：推荐流无 page/offset 语义；updateBaseline/historyOffset/updateNum 置空。
@@ -1053,137 +1066,6 @@ class MomentFeedService:
             updateNum=0,
         )
 
-    # ==================== 话题 Feed（P5-T2）====================
-
-    @staticmethod
-    async def topic_feed(
-        session: AsyncSession,
-        *,
-        topic_id: int,
-        page: int = 1,
-        page_size: int = _FEED_PAGE_SIZE,
-        viewer_mid: int | None = None,
-        history_offset: int | None = None,
-        sort: str = "hot",
-    ) -> MomentTopicFeedResp:
-        """话题下动态流：以 ``topicId`` 过滤，仅 normal + 未软删。
-
-        - ``sort="time"``：按 ``pubTime`` 倒序（最新）；
-        - ``sort="hot"``（默认）：先按互动数（like+comment+repost）倒序取本页候选，
-          再在内存里按互动数排序取前 page_size。
-
-        复用综合页 Feed 的装配管线（``_build_feed_item`` / ``_attach_authors`` /
-        ``_load_stats`` / ``_load_like_states``）。
-        """
-        page = max(1, page)
-        page_size = min(max(1, page_size), 50)
-
-        topic = (
-            await session.exec(
-                select(TMomentTopic).where(col(TMomentTopic.topicId) == topic_id)
-            )
-        ).one_or_none()
-        # 2.19.0：话题 Feed 仅对审核通过的话题开放；不存在/非 normal 返回空流
-        if topic is None or topic.auditStatus is not MomentTopicAuditStatusEnum.NORMAL:
-            return MomentTopicFeedResp(topicId=topic_id, topicName="", items=[])
-        topic_name = topic.topicName
-
-        # 2.22.0：话题 Feed 双条件查询——主话题列（存量/主话题）+ 关系表（多话题动态）
-        rel_dyn_ids = select(TMomentTopicRel.dynId).where(
-            col(TMomentTopicRel.topicId) == topic_id
-        )
-        stmt = (
-            select(TMoment)
-            .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
-            .where(col(TMoment.deletedAt).is_(None))
-            .where(col(TMoment.pubTime).isnot(None))
-            # 2.46.0：公共话题流仅展示可见范围为公开的动态
-            .where(col(TMoment.visibleScope) == MomentVisibleScopeEnum.PUBLIC)
-            .where(
-                (col(TMoment.topicId) == topic_id)
-                | (col(TMoment.dynId).in_(rel_dyn_ids))
-            )
-        )
-        if history_offset is not None:
-            stmt = stmt.where(col(TMoment.dynId) < history_offset)
-
-        # hot 排序需先回捞 stats，取 3 倍候选再打分倒序，避免漏掉高互动旧动态
-        if sort == "time":
-            stmt = stmt.order_by(col(TMoment.pubTime).desc()).limit(page_size + 1)
-            rows = (await session.exec(stmt)).all()
-            has_more = len(rows) > page_size
-            page_rows = rows[:page_size]
-        else:
-            stmt = stmt.order_by(col(TMoment.pubTime).desc()).limit(page_size * 3 + 1)
-            rows = (await session.exec(stmt)).all()
-            candidates = rows[: page_size * 3]
-            stats = await _load_stats(session, [r.dynId for r in candidates])
-            # 2.44.0：评论系统实体（root_count 实时计数 + updated_at 最后评论时间）
-            comment_subjects = await _load_comment_subjects(
-                session, [r.dynId for r in candidates]
-            )
-            # 2.27.0：hot 排序由「like+comment+repost 求和」升级为话题专用 EdgeRank
-            #（TOPIC_FEED_PROFILE：评论/转发权重更高、半衰期 6h，突出话题热点时效）
-            now = datetime.now()
-            use_last_activity = settings.edgerank_decay_use_last_activity
-
-            def _hot_score(r: TMoment) -> float:
-                cs = comment_subjects.get(r.dynId)
-                cm = build_moment_counts(
-                    stats.get(r.dynId), cs.root_count if cs is not None else None
-                )
-                extra = EdgeRankExtra()
-                last_at = cs.updated_at if cs is not None else None
-                if use_last_activity and last_at is not None:
-                    extra.last_activity_time = (
-                        max(r.pubTime, last_at) if r.pubTime is not None else last_at
-                    )
-                return compute_moment_score(
-                    cm, r.pubTime, TOPIC_FEED_PROFILE, now=now, extra=extra
-                )
-
-            ranked = sorted(candidates, key=_hot_score, reverse=True)
-            page_rows = ranked[:page_size]
-            # 若本页高互动动态数不足 page_size，追加最新动态补齐
-            if len(page_rows) < page_size and len(candidates) > page_size:
-                seen = {r.dynId for r in page_rows}
-                for r in candidates:
-                    if len(page_rows) >= page_size:
-                        break
-                    if r.dynId not in seen:
-                        page_rows.append(r)
-            has_more = len(candidates) > len(page_rows) or len(rows) > page_size * 3
-
-        moment_ids = [r.dynId for r in page_rows]
-        like_states = await _load_like_states(session, moment_ids, viewer_mid)
-        # 2.20.1：本页 lottery 详情批量一次 RPC 回查，按动态分发填充 RESOURCE=lottery 节点
-        lottery_detail_map = await _build_lottery_detail_map(page_rows)
-        # 2.22.0：本页动态-话题多对多关系批量一次加载（无 N+1）
-        topic_rel_map = await _load_topic_rel_map(session, moment_ids)
-
-        items = [
-            await _build_feed_item(
-                r,
-                session=session,
-                is_like=like_states.get(r.dynId),
-                lottery_detail_map=lottery_detail_map,
-                topic_rel_map=topic_rel_map,
-            )
-            for r in page_rows
-        ]
-        await _attach_authors(session, items)
-        await _attach_topics(session, items)
-
-        baseline = items[0].dynId if items else None
-        history = items[-1].dynId if items else None
-        return MomentTopicFeedResp(
-            topicId=topic_id,
-            topicName=topic_name,
-            items=items,
-            hasMore=has_more,
-            updateBaseline=baseline,
-            historyOffset=history,
-        )
 
     # ==================== 个人空间 Feed（P3-T2）====================
 

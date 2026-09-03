@@ -228,6 +228,14 @@ class Settings(BaseSettings):
     edgerank_recall_geo_radius_km: float = 50.0  # 附近范围半径
     edgerank_recall_cf_enabled: bool = True  # 协同过滤路（MVP 近似）：点赞/互动过作者的新动态
     edgerank_recall_cf_limit: int = 100
+    # ==================== Feed 曝光去重（2.47.0）====================
+    # 推荐流已下发资源记入 TFeedImpression，TTL 窗口内不再重复下发（防重复刷到）。
+    # 关闭则退化为原行为（仅按客户端 last_showlist 去重）。
+    edgerank_dedup_enabled: bool = True
+    # 曝光记录的有效期（小时）：超过该时间的曝光不再参与去重（内容可重新出现）
+    edgerank_dedup_impression_ttl_hours: int = 24
+    # 单次查询曝光记录的最大 id 数（防超大 IN 查询）
+    edgerank_dedup_query_limit: int = 2000
 
     # ==================== 私信策略 ====================
     # 消息可撤回的时间窗口（秒），超过则不允许撤回

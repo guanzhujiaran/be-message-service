@@ -62,6 +62,77 @@ class CommentBiz(BaseBiz):
         row = await self._index()
         return int(row.mid) if row is not None else None
 
+    async def _load_interactable(self) -> bool | None:
+        """仅 `state == NORMAL` 可互动；其余状态（删 / 未过审 / 驳回 / 下架）只可举报、不进展示。"""
+        row = await self._index()
+        if row is None:
+            return None
+        return row.state is CommentStateEnum.NORMAL
+
+    def _build_jump_target(self, rpid: str | None = None) -> str | None:
+        """评论无独立详情页：按所属**顶层资源**（`CommentIndex.type` + `oid`）拼跳转 + 楼层锚点。
+
+        `rpid` 未传时以本条评论自身作楼层锚点（深链定位到本层）。
+        """
+        from app.utils.route_target import jump_target_for
+
+        idx = getattr(self, "_index_cache", None)
+        if idx is None:
+            return None
+        return jump_target_for(idx.type, idx.oid, rpid or self.biz_id)
+
+    @classmethod
+    async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
+        """评论批量回捞：`CommentIndex` / `CommentContent` 各一次 `IN` 查询（计划书 §5.12）。
+
+        覆盖基类「逐条 `get_resource`」的兜底实现，避免 N+1（对齐 `DynamicBiz`）。
+        装配口径与 `get_resource` 一致：`title` = 评论正文、`authorMid` = 评论作者、
+        `exists` = 索引存在、`interactable` = 状态 normal、`jumpTarget` = 所属顶层资源 + 楼层锚点。
+        """
+        from app.utils.route_target import jump_target_for
+
+        rpid_map = rpid_map or {}
+        ids = [int(b) for b in biz_ids]
+        index_map: dict[int, CommentIndex] = {}
+        content_map: dict[int, CommentContent] = {}
+        if ids:
+            idx_rows = (
+                await session.exec(
+                    select(CommentIndex).where(col(CommentIndex.rpid).in_(ids))
+                )
+            ).all()
+            index_map = {int(r.rpid): r for r in idx_rows}
+            content_rows = (
+                await session.exec(
+                    select(CommentContent).where(col(CommentContent.rpid).in_(ids))
+                )
+            ).all()
+            content_map = {int(r.rpid): r for r in content_rows}
+
+        out: dict[int, InteractionResource] = {}
+        for bid in ids:
+            idx = index_map.get(bid)
+            if idx is None:
+                out[bid] = InteractionResource(
+                    bizType=InteractionBizTypeEnum.COMMENT,
+                    bizId=bid,
+                    exists=False,
+                    interactable=False,
+                )
+                continue
+            content = content_map.get(bid)
+            out[bid] = InteractionResource(
+                bizType=InteractionBizTypeEnum.COMMENT,
+                bizId=bid,
+                authorMid=int(idx.mid),
+                exists=True,
+                interactable=idx.state is CommentStateEnum.NORMAL,
+                title=content.message if content else None,
+                cover=None,
+                jumpTarget=jump_target_for(idx.type, idx.oid, rpid_map.get(bid) or bid),
+            )
+        return out
+
     # ==================== 举报 ====================
 
     @biz_action()

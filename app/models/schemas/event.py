@@ -131,8 +131,10 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
     """聚合条目中的内容实体（对齐 B 站 msgfeed 的 item）。
 
     评论层级关系（root_id / source_id / target_id）与正文（source_content /
-    target_content）读取时按 source_id（rpid）实时回捞评论表补全（见 Phase L2），
-    不冗余存储，仅靠 resource_id + resource_type 唯一定位原资源。
+    target_content）、作者（source_mid / target_mid）读取时按 source_id（rpid）
+    实时回捞评论补全（见 Phase L2 / §5.12），不冗余存储，仅靠
+    resource_id + resource_type 唯一定位原资源；正文与作者统一经
+    `CommentBiz.batch_get_resources` 批量回捞（对齐 §5.11 的 Biz 体系）。
 
     `title` / `desc` / `image` 同样读取时按 source_type + source_id 实时回捞
     原资源补全，不冗余存储快照。
@@ -155,6 +157,15 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
     image: str = ""
     source_content: str = ""
     target_content: str = ""
+    # 楼层评论作者（经 `CommentBiz.batch_get_resources` 批量回捞评论快照得到 mid，
+    # 再由 `list_msgfeed` 的回查块经 `PptrUser.get_many` 批量回查昵称，计划书 §5.12）：
+    # `source_mid` / `source_name` = 触发评论（写下 @ / 回复的那一层）作者 mid / 昵称，
+    # `target_mid` / `target_name` = 被回复 / 被 @ 的那一层作者 mid / 昵称；
+    # 评论不存在或非正常状态时为 0 / 空串，前端降级为「用户{mid}」或跳过作者展示。
+    source_mid: int = 0
+    target_mid: int = 0
+    source_name: str = ""
+    target_name: str = ""
     # 触发评论是否处于「非正常状态」（被删 / 未过审 / 驳回 / 下架 / 待审）：
     # True 时 source_content / target_content 为空，前端展示「该评论已被删除」占位。
     comment_deleted: bool = False
