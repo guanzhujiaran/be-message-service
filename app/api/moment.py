@@ -17,7 +17,8 @@
 - POST /dislike       点踩 / 取消点踩（幂等，BaseBiz.dislike）
 - POST /share         分享上报（shareCount +1，BaseBiz.share）
 - POST /report        举报资源（不改 auditStatus，BaseBiz.report）
-- GET  /interaction/status[/{biz_id}]  互动态查询（批量 / 单资源，兼作浏览统计触发点）
+- GET  /interaction/status[/{biz_id}]  互动态查询（批量 / 单资源，兼作浏览统计触发点；
+  2.60.0 起匿名可读 OptionalUser，浏览统计仍仅登录用户）
 （浏览计数无上报接口：由后端在详情接口 GET /detail/{id} 访问时自动累计）
 
 分层约定（2.56.0，计划书 §5.13 / C21）：参数归一 `resolve_target()`、存在性校验与互动态
@@ -364,10 +365,15 @@ async def share(
 )
 async def interaction_status(
     session: SessionDep,
-    user: RequiredUser,
+    user: OptionalUser,
     bizType: InteractionBizTypeEnum = Query(description="资源类型（InteractionBizTypeEnum 值）"),
     bizIds: str = Query(description="资源 id 列表（逗号分隔，限 50 个）"),
 ) -> StandardResponse[InteractionStatusResp]:
+    """批量互动态（2.60.0 起匿名可读，计划书 §5.18）。
+
+    匿名时 `user` 为 None → `viewer_mid=0`（非合法 mid），点赞 / 收藏态恒 false，
+    计数与举报数照常返回。
+    """
     # bizIds 为逗号分隔的雪花 ID 字符串，含非数字片段时 int() 抛 ValueError：
     # 必须兜住并转 400 错误响应（业务码 400 = INVALID_PARAM），否则会穿透到全局
     # 兜底处理器变成 500。
@@ -387,7 +393,7 @@ async def interaction_status(
         return StandardResponse(code=400, msg=f"资源不存在: {', '.join(missing)}")
 
     items = await InteractionStatusService.query_status_items(
-        session, bizType, ids, user.mid
+        session, bizType, ids, user.mid if user else 0
     )
     return StandardResponse(data=InteractionStatusResp(items=items))
 
@@ -399,7 +405,7 @@ async def interaction_status(
 )
 async def interaction_status_detail(
     session: SessionDep,
-    user: RequiredUser,
+    user: OptionalUser,
     biz_id: str,
     bizType: InteractionBizTypeEnum = Query(description="资源类型（InteractionBizTypeEnum 值）"),
 ) -> StandardResponse[InteractionStatusItem]:
@@ -407,6 +413,10 @@ async def interaction_status_detail(
 
     列表批量接口不累计浏览，仅进入详情页（本接口）才 +1——
     经 ViewLog 按 bizType+bizId+mid+refDate 去重幂等，同日重复进入详情不重复计数。
+
+    2.60.0（§5.18）：匿名可读，`user` 为 None 时 `viewer_mid=0`（点赞 / 收藏态恒 false）；
+    浏览 MQ **仅登录用户投递**——匿名无 mid，`TInteractionViewLog`（uq bizType+bizId+mid）
+    会把全部游客流量压成 mid=0 一行，计数失真且污染明细表，沿用「浏览统计仅登录用户」语义。
     """
     biz_type = bizType
     try:
@@ -422,7 +432,7 @@ async def interaction_status_detail(
         return StandardResponse(code=400, msg=f"资源不存在: {', '.join(missing)}")
 
     item = await InteractionStatusService.query_status_item(
-        session, biz_type, biz_id_int, user.mid
+        session, biz_type, biz_id_int, user.mid if user else 0
     )
     if item is None:
         return StandardResponse(code=400, msg="资源不存在")
@@ -430,11 +440,13 @@ async def interaction_status_detail(
     # 浏览统计触发点（detail 专用）：投递 MQ 异步去重累计，主链路不阻塞
     # 2.42.0：不再携带 refDate——消费端按 (bizType,bizId,mid) 每用户每资源一行，
     # 由 lastViewAt 是否同一自然日判断跨天访问才 +1
-    await publish_interaction_view(
-        InteractionViewPayload(
-            bizType=biz_type, bizId=str(biz_id_int), mid=user.mid
+    # 2.60.0：匿名（user 为 None）不投递——无 mid 无法归属，见函数 docstring
+    if user:
+        await publish_interaction_view(
+            InteractionViewPayload(
+                bizType=biz_type, bizId=str(biz_id_int), mid=user.mid
+            )
         )
-    )
     return StandardResponse(data=item)
 
 

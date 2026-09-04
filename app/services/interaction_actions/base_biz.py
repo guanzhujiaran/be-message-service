@@ -24,6 +24,7 @@
 """
 
 import functools
+import re
 from abc import ABC
 from typing import Any, Awaitable, Callable
 
@@ -44,6 +45,9 @@ __all__ = [
     "biz_action",
     "get_biz",
     "get_biz_class",
+    "batch_get_resource_snapshots",
+    "replace_at_mentions",
+    "find_at_mention_mids",
 ]
 
 
@@ -133,12 +137,17 @@ class BaseBiz(ABC):
 
     # ==================== 资源获取（统一装配 + 子类钩子）====================
 
-    async def get_resource(self, rpid: str | None = None) -> InteractionResource:
-        """取本资源并折叠为统一 :class:`InteractionResource`。
+    async def to_resource_model(self, rpid: str | None = None) -> InteractionResource:
+        """转换本资源为统一的**资源信息模型** :class:`InteractionResource`。
 
-        统一调用子类提供的 ``check_exists()`` / ``_load_meta()`` / ``_load_author_mid()``
-        / ``_load_interactable()`` 钩子装配展示信息（标题 / 封面 / 作者 / 存在性 /
-        可互动性 / 后端跳转目标），不在子类里散落存在性 / 展示字段逻辑（计划书 §5.11 / C20）。
+        这是「任意 biz → 资源信息模型」的**唯一入口**：所有资源类（Dynamic / Comment /
+        User / Lottery / RPA 系列）都经本方法产出结构一致的 :class:`InteractionResource`，
+        供**互动提醒（通知）**与**举报审核管理**等读取侧复用同一套资源展示逻辑
+        （标题 / 封面 / 作者 / 存在性 / 可互动性 / 后端跳转目标，计划书 §5.11 / C20）。
+
+        组装逻辑统一调用子类钩子 ``check_exists()`` / ``_load_meta()`` /
+        ``_load_author_mid()`` / ``_load_interactable()``，不在子类里散落存在性 /
+        展示字段逻辑——子类只需覆盖各自钩子即自动获得完整转换能力。
         """
         exists = await self.check_exists()
         title: str | None = None
@@ -160,6 +169,14 @@ class BaseBiz(ABC):
             cover=cover,
             jumpTarget=self._build_jump_target(rpid),
         )
+
+    async def get_resource(self, rpid: str | None = None) -> InteractionResource:
+        """取本资源并折叠为统一 :class:`InteractionResource`（``to_resource_model`` 的兼容别名）。
+
+        旧代码与互动操作入口（``biz_action`` 装饰器、``batch_get_resources``）仍调用本方法，
+        行为等价于 :meth:`to_resource_model`。
+        """
+        return await self.to_resource_model(rpid)
 
     # ----- 子类钩子：统一由 get_resource 调用 -----
 
@@ -205,7 +222,7 @@ class BaseBiz(ABC):
         out: dict[int, InteractionResource] = {}
         for bid in biz_ids:
             biz = cls(session, bid, actor_mid)
-            out[bid] = await biz.get_resource(rpid=(rpid_map or {}).get(bid))
+            out[bid] = await biz.to_resource_model(rpid=(rpid_map or {}).get(bid))
         return out
 
     async def check_resource(self, resource: InteractionResource) -> None:
@@ -485,3 +502,107 @@ def get_biz(biz_type, session, biz_id: int, actor_mid: int | None = None) -> Bas
 def registered_biz_types() -> list[InteractionBizTypeEnum]:
     """列出当前已实现资源类的全部资源类型（继承登记的盘点入口）。"""
     return list(BaseBiz._registry)
+
+
+# ==================== 读取侧公共装配（事件提醒 / 举报审核等复用，计划书 §5.11/C20 / §5.12 / §5.19）====================
+# 「任意 biz → 资源信息模型」的批量入口是 :meth:`BaseBiz.batch_get_resources`；
+# 下列函数是**跨类型批量回捞**与**评论 @提及昵称替换**的公共封装——事件提醒
+# （insite/events）与举报审核管理（admin/report）等读取侧不再各自维护一套同构代码，
+# 统一引用本模块，避免逻辑漂移。均为**弱依赖**：失败降级为空占位 / 原样文本，不拖垮主链路。
+
+_AT_MENTION_RE = re.compile(r"@\{(\d{1,19})\}")
+
+
+def find_at_mention_mids(text: str | None) -> set[int]:
+    """收集文本里所有 ``@{mid}`` 占位符的 mid（供调用方批量回查昵称，避免 N+1）。"""
+    if not text:
+        return set()
+    return {int(m) for m in _AT_MENTION_RE.findall(text)}
+
+
+def replace_at_mentions(text: str | None, nickname_map: dict[int, str]) -> str | None:
+    """把正文里的 ``@{mid}`` 占位符替换为 ``@昵称``（公共：事件正文 / 举报评论标题复用）。
+
+    - 只替换能命中 ``nickname_map``（mid → 昵称）的占位符；
+    - 命中不到的（mid 不存在 / 用户已删 / 空昵称）原样保留，由前端兜底清理，
+      避免把「@ 关系」丢成一个裸 ``@`` 或产生错误的人名。
+    """
+    if not text or not nickname_map:
+        return text
+
+    def _sub(match: re.Match[str]) -> str:
+        mid = int(match.group(1))
+        name = nickname_map.get(mid)
+        if not name:
+            return match.group(0)
+        return f"@{name}"
+
+    return _AT_MENTION_RE.sub(_sub, text)
+
+
+async def batch_get_resource_snapshots(
+    session, metas
+) -> dict[tuple[int, str], InteractionResource]:
+    """按 ``(resource_type, resource_id, rpid)`` 批量回捞资源快照（**每类资源一次调用**）。
+
+    Args:
+        session: 数据库会话（AsyncSession）。
+        metas: 可迭代的 ``(resource_type, resource_id, rpid)``——``resource_type`` 为
+            枚举 / 数值 / 文字（``InteractionBizTypeEnum``）；``resource_id`` 为 int 或
+            数字字符串；``rpid`` 为楼层锚点（评论定位，仅评论锚定事件有意义，可为空）。
+
+    Returns:
+        ``{(resource_type:int, resource_id:str): InteractionResource}``。每类资源一次
+        :meth:`BaseBiz.batch_get_resources`（动态 / 评论已是一次 IN 查询、RPA 系列走批量
+        RPC，无 N+1）；未实现 / 未知资源类型 / 某类回查失败时，对应 id 返回
+        ``exists=False`` 的空占位（读取侧展示「资源已删除 / 不存在」并跳过跳转）。
+    """
+    # 归一：resource_type / resource_id 统一为 (int, str)，并过滤空 id / 非法类型
+    norm: list[tuple[int, str, str | None]] = []
+    for rt, rid, rpid in metas:
+        if not rid:
+            continue
+        try:
+            rt_int = int(InteractionBizTypeEnum.from_text(rt))
+        except (TypeError, ValueError):
+            continue
+        norm.append((rt_int, str(rid), rpid))
+
+    # 分组（保留出现顺序，便于稳定回捞）
+    by_type: dict[int, list[str]] = {}
+    for rt_int, rid, _rpid in norm:
+        by_type.setdefault(rt_int, []).append(rid)
+
+    out: dict[tuple[int, str], InteractionResource] = {}
+    for rt_int, ids in by_type.items():
+        biz_cls = None
+        try:
+            biz_cls = get_biz_class(rt_int)
+        except ValueError:  # 未知 / 未实现资源类型 → 整组空占位
+            pass
+        snaps: dict[int, InteractionResource] = {}
+        if biz_cls is not None:
+            rpid_map = {
+                int(rid): rpid
+                for t, rid, rpid in norm
+                if t == rt_int and rid.isdigit() and rpid
+            }
+            try:
+                snaps = await biz_cls.batch_get_resources(
+                    session,
+                    [int(i) for i in ids if i.isdigit()],
+                    rpid_map=rpid_map,
+                )
+            except Exception as exc:  # 弱依赖：资源侧（含 RPC）不可用时降级为空占位
+                logger.warning(
+                    f"资源快照批量回捞失败（type={InteractionBizTypeEnum(rt_int).to_text()}），降级为空占位：{exc}"
+                )
+        for rid in ids:
+            digit = rid.isdigit()
+            snap = snaps.get(int(rid)) if digit else None
+            out[(rt_int, rid)] = snap or InteractionResource(
+                bizType=InteractionBizTypeEnum(rt_int),
+                bizId=int(rid) if digit else 0,
+                exists=False,
+            )
+    return out

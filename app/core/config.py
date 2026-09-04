@@ -196,8 +196,21 @@ class Settings(BaseSettings):
     edgerank_forward_penalty: float = -0.6  # FORWARD 转发惩罚（负权重）
     # fresh_bonus = w/(1+viewCount)：新内容冷启动，防被高互动旧内容埋没
     edgerank_fresh_weight: float = 1.0
-    # feedback：点踩降权 = -w·dislike_ratio（dislike/(dislike+like)）
+    # feedback：点踩降权 = -w·dislike_ratio（dislike/(dislike+like)）——「对所有人略降」（2.35.0）
     edgerank_dislike_penalty: float = 2.0
+    # ==================== EdgeRank 点踩个人化降权（2.62.0，计划书 §5.20）====================
+    # 「对点踩者本人大幅降权」：命中「我点踩过」的候选 → score = score * scale - weight，
+    # 与正向个性化 _boost 对称，在 feed_engine 精排后处理（edgerank 保持纯函数无 IO）。
+    # 信号源为既有 TResourceDislike 幂等明细（uq(bizType,bizId,mid)，一人一踩），不新增表。
+    # 受 2.33.0 个性化总开关 edgerank_personalized_enabled 兜底（关闭则退化为纯全局排序）。
+    edgerank_personal_dislike_enabled: bool = True
+    # 比例压制（0~1）：高分内容同样显著下沉（默认 0.3 → 保留三成）
+    edgerank_personal_dislike_scale: float = 0.3
+    # 固定扣分：中等分数内容直接沉底（默认 5.0，远大于正向 boost 3.0）
+    edgerank_personal_dislike_weight: float = 5.0
+    # True 时点踩过的资源直接剔除出该观众 Feed（硬约束，点踩即不再出现）；
+    # 默认 False——内容仍可见，只是排序靠后，避免点踩被滥用为「静默屏蔽作者」
+    edgerank_personal_dislike_exclude: bool = False
     # 登录用户 last_clicklist 已互动作者/话题加权
     edgerank_click_weight: float = 1.0
     # author_signal：作者质量（moment_author_quality.avgEngagement）+ 刷屏惩罚

@@ -8,6 +8,10 @@
    repost/**favorite/share/coin**/view/dislike 全量参与特征构造，纯 stat 驱动、无资源类型分支）；
 2. **个性化 boost（登录，2.33.0 + 2.35.0 反馈闭环）**：关注作者 / 点赞过作者 /
    ``last_clicklist`` 点击作者 / 偏好话题 / 点击话题；
+2.1 **点踩个人化降权（登录，2.62.0，计划书 §5.20）**：**对点踩者本人大幅降权**
+   ——命中「我点踩过」的候选 → ``score = score · scale − weight``，与正向 boost 对称；
+   全局「对所有人略降」仍在 ``edgerank`` 的 ``dislike_ratio`` 里（2.35.0），本引擎不含该分支，
+   以保证算法层无 IO；可选 ``edgerank_personal_dislike_exclude`` 直接剔除点踩过的资源；
 3. **匿名随机权重（未登录，2.34.0）**：以 ``uniq_id`` 为种子派生扰动 Profile；
 4. **去重（2.32.0 + 2.47.0 曝光去重）**：排除客户端 ``last_showlist`` ∪ 服务端
    ``TFeedImpression``（该观众在本场景 TTL 内已下发过的资源）；**尽力去重 + 自动降级**
@@ -39,6 +43,7 @@ from app.models.db import (
     TFeedImpression,
     TInteractionStat,
     TMoment,
+    TResourceDislike,
     TResourceLike,
     TMomentTopicRel,
 )
@@ -88,7 +93,7 @@ class FeedCandidate(SQLModel):
 
 
 class PersonalSignals(SQLModel):
-    """登录用户个性化信号（2.33.0 + 2.35.0）。"""
+    """登录用户个性化信号（2.33.0 + 2.35.0；2.62.0 新增负反馈 `disliked`）。"""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -97,24 +102,44 @@ class PersonalSignals(SQLModel):
     topic: set[int] = Field(default_factory=set)
     clicked_author: set[int] = Field(default_factory=set)
     clicked_topic: set[int] = Field(default_factory=set)
+    # 2.62.0：该观众点踩过的资源 bizId（负反馈信号，供「对点踩者本人大幅降权」）
+    disliked: set[int] = Field(default_factory=set)
 
 
 async def load_personal_signals(
     session: AsyncSession,
     viewer_mid: int,
     clicklist: list[int] | None = None,
+    biz_type: InteractionBizTypeEnum = InteractionBizTypeEnum.DYNAMIC,
+    candidate_ids: list[int] | None = None,
 ) -> PersonalSignals:
-    """加载推荐流个性化信号（2.33.0 + 2.35.0 反馈闭环）。
+    """加载推荐流个性化信号（2.33.0 + 2.35.0 反馈闭环；2.62.0 负反馈）。
 
     - ``follow``：关注作者（``msg_user_follow``）；
     - ``liked_author`` / ``topic``：最近 ``edgerank_personalized_like_history_limit``
       条点赞历史（``TResourceLike``）批量 join ``TMoment`` / ``TMomentTopicRel``；
     - ``clicked_author`` / ``clicked_topic``：``last_clicklist``（客户端已互动列表）
-      对应作者/话题（2.35.0 反馈闭环）。
+      对应作者/话题（2.35.0 反馈闭环）；
+    - ``disliked``：该观众点踩过的资源 bizId（``TResourceDislike``，2.62.0 负反馈信号）。
+      **只查候选范围内**的记录（``bizId IN candidate_ids``，一次 IN 查询），
+      不加载全部点踩历史；与正向 boost 对称地供「对点踩者本人大幅降权」使用。
 
     任一信号为空不影响其余（打分时缺省按 0）。
     """
     signals = PersonalSignals()
+
+    # 2.62.0：点踩明细（负反馈）——按候选 id 收窄，查询成本与页面大小相关而非用户历史长度
+    if settings.edgerank_personal_dislike_enabled and candidate_ids:
+        dis_rows = (
+            await session.exec(
+                select(TResourceDislike.bizId).where(
+                    col(TResourceDislike.bizType) == biz_type,
+                    col(TResourceDislike.mid) == viewer_mid,
+                    col(TResourceDislike.bizId).in_(candidate_ids),
+                )
+            )
+        ).all()
+        signals.disliked = {int(r) for r in dis_rows if r is not None}
 
     follow_mids = await FollowService.list_following_mids(session, viewer_mid)
     signals.follow = {int(m) for m in follow_mids}
@@ -188,6 +213,30 @@ def _boost(c: FeedCandidate, signals: PersonalSignals) -> float:
         if signals.clicked_topic.intersection(c.tags):
             b += settings.edgerank_click_weight
     return b
+
+
+def apply_dislike_penalty(
+    score: float, c: FeedCandidate, signals: PersonalSignals
+) -> float:
+    """点踩者本人大幅降权（2.62.0，计划书 §5.20）：命中「我点踩过」的候选 → ``s·scale − weight``。
+
+    与 :func:`_boost`（正向个性化）对称，同在精排后处理，保证 ``edgerank`` 算法层保持
+    **无 IO 纯函数**（不含任何 per-user 分支）。
+
+    - ``scale``（``edgerank_personal_dislike_scale``）：比例压制，高分内容同样显著下沉；
+    - ``weight``（``edgerank_personal_dislike_weight``）：固定扣分，中等分数内容直接沉底。
+
+    注意：点踩**不改变内容可见性**（只降权不下架）——下架仍由举报审核 ``resourceAction=hide``
+    独占（2.38.0）。开关关闭 / 未命中点踩时原分返回。
+    """
+    if not settings.edgerank_personal_dislike_enabled:
+        return score
+    if c.biz_id not in signals.disliked:
+        return score
+    return (
+        score * settings.edgerank_personal_dislike_scale
+        - settings.edgerank_personal_dislike_weight
+    )
 
 
 def build_extra_from_stat(stat: TInteractionStat | None) -> tuple[float, float, float]:
@@ -414,11 +463,20 @@ async def rank_feed(
     else:
         prof = base
 
-    # 2.33.0 + 2.35.0：个性化信号（登录 + 开关开启）
+    # 2.33.0 + 2.35.0：个性化信号（登录 + 开关开启）；2.62.0 附带点踩负反馈集合
     personalized = viewer_mid is not None and settings.edgerank_personalized_enabled
     signals: PersonalSignals | None = None
     if personalized:
-        signals = await load_personal_signals(session, viewer_mid, clicklist)
+        signals = await load_personal_signals(
+            session,
+            viewer_mid,
+            clicklist,
+            biz_type=biz_type or InteractionBizTypeEnum.DYNAMIC,
+            candidate_ids=[c.biz_id for c in candidates],
+        )
+        # 2.62.0：可选硬约束——点踩过的资源直接剔除出该观众 Feed（默认关闭，见 §5.20 风控）
+        if signals.disliked and settings.edgerank_personal_dislike_exclude:
+            candidates = [c for c in candidates if c.biz_id not in signals.disliked]
 
     def _score(c: FeedCandidate) -> float:
         cs = comment_subjects.get(c.biz_id) if comment_subjects else None
@@ -441,6 +499,8 @@ async def rank_feed(
         )
         if personalized and signals is not None:
             s += _boost(c, signals)
+            # 2.62.0：点踩者本人大幅降权（负反馈，与正向 boost 对称，只对本人生效）
+            s = apply_dislike_penalty(s, c, signals)
         return s
 
     ranked = sorted(candidates, key=_score, reverse=True)
@@ -495,6 +555,7 @@ __all__ = [
     "FeedCandidate",
     "PersonalSignals",
     "ResourceReportCount",
+    "apply_dislike_penalty",
     "build_extra_from_stat",
     "build_viewer_key",
     "load_impressed_ids",

@@ -16,6 +16,7 @@
 """
 
 import json
+from datetime import datetime
 
 from loguru import logger
 from sqlmodel import col, func, select
@@ -23,22 +24,29 @@ from sqlmodel import col, func, select
 from app.core.config import settings
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas import (
+    CommentUserBrief,
     EventReportReq,
     ReportCreateReq,
     ReportItem,
     ReportListResp,
     ReportReviewReq,
 )
+from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base_biz import (
     BaseBiz,
+    batch_get_resource_snapshots,
+    find_at_mention_mids,
     get_biz,
     get_biz_class,
+    replace_at_mentions,
 )
 from bili_common.models.report import (
+    ReportAuditStatusEnum,
     ReportReasonEnum,
     ReportReviewDecisionEnum,
 )
 from bili_common.services.report import ReportBaseService
+from app.services.user.account import PptrUser
 
 PIC_LIMIT = 3
 
@@ -49,6 +57,97 @@ def _distinct_models() -> list[type]:
     跨表汇总 / 按主键检索都遍历这里，避免 `TResourceReport` 被 6 个资源重复查询。
     """
     return list(dict.fromkeys(c.model for c in BaseBiz._registry.values() if c.model is not None))
+
+
+def _status_value(status) -> int | None:
+    """举报审核状态入参 → 枚举数值（DB 列存的是数值，不是字符串）。
+
+    接受 ``'pending'/'resolved'/'rejected'``（大小写不敏感）或枚举数值本身；
+    空值表示不过滤。非法值抛 ``ValueError``（路由层映射为 400）。
+    """
+    if status is None or status == "":
+        return None
+    try:
+        return int(ReportAuditStatusEnum(int(status)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(ReportAuditStatusEnum[str(status).upper()])
+    except KeyError as exc:
+        raise ValueError(f"非法的举报审核状态：{status}") from exc
+
+
+def _status_name(value) -> str:
+    """举报审核状态列值 → 小写枚举成员名（``ReportItem.auditStatus`` 契约：pending/resolved/rejected）。"""
+    try:
+        return ReportAuditStatusEnum(int(value)).name.lower()
+    except (TypeError, ValueError):
+        return ReportAuditStatusEnum.PENDING.name.lower()
+
+
+async def _load_user_briefs(rows) -> dict[int, CommentUserBrief]:
+    """批量回查举报人 / 被举报人展示信息（§5.19）。
+
+    一次 ``PptrUser.get_many`` 覆盖本页全部 mid（直连 pptr 只读，不冗余用户快照）；
+    **弱依赖**：回查失败只告警并降级为空字典（item 侧字段为 null），不拖垮审核列表。
+    """
+    mids: set[int] = set()
+    for r in rows:
+        for mid in (r.reportMid, r.accusedMid):
+            if mid:
+                mids.add(int(mid))
+    if not mids:
+        return {}
+    try:
+        return await PptrUser.get_many(list(mids))
+    except Exception as exc:  # 弱依赖：用户库不可用时列表照常返回
+        logger.warning(f"举报列表用户展示信息批量回查失败，降级为匿名：{exc}")
+        return {}
+
+
+async def _load_resources(session, rows) -> dict[tuple[int, int], InteractionResource]:
+    """按 bizType 分组批量回捞被举报资源快照（§5.19，复用 base_biz 公共批量装配）。
+
+    返回 ``(bizType 值, bizId) -> InteractionResource``；经
+    :func:`batch_get_resource_snapshots` 按 bizType 分组、**每类资源一次**
+    ``batch_get_resources``（动态 / 评论一次 IN、RPA 系列批量 RPC，无 N+1）。
+    **弱依赖**：某类资源回查失败 / 未知类型降级为 ``exists=False`` 空占位
+    （与事件提醒一致，前端展示「内容已删除 / 不存在」并跳过跳转）。
+    """
+    metas: list[tuple] = []
+    for r in rows:
+        try:
+            bt = InteractionBizTypeEnum.from_text(r.bizType)
+        except Exception:
+            continue
+        if r.bizId:
+            metas.append((bt, int(r.bizId), None))
+    snaps = await batch_get_resource_snapshots(session, metas)
+    out: dict[tuple[int, int], InteractionResource] = {
+        (rt, int(bid)): snap for (rt, bid), snap in snaps.items()
+    }
+    # 评论正文 @提及替换（复用 base_biz 公共 ``replace_at_mentions``，与事件提醒同源）：
+    # 把 title 里的 `@{mid}` 占位符替换为实际昵称，批量回查避免 N+1；
+    # 弱依赖：用户库不可用时保留原始占位符，不影响其余字段。
+    at_mids: set[int] = set()
+    for snap in out.values():
+        if snap.title:
+            at_mids |= find_at_mention_mids(snap.title)
+    if at_mids:
+        try:
+            profiles = await PptrUser.get_many(at_mids)
+            nickname_map = {
+                int(mid): (b.uname or "").strip()
+                for mid, b in profiles.items()
+                if (b.uname or "").strip()
+            }
+            if nickname_map:
+                for snap in out.values():
+                    if snap.title:
+                        snap.title = replace_at_mentions(snap.title, nickname_map)
+        except Exception as exc:  # 弱依赖：用户库不可用时保留原始占位符
+            logger.warning(f"举报列表 @提及昵称回查失败，保留占位符：{exc}")
+    return out
 
 
 def _model_for(biz_type) -> type:
@@ -126,6 +225,8 @@ class ReportService:
         """
         page = max(1, page)
         page_size = min(max(1, page_size), 50)
+        # 状态入参是 'pending'/'resolved'/'rejected' 字符串，DB 列存数值，先归一化
+        status_value = _status_value(status)
 
         if biz_type:
             try:
@@ -137,11 +238,14 @@ class ReportService:
                 session,
                 model,
                 biz_type=biz.value,
-                status=status,
+                status=status_value,
                 page=page,
                 page_size=page_size,
             )
-            page_items = [ReportService._to_item(r) for r in items]
+            # 2.61.0：用户信息 + 资源快照各一次批量回捞（弱依赖，失败降级为 null）
+            users = await _load_user_briefs(items)
+            resources = await _load_resources(session, items)
+            page_items = [ReportService._to_item(r, users, resources) for r in items]
             # 2.40.0：被举报数量（同对象累计次数）
             counts = await ReportService._load_report_counts(session, page_items)
             for it in page_items:
@@ -158,15 +262,18 @@ class ReportService:
         # 跨表汇总：各表分页取 (page*page_size) 再按 created_at 归并排序取一页
         merged = []
         total = 0
-        for model in ReportService._distinct_models():
+        for model in _distinct_models():
             sub_items, sub_total = await ReportBaseService.list_reports(
-                session, model, status=status, page=1, page_size=page * page_size
+                session, model, status=status_value, page=1, page_size=page * page_size
             )
             total += sub_total
             merged.extend(sub_items)
-        merged.sort(key=lambda r: (r.created_at or __import__("datetime").datetime.min), reverse=True)
-        page_items = merged[(page - 1) * page_size : page * page_size]
-        items = [ReportService._to_item(r) for r in page_items]
+        merged.sort(key=lambda r: (r.created_at or datetime.min), reverse=True)
+        page_rows = merged[(page - 1) * page_size : page * page_size]
+        # 2.61.0：只按当页结果批量回捞，调用次数与分页大小无关
+        users = await _load_user_briefs(page_rows)
+        resources = await _load_resources(session, page_rows)
+        items = [ReportService._to_item(r, users, resources) for r in page_rows]
         # 2.40.0：被举报数量（同对象累计次数）
         counts = await ReportService._load_report_counts(session, items)
         for it in items:
@@ -191,7 +298,7 @@ class ReportService:
         if req.resourceAction is not None and req.resourceAction not in {"hide"}:
             raise ValueError("非法的资源处置动作")
         rec = None
-        for model in ReportService._distinct_models():
+        for model in _distinct_models():
             rec = (
                 await session.exec(select(model).where(model.pk == req.reportPk))
             ).one_or_none()
@@ -290,13 +397,28 @@ class ReportService:
         return result
 
     @staticmethod
-    def _to_item(r) -> ReportItem:
+    def _to_item(
+        r,
+        users: dict[int, CommentUserBrief] | None = None,
+        resources: dict[tuple[int, int], InteractionResource] | None = None,
+    ) -> ReportItem:
+        """举报记录行 → 展示项。
+
+        ``users`` / ``resources`` 由 :func:`_load_user_briefs` / :func:`_load_resources`
+        批量回捞后传入（§5.19）；缺省为空 → 用户与资源字段降级为 ``null``。
+        """
         pics = None
         if r.pics:
             try:
                 pics = json.loads(r.pics)
             except (json.JSONDecodeError, TypeError):
                 pics = None
+        reporter = (users or {}).get(int(r.reportMid)) if r.reportMid else None
+        accused = (users or {}).get(int(r.accusedMid)) if r.accusedMid else None
+        try:
+            resource_key = (int(InteractionBizTypeEnum.from_text(r.bizType)), int(r.bizId))
+        except (TypeError, ValueError):
+            resource_key = None
         return ReportItem(
             pk=int(r.pk),
             bizType=r.bizType,
@@ -306,10 +428,15 @@ class ReportService:
             reasonType=int(r.reasonType),
             reasonDesc=r.reasonDesc,
             pics=pics,
-            auditStatus=r.auditStatus,
+            auditStatus=_status_name(r.auditStatus),
             auditRemark=r.auditRemark,
             auditAdminMid=int(r.auditAdminMid) if r.auditAdminMid else None,
             createdAt=r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
+            reporterName=reporter.uname if reporter else None,
+            reporterFace=reporter.avatar if reporter else None,
+            accusedName=accused.uname if accused else None,
+            accusedFace=accused.avatar if accused else None,
+            resource=(resources or {}).get(resource_key) if resource_key else None,
         )
 
 

@@ -20,6 +20,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.db import (
     CommentSubject,
     TMoment,
+    TResourceDislike,
     TResourceFavorite,
     TResourceLike,
     TResourceReport,
@@ -57,7 +58,11 @@ def resolve_target(
 
 
 class InteractionStatusService:
-    """互动态装配 + 资源存在性校验（纯服务层，不含 HTTP 语义）。"""
+    """互动态装配 + 资源存在性校验（纯服务层，不含 HTTP 语义）。
+
+    2.60.0：装配方法接受 `mid=0` 表示匿名观众（路由层 `OptionalUser` 为 None 时传 0），
+    用于 `/interaction/status[/{bizId}]` 开放匿名访问（计划书 §5.18）。
+    """
 
     @staticmethod
     async def verify_resources_exist(
@@ -102,9 +107,14 @@ class InteractionStatusService:
         ids: Sequence[StrInt],
         mid: StrInt,
     ) -> list[InteractionStatusItem]:
-        """装配某类型多个资源的互动状态（计数 / 用户态 / 详情），供 status 两接口共用。"""
+        """装配某类型多个资源的互动状态（计数 / 用户态 / 详情），供 status 两接口共用。
+
+        `mid=0` 表示匿名观众（2.60.0）：点赞 / 收藏态恒 false，计数不受影响。
+        """
         # StrInt 入参可能为 str：服务层统一归一为 int，后续计数 / RPC 一律按 int 处理
         biz_ids = [int(_id) for _id in ids]
+        # 2.60.0：mid=0 表示匿名观众（路由层 OptionalUser 为 None 时传 0）——0 非合法 mid，
+        # 点赞 / 收藏明细查不到任何行，匿名结果即 isLike=isFavorite=False，计数不受影响
         viewer_mid = int(mid)
         # 2.36.0：动态与非动态资源计数统一 TInteractionStat（batch_get_counts 全字段）
         counts = await InteractionStatService.batch_get_counts(session, biz_type, biz_ids)
@@ -166,6 +176,18 @@ class InteractionStatusService:
                 )
             ).all()
         )
+        # 2.62.0：当前用户点踩态（TResourceDislike 幂等明细，一人一踩；匿名 mid=0 恒空集）
+        disliked_ids = set(
+            (
+                await session.exec(
+                    select(TResourceDislike.bizId).where(
+                        col(TResourceDislike.bizType) == biz_type,
+                        col(TResourceDislike.bizId).in_(biz_ids),
+                        col(TResourceDislike.mid) == viewer_mid,
+                    )
+                )
+            ).all()
+        )
 
         # 非动态资源（RPA 等）详情经 RPC 从资源归属服务获取（弱依赖，失败 detail=None）
         details: dict[int, object] = {}
@@ -210,6 +232,7 @@ class InteractionStatusService:
                 bizId=str(_id),
                 isLike=_id in liked_ids,
                 isFavorite=_id in faved_ids,
+                isDislike=_id in disliked_ids,
                 likeCount=like_counts.get(_id, 0),
                 favoriteCount=fav_counts.get(_id, 0),
                 commentCount=comment_counts.get(_id, 0),

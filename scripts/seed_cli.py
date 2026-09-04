@@ -65,8 +65,10 @@ import random
 import re
 import sys
 import uuid
+from collections.abc import Sequence
 from itertools import cycle, zip_longest
 from pathlib import Path
+from typing import TypeVar
 # 允许 scripts/ 目录下直接运行：注入项目根目录到 sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import aiomysql
@@ -211,25 +213,23 @@ def _headers(mid: int, *, role: str = "normal") -> dict[str, str]:
     }
 
 
-def _random_at_targets(
+def _at_targets_deterministic(
     users: list[tuple[int, str | None]],
-    *,
-    exclude_mid: int | None = None,
-    max_n: int = 2,
-    rng: random.Random | None = None,
+    exclude_mid: int | None,
+    max_n: int = 1,
 ) -> list[tuple[int, str]]:
-    """随机挑 1~``max_n`` 个 @ 目标，返回 ``[(mid, 昵称)]``（昵称缺失时 ``user{mid}`` 兜底）。
+    """确定性轮遍 @ 目标：从 ``users`` 里（排除 ``exclude_mid``）轮流取 ``max_n`` 个。
 
-    - 排除 ``exclude_mid``：不 @ 自己（服务端也会跳过自 @ 的通知）；
-    - ``rng``：大数据灌数阶段复用固定种子的 ``random.Random``，默认用模块级 ``random``；
-    - 池子为空（用户不足）时返回空列表，调用方自然降级为「不带 @ 的正文」。
+    取代 ``_random_at_targets`` 的随机挑：用户/素材定值轮遍、不重复。
     """
-    r = rng or random
     pool = [u for u in users if u[0] != exclude_mid]
-    if not pool:
-        return []
-    picked = r.sample(pool, min(r.randint(1, max_n), len(pool)))
-    return [(int(mid), (name or f"user{mid}")) for mid, name in picked]
+    out: list[tuple[int, str]] = []
+    for _ in range(max_n):
+        if not pool:
+            break
+        mid, name = _rr.pick(pool)
+        out.append((int(mid), (name or f"user{mid}")))
+    return out
 
 
 def _at_text_suffix(targets: list[tuple[int, str]]) -> str:
@@ -600,9 +600,9 @@ class SeedClient:
         并同时带上 ``at_mids`` / ``at_name_to_mid``（服务端归一为 ``@{mid}`` 占位符）。
         """
         # 正文唯一化：评论服务对「同用户同正文 10s 内 >3 次」限流（Phase 2.6），
-        # 素材池重复度高，直接复用会在高频 seed 时撞限流 —— 末尾追加随机 @，
-        # 昵称组合各异，兼作正文去重（md5 key 唯一）
-        raw_message = message or random.choice(_COMMENTS)
+        # 末尾追加轮遍 @，昵称组合各异，兼作正文去重（md5 key 唯一）；
+        # 正文素材取自大素材池（biliopusdb 去重后）轮遍取，不重复。
+        raw_message = message or _rr.pick(_COMMENTS)
         targets = list(at_users or [])
         body: dict = {
             "oid": str(dyn_id),
@@ -843,7 +843,7 @@ class SeedClient:
                         "source_type": biz_type,
                         "source_id": str(dyn_id),
                         "actor_mid": actor_mid,
-                        "content": random.choice(_COMMENTS),
+                        "content": _rr.pick(_COMMENTS),
                         "biz_id": biz_id,
                     },
                 ),
@@ -882,7 +882,7 @@ class SeedClient:
                 mid,
                 {
                     "receiver_mid": receiver_mid,
-                    "content": random.choice(_COMMENTS),
+                    "content": _rr.pick(_COMMENTS),
                     "receiver_name": receiver_name,
                 },
             ),
@@ -1241,9 +1241,10 @@ async def seed_moment(
             if likers and _rr.pick(range(10)) == 0:
                 await client.report_moment(_rr.pick(likers)[0], dyn_id)
 
-            # 6) 转发：已有过审动态时每 5 条转发 1 次（源动态轮遍取，不再概率随机）
+            # 6) 转发：对创建好的动态尝试转发——每创建一条后，若已有过审动态，
+            #    就从已过审集合里轮遍取一条作为源进行转发（覆盖转发链路），不再概率触发。
             fwd_id: int | None = None
-            if normal_ids and _rr.pick(range(5)) == 0:
+            if normal_ids:
                 src_dyn = _rr.pick(normal_ids)
                 fwd_id = await client.repost(
                     author_mid,
@@ -1313,37 +1314,43 @@ async def seed_comment(
     like_count = 0
 
     for oid, biz_type in tqdm(resources, desc="[评论体系] 资源", unit="个"):
-        # 评论区 up_mid 用资源作者（动态正常应从卡片 author 模块取；seed 从用户池随机取）
-        up_mid = random.choice(users)[0]
+        # 评论区 up_mid 用资源作者（动态从用户池轮遍取）
+        up_mid = _rr.pick(users)[0]
         commenters = [u for u in users if u[0] != up_mid]
         # 仅当前资源的根评论（楼中楼/点赞/置顶必须限定在同一个评论区）
         dyn_root_rpids: list[str] = []
 
+        def _rr_at_targets(exclude_mid: int | None) -> list[tuple[int, str]]:
+            """确定性轮遍 @ 目标：从 commenters（排除自己）轮流取 1 个。"""
+            pool = [u for u in commenters if u[0] != exclude_mid]
+            if not pool:
+                return []
+            mid, name = _rr.pick(pool)
+            return [(int(mid), (name or f"user{mid}"))]
+
         # 0) 资源点赞：动态走 thumb，lottery 等通用资源走 thumb_lottery
         #    （通用资源点赞后端不自动生成 LIKE 事件，消息中心覆盖由
         #     seed_lottery_resource 显式补发，此处不重复补）
-        for u in random.sample(commenters, min(2, len(commenters))):
+        for u in _rr.pick_n(commenters, min(2, len(commenters))):
             if biz_type is InteractionBizTypeEnum.LOTTERY:
                 await client.thumb_lottery(u[0], oid)
             else:
                 await client.thumb(u[0], oid)
             like_count += 1
 
-        # 1) 一级评论（2~3 条）+ 审核通过（正文末尾追加随机 @，不 @ 自己）
-        for commenter in random.sample(
-            commenters, min(random.randint(2, 3), len(commenters))
-        ):
+        # 1) 一级评论（固定 2 条，轮遍取评论者）+ 审核通过（正文末尾轮遍 @，不 @ 自己）
+        for commenter in _rr.pick_n(commenters, min(2, len(commenters))):
             try:
                 rpid = await client.add_comment(
                     commenter[0],
                     oid,
                     up_mid,
                     biz_type=biz_type,
-                    at_users=_random_at_targets(users, exclude_mid=commenter[0]),
+                    at_users=_rr_at_targets(commenter[0]),
                 )
                 await client.approve_comment(rpid)
             except RuntimeError as e:
-                # 拉黑等业务限制会拒绝评论（seed 随机组合可能命中持久化黑名单），软降级跳过
+                # 拉黑等业务限制会拒绝评论（seed 组合可能命中持久化黑名单），软降级跳过
                 logger.warning(f"评论发布失败（已跳过）: {e}")
                 continue
             root_rpids.append(rpid)
@@ -1351,38 +1358,37 @@ async def seed_comment(
             comment_count += 1
             await asyncio.sleep(0.02)
 
-        # 2) 楼中楼：对当前资源每个根评论再回复 1~2 层
+        # 2) 楼中楼：对当前资源每个根评论固定回复 1 层（轮遍取回复者）
         for root_rpid in dyn_root_rpids:
             parent = root_rpid
-            for _ in range(random.randint(1, 2)):
-                replier = random.choice(commenters)
-                try:
-                    rpid = await client.add_comment(
-                        replier[0],
-                        oid,
-                        up_mid,
-                        biz_type=biz_type,
-                        root=root_rpid,
-                        parent=parent,
-                        message=random.choice(_REPLIES),
-                        at_users=_random_at_targets(users, exclude_mid=replier[0]),
-                    )
-                    await client.approve_comment(rpid)
-                except RuntimeError as e:
-                    # 同上：评论被业务拒绝（拉黑等）软降级跳过，不阻断楼中楼后续
-                    logger.warning(f"楼中楼评论发布失败（已跳过）: {e}")
-                    continue
-                comment_count += 1
-                parent = rpid
-                await asyncio.sleep(0.02)
+            replier = _rr.pick(commenters)
+            try:
+                rpid = await client.add_comment(
+                    replier[0],
+                    oid,
+                    up_mid,
+                    biz_type=biz_type,
+                    root=root_rpid,
+                    parent=parent,
+                    message=_rr.pick(_REPLIES),
+                    at_users=_rr_at_targets(replier[0]),
+                )
+                await client.approve_comment(rpid)
+            except RuntimeError as e:
+                # 同上：评论被业务拒绝（拉黑等）软降级跳过，不阻断楼中楼后续
+                logger.warning(f"楼中楼评论发布失败（已跳过）: {e}")
+                continue
+            comment_count += 1
+            parent = rpid
+            await asyncio.sleep(0.02)
 
-        # 3) 评论点赞 / 点踩（当前动态审核通过后的根评论）
-        for rpid in dyn_root_rpids:
-            actor = random.choice(commenters)
-            await client.comment_action(actor[0], rpid, random.choice([1, 2]))
+        # 3) 评论点赞 / 点踩（轮遍取动作者，赞/踩交替）
+        for i, rpid in enumerate(dyn_root_rpids):
+            actor = _rr.pick(commenters)
+            await client.comment_action(actor[0], rpid, 1 if i % 2 == 0 else 2)
             action_count += 1
 
-        # 4) @ 提及：一级评论带 at_mids + at_name_to_mid（显式 @ + 末尾随机 @ 并存）
+        # 4) @ 提及：一级评论带 at_mids + at_name_to_mid（显式 @ + 末尾轮遍 @ 并存）
         if len(commenters) >= 2:
             at_target = commenters[0]
             at_name = at_target[1] or f"user{at_target[0]}"
@@ -1396,7 +1402,7 @@ async def seed_comment(
                     message=f"@{at_name} 这个{subject}真不错",
                     at_mids=[at_target[0]],
                     at_name_to_mid={at_name: at_target[0]},
-                    at_users=_random_at_targets(users, exclude_mid=commenters[1][0]),
+                    at_users=_rr_at_targets(commenters[1][0]),
                 )
                 comment_count += 1
             except RuntimeError as e:
@@ -1405,9 +1411,7 @@ async def seed_comment(
 
         # 5) 举报当前资源的一条评论
         if dyn_root_rpids:
-            await client.report_comment(
-                random.choice(commenters)[0], dyn_root_rpids[-1]
-            )
+            await client.report_comment(_rr.pick(commenters)[0], dyn_root_rpids[-1])
 
         # 6) 评论置顶（资源作者身份，仅置顶当前资源的根评论）
         if dyn_root_rpids:
@@ -1447,10 +1451,10 @@ async def seed_interact(
         return
 
     folder_ids: list[str] = []
-    # 1) 收藏夹：每人建一个（部分带封面 → 封面审核）
-    for mid, _ in users[: min(3, len(users))]:
+    # 1) 收藏夹：每人建一个（轮流带封面 → 封面审核）
+    for i, (mid, _) in enumerate(users[: min(3, len(users))]):
         name = f"seed收藏夹{mid}"
-        cover = random.choice(_IMG_URLS) if random.random() < 0.5 else None
+        cover = _rr.pick(_IMG_URLS) if i % 2 == 0 else None
         fid = await client.create_folder(mid, name, cover)
         if fid:
             folder_ids.append(fid)
@@ -1465,7 +1469,7 @@ async def seed_interact(
         enumerate(users[: min(5, len(users))]), desc="[用户级互动] 收藏", unit="人"
     ):
         fid = folder_ids[i % len(folder_ids)] if folder_ids else None
-        for dyn_id in random.sample(normal_ids, min(2, len(normal_ids))):
+        for dyn_id in _rr.pick_n(normal_ids, min(2, len(normal_ids))):
             try:
                 if fid:
                     await client.favorite_add(mid, dyn_id, fid)
@@ -1516,10 +1520,10 @@ async def seed_interact(
         await client.report_event(
             target_mid,
             event_type,
-            random.choice(normal_ids),
+            _rr.pick(normal_ids),
             actor[0],
             actor[1],
-            str(random.choice(normal_ids)),
+            str(_rr.pick(normal_ids)),
         )
 
     # 5) 系统通知（root 发布，全体用户）
@@ -2051,7 +2055,7 @@ async def seed_message(
 
     # 2) 通用互动计数：lottery 资源点赞（TInteractionStat）
     for mid, _ in users[: min(2, len(users))]:
-        await client.thumb_lottery(mid, random.randint(10000000, 99999999))
+        await client.thumb_lottery(mid, 10000000 + _rr.pick(range(90000000)))
 
     # 3) 用户空间举报
     await client.report_user(users[1][0], users[0][0])
@@ -2066,7 +2070,7 @@ async def seed_message(
 
     # 5) 头像审核流：提交头像（带 .jpg 后缀真实图源）→ 管理员审核通过
     avatar_mid = users[0][0]
-    await client.submit_avatar(avatar_mid, random.choice(_IMG_URLS))
+    await client.submit_avatar(avatar_mid, _rr.pick(_IMG_URLS))
     await client.approve_avatar()
 
     logger.success(f"[消息与管理] 私信/通用计数/举报/封禁/头像审核流已覆盖")
@@ -2285,10 +2289,29 @@ async def _load_material_pools() -> None:
         logger.warning(f"bilidb.t_topic_item 话题名加载失败，使用内置兜底: {e}")
 
 
-def _sample(distribution: list[tuple[int, float]]) -> int:
-    """按分布随机取值（distribution = [(值, 权重), ...]）。"""
-    values, weights = zip(*distribution)
-    return random.choices(values, weights=weights, k=1)[0]
+def _sample(distribution: Sequence[tuple[int, float]]) -> int:
+    """按分布**确定性轮遍**取值（distribution = [(值, 权重), ...]，取代随机加权采样）。
+
+    权重可为小数，按 ×2 转整后做累计；每调用一次由全局 ``_rr`` 推进一格，命中对应累计区间，
+    使整体分布比例≈权重且可复现（不再随机）。
+    """
+    scale = 2  # 权重里最多一位小数，×2 转整数
+    items: list[tuple[int, int]] = []
+    total = 0
+    for value, weight in distribution:
+        w = int(round(weight * scale))
+        total += w
+        items.append((value, w))
+    bucket = _rr.pick(range(total))
+    acc = 0
+    for value, w in items:
+        acc += w
+        if bucket < acc:
+            return value
+    return items[-1][0]
+
+
+_T = TypeVar("_T")
 
 
 class _RoundRobin:
@@ -2296,7 +2319,7 @@ class _RoundRobin:
 
     用于取代 ``random.choice / random.sample / random.randint`` 的“随机挑”，
     让 seed 全流程**定值轮遍**（每个用户 / 每条素材都被均匀轮到、不重复）：
-    - ``pick(seq)``：取下一项；
+    - ``pick(seq)``：取下一项（返回元素类型同 ``seq``，兼容 list/range 等 Sequence）；
     - ``pick_n(seq, n)``：取连续 ``n`` 项（池足够大时不重复，循环后从头再来）。
     取空序列抛 ``ValueError``。
     """
@@ -2306,14 +2329,14 @@ class _RoundRobin:
     def __init__(self) -> None:
         self._i = 0
 
-    def pick(self, seq: list) -> object:
+    def pick(self, seq: Sequence[_T]) -> _T:
         if not seq:
             raise ValueError("_RoundRobin.pick 从空序列取值")
         v = seq[self._i % len(seq)]
         self._i += 1
         return v
 
-    def pick_n(self, seq: list, n: int) -> list:
+    def pick_n(self, seq: Sequence[_T], n: int) -> list[_T]:
         return [self.pick(seq) for _ in range(max(0, n))]
 
     def reset(self) -> None:
@@ -2499,7 +2522,6 @@ async def _seed_topics(
 
 async def _seed_bulk_comment_suite(
     client: SeedClient,
-    rng: random.Random,
     user_pool: list[tuple[int, str | None]],
     oid: int,
     up_mid: int,
@@ -2510,18 +2532,18 @@ async def _seed_bulk_comment_suite(
     """大数据灌数：单个资源（动态 / lottery）的完整评论套件（软降级，单条失败不阻断）。
 
     覆盖：资源点赞（按 biz_type 分流 DYNAMIC→thumb / LOTTERY→thumb_lottery）、
-    一级评论（正文末尾随机 @）、楼中楼（二级评论，带 @）、评论点赞/点踩、
+    一级评论（正文末尾轮遍 @）、楼中楼（二级评论，带 @）、评论点赞/点踩、
     显式 @ 评论、举报、置顶；lottery 资源额外补发 LIKE 事件（通用资源点赞后端不自动
     生成事件，与 ``seed_lottery_resource`` 行为一致），统一落点 ``like_event_recipient``
-    便于登录消息中心查看「收到的赞」。
+    便于登录消息中心查看「收到的赞」。全流程**定值轮遍**（不再随机）。
     """
     if len(user_pool) < 2:
         return
     if up_mid and any(u[0] == up_mid for u in user_pool):
         commenters = [u for u in user_pool if u[0] != up_mid]
     else:
-        # up_mid 不在用户池（lottery 等无作者资源）时随机指派一个资源作者
-        up_mid = rng.choice(user_pool)[0]
+        # up_mid 不在用户池（lottery 等无作者资源）时轮遍指派一个资源作者
+        up_mid = _rr.pick(user_pool)[0]
         commenters = [u for u in user_pool if u[0] != up_mid]
     if not commenters:
         return
@@ -2541,25 +2563,31 @@ async def _seed_bulk_comment_suite(
             logger.warning(f"灌数评论发布失败（已跳过）: {e}")
             return None
 
+    def _rr_at(exclude_mid: int | None) -> list[tuple[int, str]]:
+        """确定性轮遍 @ 目标：从 commenters（排除自己）轮流取 1 个。"""
+        pool = [u for u in commenters if u[0] != exclude_mid]
+        if not pool:
+            return []
+        mid, name = _rr.pick(pool)
+        return [(int(mid), (name or f"user{mid}"))]
+
     # 0) 资源点赞（按 biz_type 分流）
-    liker = rng.choice(commenters)
+    liker = _rr.pick(commenters)
     if biz_type is InteractionBizTypeEnum.LOTTERY:
         await _safe(client.thumb_lottery(liker[0], oid))
     else:
         await _safe(client.thumb(liker[0], oid))
 
-    # 1) 一级评论（2~3 条）+ 审核通过（正文末尾随机 @，不 @ 自己）
+    # 1) 一级评论（固定 2 条，轮遍取评论者）+ 审核通过（正文末尾轮遍 @，不 @ 自己）
     root_rpids: list[str] = []
-    for commenter in rng.sample(commenters, min(rng.randint(2, 3), len(commenters))):
+    for commenter in _rr.pick_n(commenters, min(2, len(commenters))):
         rpid = await _safe_add(
             client.add_comment(
                 commenter[0],
                 oid,
                 up_mid,
                 biz_type=biz_type,
-                at_users=_random_at_targets(
-                    user_pool, exclude_mid=commenter[0], rng=rng
-                ),
+                at_users=_rr_at(commenter[0]),
             )
         )
         if not rpid:
@@ -2567,36 +2595,33 @@ async def _seed_bulk_comment_suite(
         await _safe(client.approve_comment(rpid))
         root_rpids.append(rpid)
 
-    # 2) 楼中楼（二级评论）：对每根一级评论回复 1~2 层，正文末尾随机 @
+    # 2) 楼中楼（二级评论）：对每根一级评论固定回复 1 层，正文末尾轮遍 @
     for root_rpid in root_rpids:
         parent = root_rpid
-        for _ in range(rng.randint(1, 2)):
-            replier = rng.choice(commenters)
-            rpid = await _safe_add(
-                client.add_comment(
-                    replier[0],
-                    oid,
-                    up_mid,
-                    biz_type=biz_type,
-                    root=root_rpid,
-                    parent=parent,
-                    message=rng.choice(_REPLIES),
-                    at_users=_random_at_targets(
-                        user_pool, exclude_mid=replier[0], rng=rng
-                    ),
-                )
+        replier = _rr.pick(commenters)
+        rpid = await _safe_add(
+            client.add_comment(
+                replier[0],
+                oid,
+                up_mid,
+                biz_type=biz_type,
+                root=root_rpid,
+                parent=parent,
+                message=_rr.pick(_REPLIES),
+                at_users=_rr_at(replier[0]),
             )
-            if not rpid:
-                continue
-            await _safe(client.approve_comment(rpid))
-            parent = rpid
+        )
+        if not rpid:
+            continue
+        await _safe(client.approve_comment(rpid))
+        parent = rpid
 
-    # 3) 评论点赞 / 点踩（落在一级评论上）
-    for rpid in root_rpids:
-        actor = rng.choice(commenters)
-        await _safe(client.comment_action(actor[0], rpid, rng.choice([1, 2])))
+    # 3) 评论点赞 / 点踩（落在一级评论上，赞/踩交替）
+    for i, rpid in enumerate(root_rpids):
+        actor = _rr.pick(commenters)
+        await _safe(client.comment_action(actor[0], rpid, 1 if i % 2 == 0 else 2))
 
-    # 4) 显式 @ 评论（@ + 末尾随机 @ 共存）
+    # 4) 显式 @ 评论（@ + 末尾轮遍 @ 共存）
     if len(commenters) >= 2:
         at_target = commenters[0]
         at_name = at_target[1] or f"user{at_target[0]}"
@@ -2610,15 +2635,13 @@ async def _seed_bulk_comment_suite(
                 message=f"@{at_name} 这个{subject}真不错",
                 at_mids=[at_target[0]],
                 at_name_to_mid={at_name: at_target[0]},
-                at_users=_random_at_targets(
-                    user_pool, exclude_mid=commenters[1][0], rng=rng
-                ),
+                at_users=_rr_at(commenters[1][0]),
             )
         )
 
     # 5) 举报一条评论
     if root_rpids:
-        await _safe(client.report_comment(rng.choice(commenters)[0], root_rpids[-1]))
+        await _safe(client.report_comment(_rr.pick(commenters)[0], root_rpids[-1]))
 
     # 6) 评论置顶（资源作者身份）
     if root_rpids:
@@ -2626,7 +2649,7 @@ async def _seed_bulk_comment_suite(
 
     # lottery 资源点赞后端不自动生成 LIKE 事件 → 补发（与 seed_lottery_resource 一致）
     if biz_type is InteractionBizTypeEnum.LOTTERY and like_event_recipient is not None:
-        actor = rng.choice(commenters)
+        actor = _rr.pick(commenters)
         await _safe(
             client.report_event(
                 like_event_recipient,
@@ -2642,22 +2665,21 @@ async def _seed_bulk_comment_suite(
 
 async def _seed_dynamic(
     client: SeedClient,
-    rng: random.Random,
     user_pool: list[tuple[int, str | None]],
     topic_ids: list[int],
     real: tuple,
     sem: asyncio.Semaphore,
     author_cycle: "cycle[tuple[int, str | None]]",
 ) -> None:
-    """单条动态：创建 → 审核通过 → 按分布点赞/评论/@/浏览（并发）。
+    """单条动态：创建 → 审核通过 → 按分布点赞/评论/@/浏览（并发，全定值轮遍）。
 
     作者在 ``user_pool`` 上**轮流循环**（round-robin，``author_cycle``），
     保证每个用户都被轮到创建动态，总次数 = ``len(reals)``（= ``count``）。
-    其余互动者（点赞 / 浏览 / @ / 评论）仍随机采样，不要求轮遍。
+    其余互动者（点赞 / 浏览 / @ / 评论）亦确定性轮遍（``_rr``），不再随机。
 
-    正文末尾追加随机 @（不 @ 作者本人），让灌数数据同样覆盖动态 @ 链路；
+    正文末尾追加轮遍 @（不 @ 作者本人），让灌数数据同样覆盖动态 @ 链路；
     评论走 ``_seed_bulk_comment_suite``（一级评论 + 楼中楼 + 评论赞踩 + 显式 @ +
-    举报 + 置顶，正文末尾随机 @），覆盖评论 @ 链路并触发 REPLY（给动态作者）/
+    举报 + 置顶，正文末尾轮遍 @），覆盖评论 @ 链路并触发 REPLY（给动态作者）/
     AT（给被 @ 用户）事件通知，使「收到的赞/回复/@」消息中心有真实数据；
     极长正文（已接近 2000 字上限）跳过 @，避免触发长度校验导致整条动态灌入失败。
     """
@@ -2667,16 +2689,9 @@ async def _seed_dynamic(
             author, _ = next(author_cycle)
             nodes: list[dict] = [{"type": "WORDS", "text": content}]
             if len(content) <= _BULK_AT_CONTENT_MAXLEN:
-                nodes.extend(
-                    _at_nodes(
-                        _random_at_targets(user_pool, exclude_mid=author, rng=rng)
-                    )
-                )
-            topic_id = (
-                rng.choice(topic_ids)
-                if topic_ids and rng.random() < TOPIC_LINK_RATIO
-                else None
-            )
+                nodes.extend(_at_nodes(_at_targets_deterministic(user_pool, author)))
+            # 话题：轮遍挂载（非概率）
+            topic_id = _rr.pick(topic_ids) if topic_ids and _rr.pick(range(2)) == 0 else None
             new_dyn_id = await client.create_dynamic(
                 author, scene="WORD", content=nodes, topic_id=topic_id
             )
@@ -2687,10 +2702,10 @@ async def _seed_dynamic(
             comment_target = _sample(COMMENT_DISTRIBUTION)
             tasks = []
             if like_target > 0 and user_pool:
-                for u in rng.sample(user_pool, min(like_target, len(user_pool))):
+                for u in _rr.pick_n(user_pool, min(like_target, len(user_pool))):
                     tasks.append(client.thumb(u[0], new_dyn_id))
             if view_target > 0 and user_pool:
-                for u in rng.sample(user_pool, min(view_target, len(user_pool))):
+                for u in _rr.pick_n(user_pool, min(view_target, len(user_pool))):
                     tasks.append(client.browse(u[0], new_dyn_id))
 
             # 评论套件：对动态跑完整评论链路（一级评论/@ + 楼中楼 + 评论赞踩 +
@@ -2701,7 +2716,6 @@ async def _seed_dynamic(
                 tasks.append(
                     _seed_bulk_comment_suite(
                         client,
-                        rng,
                         user_pool,
                         new_dyn_id,
                         author,  # up_mid：动态作者，接收 REPLY 事件
@@ -2821,7 +2835,6 @@ async def run_bulk(args: argparse.Namespace) -> None:
         )
         return
 
-    rng = random.Random(20260815)
     # 作者 / 点赞者 / 浏览者 / @对象统一取自自有用户系统（pptr Postgres）。
     user_pool = await fetch_pptr_user_pool(args.users_pool_size)
     if not user_pool:
@@ -2851,7 +2864,6 @@ async def run_bulk(args: argparse.Namespace) -> None:
             asyncio.create_task(
                 _seed_dynamic(
                     client,
-                    rng,
                     user_pool,
                     topic_ids,
                     real,
@@ -2883,10 +2895,9 @@ async def run_bulk(args: argparse.Namespace) -> None:
             lot_tasks = [
                 _seed_bulk_comment_suite(
                     client,
-                    rng,
                     user_pool,
                     int(lid),
-                    rng.choice(user_pool)[0],  # lottery 无作者，随机指派资源作者
+                    _rr.pick(user_pool)[0],  # lottery 无作者，轮遍指派资源作者
                     InteractionBizTypeEnum.LOTTERY,
                     like_event_recipient=like_recipient,
                 )
@@ -2995,11 +3006,15 @@ async def _run_bulk(args: argparse.Namespace) -> None:
 
 
 async def run_all(args: argparse.Namespace) -> None:
+    # seed 默认安静：只输出「真正未知/失败」的 ERROR 级日志。
+    # info/success（过程提示）与 warning（预期软降级 / 业务拒绝，如拉黑、资源不存在、
+    # 评论被拒、转发失败等）一律不打印；进度由 tqdm 展示。真正异常走 logger.error / 崩溃报错。
+    logger.remove()
+    logger.add(sys.stderr, level="ERROR")
     if not args.skip_full:
         await _run_full(args)
     if not args.skip_bulk:
         await _run_bulk(args)
-    logger.success("全部 seed 场景执行完毕。")
 
 
 def build_parser() -> argparse.ArgumentParser:

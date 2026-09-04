@@ -9,6 +9,7 @@ from sqlmodel import Field, SQLModel
 
 from bili_common.models import InteractionBizTypeEnum
 from app.models.str_int import StrInt
+from app.models.schemas.interaction import InteractionResource
 
 
 from app.models.schemas.base import AutoStrMixin
@@ -40,6 +41,17 @@ class ReportItem(SQLModel, AutoStrMixin):
     # 2.40.0：被举报数量双口径（跨来源/跨状态，管理端展示）
     reportCount: int = Field(default=0, description="被举报次数（累计，COUNT(*)）")
     reportPeopleCount: int = Field(default=0, description="举报人数（去重，COUNT(DISTINCT reportMid)）")
+    # 2.61.0：用户展示信息（举报人 / 被举报人，一次 PptrUser.get_many 批量回查；
+    # 弱依赖，回查失败为 null，前端降级「用户{mid}」；见计划书 §5.19）
+    reporterName: str | None = Field(default=None, description="举报人昵称")
+    reporterFace: str | None = Field(default=None, description="举报人头像")
+    accusedName: str | None = Field(default=None, description="被举报人昵称")
+    accusedFace: str | None = Field(default=None, description="被举报人头像")
+    # 2.61.0：被举报资源快照（按 bizType 经 batch_get_resources 批量回捞，§5.19）
+    resource: InteractionResource | None = Field(
+        default=None,
+        description="被举报资源快照（标题 / 封面 / 跳转目标；exists=false 表示内容已删除或不可见）",
+    )
 
 
 class ReportListResp(SQLModel, AutoStrMixin):

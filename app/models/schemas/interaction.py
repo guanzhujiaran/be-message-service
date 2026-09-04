@@ -37,12 +37,17 @@ class InteractionResource(SQLModel):
 
 
 class InteractionStatusItem(SQLModel, AutoStrMixin):
-    """某资源当前用户交互态（收藏 + 点赞 + 计数）。"""
+    """某资源当前用户交互态（收藏 + 点赞 + 点踩 + 计数）。
+
+    2.62.0（计划书 §5.20）：新增 ``isDislike``，供动态卡片渲染点踩态（匿名观众 ``mid=0`` 恒 false）。
+    **点踩计数不外露**：``dislikeCount`` 仍在 ``TInteractionStat`` 内供 EdgeRank 全局降权使用，但不出参。
+    """
 
     bizType: InteractionBizTypeEnum = Field(description="资源类型（InteractionBizTypeEnum 值）")
     bizId: str = Field(description="资源 id（字符串）")
     isLike: bool = Field(default=False, description="当前用户是否已赞")
     isFavorite: bool = Field(default=False, description="当前用户是否已收藏")
+    isDislike: bool = Field(default=False, description="当前用户是否已点踩（2.62.0；匿名恒 false）")
     likeCount: int = Field(default=0, description="点赞数")
     favoriteCount: int = Field(default=0, description="收藏数")
     commentCount: int = Field(default=0, description="评论数（dynamic 时=动态统计；非动态资源无评论，恒为 0）")

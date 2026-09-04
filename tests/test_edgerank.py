@@ -25,6 +25,7 @@ from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
     TMoment,
+    TResourceDislike,
     TResourceLike,
     TResourceReport,
     TMomentTopic,
@@ -46,7 +47,12 @@ from app.services.moment.edgerank import (
     compute_topic_score,
     decay,
 )
-from app.services.moment.feed_engine import build_extra_from_stat
+from app.services.moment.feed_engine import (
+    FeedCandidate,
+    PersonalSignals,
+    apply_dislike_penalty,
+    build_extra_from_stat,
+)
 from app.services.user.follow import FollowService
 from app.services.moment.moment_feed import MomentFeedService
 from app.services.moment.topic_feed import TopicFeedService
@@ -561,6 +567,97 @@ async def test_comprehensive_feed_report_penalty(monkeypatch):
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM TResourceReport WHERE bizId IN ({a}, {b})"))
+            await s.commit()
+
+
+def test_apply_dislike_penalty_hits_only_disliked(monkeypatch):
+    """2.62.0：点踩个人化降权纯函数——命中点踩者大幅降权，未命中 / 开关关闭原分返回。"""
+    monkeypatch.setattr(settings, "edgerank_personal_dislike_enabled", True)
+    monkeypatch.setattr(settings, "edgerank_personal_dislike_scale", 0.3)
+    monkeypatch.setattr(settings, "edgerank_personal_dislike_weight", 5.0)
+    disliked_cand = FeedCandidate(biz_type="dynamic", biz_id=1, mid=1)
+    normal_cand = FeedCandidate(biz_type="dynamic", biz_id=2, mid=2)
+    signals = PersonalSignals(disliked={1})
+    # 未命中点踩集合 → 原分返回
+    assert apply_dislike_penalty(10.0, normal_cand, signals) == 10.0
+    # 命中 → score * scale - weight（高分被显著压低，低分直接转负沉底）
+    assert apply_dislike_penalty(10.0, disliked_cand, signals) == pytest.approx(
+        10.0 * 0.3 - 5.0
+    )
+    assert apply_dislike_penalty(1.0, disliked_cand, signals) < 0
+    # 开关关闭 → 退化为原分
+    monkeypatch.setattr(settings, "edgerank_personal_dislike_enabled", False)
+    assert apply_dislike_penalty(10.0, disliked_cand, signals) == 10.0
+
+
+async def test_comprehensive_feed_personal_dislike_penalty(monkeypatch):
+    """2.62.0：点踩 → 对点踩者本人大幅降权；不影响其他人的排序。
+
+    构造：a / b 同互动（like=2）、同时间（基础分相同）；viewer 点踩 a。
+    关闭匿名随机排除扰动，保证排序确定。
+    """
+    monkeypatch.setattr(settings, "edgerank_candidate_window_hours", 0.1)
+    monkeypatch.setattr(settings, "edgerank_anon_randomize_enabled", False)
+    viewer = 990201
+    other = 990202
+    async with new_session() as s:
+        a = await _seed_moment(s, E_MID, seconds_ago=60, like=2)
+        b = await _seed_moment(s, E_MID2, seconds_ago=60, like=2)
+        s.add(
+            TResourceDislike(
+                bizType=InteractionBizTypeEnum.DYNAMIC,
+                bizId=a,
+                mid=viewer,
+            )
+        )
+        await s.commit()
+    try:
+        async with new_session() as s:
+            me = await MomentFeedService.comprehensive_feed(
+                s, page_size=2, sort="recommend", viewer_mid=viewer
+            )
+            # 基础分相同 + 我点踩过 a → a 对本人降权，排到 b 之后
+            assert [it.dynId for it in me.items] == [b, a]
+            # 他人无点踩记录 → 点踩不越权影响别人的候选（内容仍可见，只是本人靠后）
+            other_feed = await MomentFeedService.comprehensive_feed(
+                s, page_size=2, sort="recommend", viewer_mid=other
+            )
+            assert set(it.dynId for it in other_feed.items) == {a, b}
+    finally:
+        async with new_session() as s:
+            await s.exec(text(f"DELETE FROM TResourceDislike WHERE mid = {viewer}"))
+            await s.exec(text(f"DELETE FROM TFeedImpression WHERE viewerKey = 'mid:{viewer}'"))
+            await s.commit()
+
+
+async def test_comprehensive_feed_personal_dislike_exclude(monkeypatch):
+    """2.62.0：`edgerank_personal_dislike_exclude` 开启时，点踩过的资源直接剔除出我的 Feed。"""
+    monkeypatch.setattr(settings, "edgerank_candidate_window_hours", 0.1)
+    monkeypatch.setattr(settings, "edgerank_anon_randomize_enabled", False)
+    monkeypatch.setattr(settings, "edgerank_personal_dislike_exclude", True)
+    viewer = 990203
+    async with new_session() as s:
+        a = await _seed_moment(s, E_MID, seconds_ago=60, like=2)
+        b = await _seed_moment(s, E_MID2, seconds_ago=60, like=2)
+        s.add(
+            TResourceDislike(
+                bizType=InteractionBizTypeEnum.DYNAMIC,
+                bizId=a,
+                mid=viewer,
+            )
+        )
+        await s.commit()
+    try:
+        async with new_session() as s:
+            me = await MomentFeedService.comprehensive_feed(
+                s, page_size=2, sort="recommend", viewer_mid=viewer
+            )
+            ids = [it.dynId for it in me.items]
+            assert ids == [b]  # a 被剔除
+    finally:
+        async with new_session() as s:
+            await s.exec(text(f"DELETE FROM TResourceDislike WHERE mid = {viewer}"))
+            await s.exec(text(f"DELETE FROM TFeedImpression WHERE viewerKey = 'mid:{viewer}'"))
             await s.commit()
 
 

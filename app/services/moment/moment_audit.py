@@ -266,10 +266,12 @@ class MomentAuditService:
                 if isinstance(dyn_type, MomentTypeEnum)
                 else str(dyn_type)
             )
+            # 统计桶 / byStatus 的键用枚举成员名小写（auditing/normal/rejected/hidden），
+            # 与 MomentAuditStatisticsResp 契约一致；`.value` 是 int（1-4），会导致前端取不到计数
             sname = (
-                audit_status.value
+                audit_status.name.lower()
                 if isinstance(audit_status, MomentAuditStatusEnum)
-                else str(audit_status)
+                else str(audit_status).lower()
             )
             bucket = by_type.setdefault(
                 tname,

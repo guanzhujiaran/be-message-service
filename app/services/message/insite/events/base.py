@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -69,57 +68,21 @@ from .constants import (
     _MAX_USERS_PER_ITEM,
 )
 from .registry import EVENT_REGISTRY
+# 读取侧公共装配：资源快照批量回捞 / @提及昵称替换（与举报审核共用，base_biz.py）
+from app.services.interaction_actions.base_biz import (
+    batch_get_resource_snapshots,
+    replace_at_mentions,
+)
 
-# ==================== 事件资源快照批量回捞（计划书 §5.11 / C20）====================
-
-
-async def _load_event_resource_snapshots(
-    session, metas
-) -> "dict[tuple[int, str], InteractionResource]":
-    """按 ``(resource_type, resource_id, rpid)`` 批量回捞资源快照，每类资源一次调用。
-
-    metas: 可迭代的 ``(resource_type:int, resource_id:str, rpid:str|None)``。
-    返回 ``{(resource_type, resource_id): InteractionResource}``；未实现资源类 / 未知类型
-    返回 ``exists=False`` 的空占位（前端展示「资源已删除 / 不存在」且跳过跳转）。
-    """
-    from app.models.schemas.interaction import InteractionResource
-    from app.services.interaction_actions.base_biz import get_biz_class
-
-    by_type: dict[int, list[str]] = {}
-    for rt, rid, _ in metas:
-        if rid:
-            by_type.setdefault(rt, []).append(rid)
-    out: dict[tuple[int, str], InteractionResource] = {}
-    for rt, ids in by_type.items():
-        rpid_map = {
-            int(i): rpid
-            for (t, i, rpid) in metas
-            if t == rt and str(i).isdigit() and rpid
-        }
-        try:
-            biz_cls = get_biz_class(rt)
-        except ValueError:
-            biz_cls = None
-        snaps: dict[int, InteractionResource] = {}
-        if biz_cls is not None:
-            snaps = await biz_cls.batch_get_resources(
-                session, [int(i) for i in ids if str(i).isdigit()], rpid_map=rpid_map
-            )
-        for i in ids:
-            out[(rt, i)] = snaps.get(int(i)) or InteractionResource(
-                bizType=InteractionBizTypeEnum.DYNAMIC,
-                bizId=int(i) if str(i).isdigit() else 0,
-                exists=False,
-            )
-    return out
+# ==================== 评论资源快照回捞（计划书 §5.12）====================
 
 
 async def _load_comment_resources(session, rpids) -> "dict[int, InteractionResource]":
     """按 rpid 批量回捞**评论**快照（计划书 §5.12）。
 
-    与顶层资源快照（:func:`_load_event_resource_snapshots`）共用同一套 Biz 体系：
-    走 ``CommentBiz.batch_get_resources``（一次 ``IN`` 查 ``CommentIndex`` + 一次 ``IN``
-    查 ``CommentContent``），SQL 次数恒定；未命中的 rpid 返回 ``exists=False`` 空占位。
+    与顶层资源快照（:func:`batch_get_resource_snapshots`，base_biz 公共装配）共用同一套
+    Biz 体系：走 ``CommentBiz.batch_get_resources``（一次 ``IN`` 查 ``CommentIndex`` + 一次
+    ``IN`` 查 ``CommentContent``），SQL 次数恒定；未命中的 rpid 返回 ``exists=False`` 空占位。
 
     评论快照的 ``title`` = 正文、``authorMid`` = 作者，供事件下发楼层正文与作者
     （``source_mid`` / ``target_mid``），避免事件层绕过 Biz 直接读评论正文表。
@@ -270,26 +233,6 @@ def is_comment_anchored(
     if event_type is InteractionActionTypeEnum.REPLY:
         return True
     return source_type_to_biz_type(source_type) is InteractionBizTypeEnum.COMMENT
-
-
-def _replace_at_mentions(message: str, at_nickname_map: dict[int, str]) -> str:
-    """把评论正文里的 `@{mid}` 占位符替换为 `@昵称`（对齐 comment_read）。
-
-    - 只替换能命中 `at_nickname_map`（mid → 昵称）的占位符；
-    - 命中不到的（mid 不存在 / 用户已删）原样保留，由前端兜底清理，
-      避免把「@ 关系」丢成一个裸 `@` 或产生错误的人名。
-    """
-    if not message or not at_nickname_map:
-        return message
-
-    def _sub(match: re.Match[str]) -> str:
-        mid = int(match.group(1))
-        nickname = at_nickname_map.get(mid)
-        if not nickname:
-            return match.group(0)
-        return f"@{nickname}"
-
-    return re.sub(r"@\{(\d{1,19})\}", _sub, message)
 
 
 def _comment_author(ctx: "MsgfeedBuildContext", rpid: str) -> int:
@@ -720,7 +663,7 @@ class BaseEvent(ABC):
             if bucket.get((etype, stype, sid))
         ]
         _identities = await _resolve_event_identities(session, _latest_rows)
-        _snapshots = await _load_event_resource_snapshots(
+        _snapshots = await batch_get_resource_snapshots(
             session, [_identities[r.id] for r in _latest_rows]
         )
 
@@ -819,7 +762,7 @@ class BaseEvent(ABC):
         rows = (await session.exec(stmt)).all()
         # 资源身份（resource_type, resource_id, rpid）批量解析 + 快照回捞
         _identities = await _resolve_event_identities(session, rows)
-        _snapshots = await _load_event_resource_snapshots(
+        _snapshots = await batch_get_resource_snapshots(
             session, [_identities[r.id] for r in rows]
         )
         items: list[EventItem] = []
@@ -1034,7 +977,7 @@ class BaseEvent(ABC):
             }
             if at_nickname_map:
                 comment_content = {
-                    rpid: _replace_at_mentions(msg, at_nickname_map)
+                    rpid: replace_at_mentions(msg, at_nickname_map)
                     for rpid, msg in comment_content.items()
                 }
 
@@ -1095,7 +1038,7 @@ class BaseEvent(ABC):
             ):
                 rpid = c.source_id or None
             _metas.append((c.resource_type, c.resource_id, rpid))
-        _snapshots = await _load_event_resource_snapshots(session, _metas)
+        _snapshots = await batch_get_resource_snapshots(session, _metas)
         for item in total_items:
             c = item.item
             snap = _snapshots.get((c.resource_type, c.resource_id))
