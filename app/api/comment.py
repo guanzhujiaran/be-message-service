@@ -27,6 +27,7 @@ from app.models.schemas import (
     CommentCountResp,
     CommentDelReq,
     CommentItem,
+    CommentLatestResp,
     CommentListResp,
     CommentOperationResp,
     CommentReportReq,
@@ -252,6 +253,40 @@ async def comment_count(
         return StandardResponse(code=400, msg="oid 不合法")
 
     data = await CommentReadService.get_count(session, oid_int, type)
+    return StandardResponse(data=data)
+
+
+@router.get("/latest", response_model=StandardResponse[CommentLatestResp], summary="首页最新评论（按资源类型分组）")
+async def comment_latest(
+    session: SessionDep,
+    _viewer: int | None = Depends(resolve_optional_viewer),
+    types: str | None = Query(
+        default=None,
+        description="逗号分隔的资源类型文字（dynamic/lottery/rpa_action/rpa_workflow/rpa_browser/rpa_plugin），缺省返回全部可挂评论的类型",
+    ),
+    limit: int = Query(default=5, ge=1, le=20, description="每个资源类型取最新根评论条数"),
+) -> StandardResponse[CommentLatestResp]:
+    """首页「最新评论」：按资源类型分组，仅返回各类型最新 N 条根评论。
+
+    - 只展示根评论，楼中楼子评论不返回；
+    - 未登录 / 登录均可访问，`x-bili-mid` 存在时仅影响「我的点赞态」回填。
+    """
+    type_list: list[InteractionBizTypeEnum] | None = None
+    if types:
+        cleaned = [t.strip().lower() for t in types.split(",") if t.strip()]
+        if not cleaned:
+            return StandardResponse(code=400, msg="types 参数不合法")
+        try:
+            type_list = [InteractionBizTypeEnum.from_text(t) for t in cleaned]
+        except (ValueError, KeyError):
+            return StandardResponse(code=400, msg="types 参数不合法")
+
+    data = await CommentReadService.list_latest(
+        session,
+        types=type_list,
+        limit_per_type=limit,
+        viewer_mid=_viewer,
+    )
     return StandardResponse(data=data)
 
 

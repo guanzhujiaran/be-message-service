@@ -37,6 +37,8 @@ from app.models.enums import (
 from app.models.schemas import (
     CommentCountResp,
     CommentItem,
+    CommentLatestGroup,
+    CommentLatestResp,
     CommentListResp,
     CommentSubListResp,
     )
@@ -273,6 +275,59 @@ class CommentReadService:
             all_count=subject.all_count,
             state=subject.state,
         )
+
+    # ==================== 最新根评论（首页，按资源类型分组） ====================
+
+    @staticmethod
+    async def list_latest(
+        session: AsyncSession,
+        *,
+        types: list[InteractionBizTypeEnum] | None = None,
+        limit_per_type: int = 5,
+        viewer_mid: int | None = None,
+    ) -> CommentLatestResp:
+        """首页「最新评论」：按资源类型分组，仅返回各类型最新 N 条**根评论**。
+
+        - **只取根评论**：``root == 0``，楼中楼子评论一律不展示；
+        - **按资源类型分组**：每组取该类型下最新（rpid 倒序）的根评论；
+        - 类型缺省取全部可挂评论的资源类型（动态 / 抽奖 / RPA 各类），
+          排除 COMMENT / USER 等不可作为评论目标资源的类型；
+        - 每组独立一条常量次数查询 + 走统一的 `assemble_items` 批量装配，
+          不会出现每条一级评论各查一轮的 N+1。
+        """
+        if not types:
+            types = [
+                t
+                for t in InteractionBizTypeEnum
+                if t
+                not in (
+                    InteractionBizTypeEnum.COMMENT,
+                    InteractionBizTypeEnum.USER,
+                )
+            ]
+
+        groups: list[CommentLatestGroup] = []
+        for type_ in types:
+            rows = (
+                await session.exec(
+                    select(CommentIndex)
+                    .where(
+                        col(CommentIndex.type) == type_,
+                        col(CommentIndex.root) == 0,
+                        col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
+                    )
+                    .order_by(col(CommentIndex.rpid).desc())
+                    .limit(limit_per_type)
+                )
+            ).all()
+            if not rows:
+                continue
+            items = await CommentReadService.assemble_items(
+                session, list(rows), viewer_mid=viewer_mid
+            )
+            groups.append(CommentLatestGroup(type=type_, comments=items))
+
+        return CommentLatestResp(groups=groups)
 
     # ==================== 楼中楼（Phase 2.12 / 2.13）====================
 

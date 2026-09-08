@@ -209,6 +209,26 @@ class CommentCountResp(SQLModel, AutoStrMixin):
     state: CommentSubjectStateEnum = CommentSubjectStateEnum.NORMAL
 
 
+# ==================== 最新评论（首页，按资源类型分组） ====================
+
+class CommentLatestGroup(SQLModel, AutoStrMixin):
+    """某资源类型下的最新根评论分组（首页「最新评论」用）。"""
+
+    type: InteractionBizTypeEnum = Field(description="资源类型（dynamic / lottery / rpa_action ...）")
+    comments: list[CommentItem] = Field(
+        default_factory=list,
+        description="该类型最新根评论（只含根评论，不含楼中楼子评论）",
+    )
+
+
+class CommentLatestResp(SQLModel, AutoStrMixin):
+    """首页最新评论（按资源类型分组展示）。"""
+
+    groups: list[CommentLatestGroup] = Field(
+        default_factory=list, description="各资源类型下的最新根评论分组，仅有数据的类型才会出现"
+    )
+
+
 # ==================== 互动 ====================
 
 
@@ -379,6 +399,8 @@ __all__ = [
     "CommentCountResp",
     "CommentDelReq",
     "CommentItem",
+    "CommentLatestGroup",
+    "CommentLatestResp",
     "CommentListResp",
     "CommentOperationResp",
     "CommentReportReq",
