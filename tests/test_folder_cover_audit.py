@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import NotifyMessage, TFavoriteFolder, TFolderCoverAudit
-from app.models.enums import FolderCoverAuditStatusEnum, NotifyTargetTypeEnum
+from app.models.enums import ResourceAuditStatusEnum, NotifyTargetTypeEnum
 from app.services.user.folder_cover_audit import FolderCoverAuditService
 from app.services.interaction_actions.folder import FavoriteFolderAction
 
@@ -146,14 +146,14 @@ async def test_create_folder_with_cover_goes_pending(monkeypatch):
     _ok_verify(monkeypatch)
     async with new_session() as s:
         folder_id, status = await _create_folder(s, C_MID, cover_url=NEW_COVER)
-        assert status == FolderCoverAuditStatusEnum.PENDING
+        assert status == "pending"
         # 封面不落库（先审后发）
         folder = await s.get(TFavoriteFolder, folder_id)
         assert folder.cover_url is None
         # 存在 pending 审核记录
         audit = await _latest_for_folder(s, folder_id)
         assert audit is not None
-        assert audit.auditStatus is FolderCoverAuditStatusEnum.PENDING
+        assert audit.auditStatus is ResourceAuditStatusEnum.AUDITING
         assert audit.newCover == NEW_COVER
         assert audit.oldCover is None
 
@@ -191,12 +191,12 @@ async def test_update_folder_cover_goes_pending(monkeypatch):
         status = await FavoriteFolderAction(s, C_MID).update(
             folder_id, cover_url=NEW_COVER
         )
-        assert status == FolderCoverAuditStatusEnum.PENDING
+        assert status == "pending"
         folder = await s.get(TFavoriteFolder, folder_id)
         assert folder.cover_url is None  # 封面未直接生效
         audit = await _latest_for_folder(s, folder_id)
         assert audit is not None
-        assert audit.auditStatus is FolderCoverAuditStatusEnum.PENDING
+        assert audit.auditStatus is ResourceAuditStatusEnum.AUDITING
         assert audit.newCover == NEW_COVER
 
 
@@ -228,7 +228,7 @@ async def test_update_folder_clear_cover(monkeypatch):
         assert folder.cover_url is None
         # 未产生新审核记录
         latest = await _latest_for_folder(s, folder_id)
-        assert latest.auditStatus is FolderCoverAuditStatusEnum.APPROVED
+        assert latest.auditStatus is ResourceAuditStatusEnum.NORMAL
 
 
 # ==================== 重复提交覆盖 ====================
@@ -248,8 +248,8 @@ async def test_resubmit_overrides_old_pending(monkeypatch):
             )
         ).all()
         assert len(rows) == 2
-        pending = [r for r in rows if r.auditStatus is FolderCoverAuditStatusEnum.PENDING]
-        rejected = [r for r in rows if r.auditStatus is FolderCoverAuditStatusEnum.REJECTED]
+        pending = [r for r in rows if r.auditStatus is ResourceAuditStatusEnum.AUDITING]
+        rejected = [r for r in rows if r.auditStatus is ResourceAuditStatusEnum.REJECTED]
         assert len(pending) == 1
         assert len(rejected) == 1
         assert rejected[0].auditReason == "已重新提交新申请"
@@ -265,7 +265,7 @@ async def test_pending_list_only_pending(monkeypatch):
         folder_id2, _ = await _create_folder(s, C_MID2, cover_url=NEW_COVER)
         # 处理 C_MID2 的记录为 rejected
         audit2 = await _latest_for_folder(s, folder_id2)
-        audit2.auditStatus = FolderCoverAuditStatusEnum.REJECTED
+        audit2.auditStatus = ResourceAuditStatusEnum.REJECTED
         await s.commit()
 
         resp = await FolderCoverAuditService.pending_list(s, page_num=1, page_size=20)
@@ -285,12 +285,12 @@ async def test_approve_writes_cover_and_notifies(monkeypatch):
         item = await FolderCoverAuditService.approve(
             s, audit.pk, operator_mid=ADMIN_MID, remark="ok"
         )
-        assert item.auditStatus == FolderCoverAuditStatusEnum.APPROVED.value
+        assert item.auditStatus == ResourceAuditStatusEnum.NORMAL.name
         # 封面写入公开收藏夹
         folder = await s.get(TFavoriteFolder, folder_id)
         assert folder.cover_url == NEW_COVER
         row = await s.get(TFolderCoverAudit, audit.pk)
-        assert row.auditStatus is FolderCoverAuditStatusEnum.APPROVED
+        assert row.auditStatus is ResourceAuditStatusEnum.NORMAL
         assert row.auditOperatorMid == ADMIN_MID
 
     async with new_session() as s2:
@@ -327,11 +327,11 @@ async def test_reject_keeps_cover_and_notifies(monkeypatch):
         item = await FolderCoverAuditService.reject(
             s, audit.pk, operator_mid=ADMIN_MID, reason="图片违规"
         )
-        assert item.auditStatus == FolderCoverAuditStatusEnum.REJECTED.value
+        assert item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
         folder = await s.get(TFavoriteFolder, folder_id)
         assert folder.cover_url is None  # 保持原封面（无封面）
         row = await s.get(TFolderCoverAudit, audit.pk)
-        assert row.auditStatus is FolderCoverAuditStatusEnum.REJECTED
+        assert row.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert row.auditReason == "图片违规"
         assert row.auditOperatorMid == ADMIN_MID
 
@@ -356,7 +356,7 @@ async def test_mine_returns_latest(monkeypatch):
         folder_id, _ = await _create_folder(s, C_MID, cover_url=NEW_COVER)
         mine = await FolderCoverAuditService.mine(s, uid=C_MID, folder_id=folder_id)
         assert mine is not None
-        assert mine.auditStatus == FolderCoverAuditStatusEnum.PENDING.value
+        assert mine.auditStatus == ResourceAuditStatusEnum.AUDITING.name
         assert mine.newCover == NEW_COVER
 
 

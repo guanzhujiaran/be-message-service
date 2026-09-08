@@ -14,13 +14,14 @@ MVP 图片方案：不支持图片上传，仅允许在文字正文里插入**�
 服务端原样存储为 LINK 节点，不做下载 / 存储 / 鉴真。
 """
 
-from typing import Any
+from typing import Annotated, Any, ClassVar
 
 from sqlmodel import Field, SQLModel
 
 from bili_common.models import InteractionBizTypeEnum
 
 from app.models.enums import MomentVisibleScopeEnum
+from app.models.schemas.visibility import Private, VisibilityMixin
 from app.models.str_int import StrInt
 
 # ==================== 富文本节点 ====================
@@ -603,16 +604,23 @@ class MomentAuditRejectReq(SQLModel, AutoStrMixin):
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class MomentAuditLogItem(SQLModel, AutoStrMixin):
-    """单条审核流转记录（管理后台流水）。"""
+class MomentAuditLogItem(SQLModel, AutoStrMixin, VisibilityMixin):
+    """单条审核流转记录（管理后台流水）。
+
+    操作人身份属管理端内部信息，以 ``Private(admin_only=True)`` 标记：作者本人视角
+    只能看到流转结论，看不到是谁操作的。本模型无归属 mid，故 ``_owner_mid_field`` 置空。
+    """
+
+    # 流水记录不归属于某个用户，私域字段一律仅管理员可见
+    _owner_mid_field: ClassVar[str] = ""
 
     pk: int = Field(description="记录主键")
     dynId: int = Field(description="被审核动态 ID")
-    operatorMid: int = Field(description="操作人 MID")
-    operatorRole: str = Field(description="操作人角色：author/admin")
-    fromStatus: str | None = Field(default=None, description="流转前状态")
-    toStatus: str = Field(description="流转后状态")
-    actionType: str = Field(description="操作类型：create/edit/approve/reject/resubmit/delete")
+    operatorMid: Annotated[int, Private(admin_only=True)] = Field(description="操作人 MID")
+    operatorRole: Annotated[int, Private(admin_only=True)] = Field(description="操作人角色枚举值（MomentAuditLogOperatorRoleEnum：1=author/2=admin）")
+    fromStatus: int | None = Field(default=None, description="流转前状态枚举值（ResourceAuditStatusEnum）")
+    toStatus: int = Field(description="流转后状态枚举值（ResourceAuditStatusEnum）")
+    actionType: int = Field(description="操作类型枚举值（MomentAuditLogActionEnum：create/edit/approve/reject/resubmit/delete）")
     rejectReason: str | None = Field(default=None, description="驳回原因（仅 reject）")
     remark: str | None = Field(default=None, description="其他备注")
     createdTime: str | None = Field(default=None, description="操作时间（ISO）")

@@ -28,7 +28,7 @@ from app.models.db import (
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.models.schemas.moment import (
@@ -72,6 +72,46 @@ async def _bind_engine_per_test():
 # 独立 mid 区间
 D_MID = 910001
 D_MID2 = 910002
+# 这些表测试脚本会在同一分钟里反复跑、而 moment_id 是「分钟步进雪花 + 进程重启后
+# 序列从 0 重数」，短时间内多次运行会生成与上次残留行相同的主键 → 撞 TMoment.PRIMARY。
+# 因此在独立测试库（BiliMessageDB_test）上跑时，每个用例跑完即清掉本模块 mid 区间的
+# 动态及关联行，保证下次运行同 id 不撞已存在行（也兼容在开发库上短时间重跑）。
+_PURGE_MIDS = (D_MID, D_MID2)
+
+
+@pytest.fixture(autouse=True)
+async def _purge_moment_rows_before():
+    """每个依赖 DB 的用例跑前清理本模块 mid 区间的动态残留。
+
+    原因：moment_id 是「分钟步进雪花 + 进程重启后序列从 0 重数」，短时间内在同一分钟
+    里反复跑会生成与上次运行残留行相同的主键 → 撞 TMoment/TResourceFeed PRIMARY。
+    故在跑前（setup）先清空本模块 mid 区间的动态及关联行，保证每次运行从干净状态开始。
+    """
+    async with new_session() as s:
+        dyn_ids = {
+            r[0]
+            for r in (
+                await s.exec(
+                    text("SELECT dynId FROM TMoment WHERE mid IN (910001, 910002)")
+                )
+            ).all()
+        }
+        # TResourceFeed 可能残留（TMoment 已删时 feed 无关联动态也要清）
+        dyn_ids |= {
+            r[0]
+            for r in (
+                await s.exec(
+                    text("SELECT bizId FROM TResourceFeed WHERE bizType = 1 AND mid IN (910001, 910002)")
+                )
+            ).all()
+        }
+        for did in dyn_ids:
+            await s.exec(text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {did}"))
+            await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}"))
+            await s.exec(text(f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {did}"))
+            await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
+        await s.commit()
+    yield
 
 
 def _words(text: str) -> MomentContentNode:
@@ -167,7 +207,7 @@ async def _seed_dynamic(
     mid: int,
     dyn_type: MomentTypeEnum,
     *,
-    audit_status: MomentAuditStatusEnum = MomentAuditStatusEnum.NORMAL,
+    audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL,
     repost_src: int | None = None,
 ) -> int:
     did = await generate_moment_id()
@@ -182,7 +222,7 @@ async def _seed_dynamic(
         contentJson=[{"type": "WORDS", "text": content_text}],
         repostSrcDynId=repost_src,
         auditStatus=audit_status,
-        pubTime=now if audit_status is MomentAuditStatusEnum.NORMAL else None,
+        pubTime=now if audit_status is ResourceAuditStatusEnum.NORMAL else None,
         created_at=now,
         updated_at=now,
     )
@@ -195,7 +235,7 @@ async def _seed_dynamic(
             bizType=InteractionBizTypeEnum.DYNAMIC,
             bizId=did,
             mid=mid,
-            pubTime=(now if audit_status is MomentAuditStatusEnum.NORMAL else None),
+            pubTime=(now if audit_status is ResourceAuditStatusEnum.NORMAL else None),
             auditStatus=audit_status.name.lower(),
             tags=[],
         )
@@ -205,13 +245,14 @@ async def _seed_dynamic(
 
 
 async def test_create_word_auditing():
+    """普通内容（未命中敏感词）→ 自动审核 PASS，直接 normal 对外可见（接入 B）。"""
     req = MomentCreateReq(
         scene="WORD",
         content=[_words("今天天气真好"), _at(12345, "bob")],
     )
     async with new_session() as s:
         data = await MomentPublishService.create(s, D_MID, req)
-        assert data["auditStatus"] == MomentAuditStatusEnum.AUDITING
+        assert data["auditStatus"] == ResourceAuditStatusEnum.NORMAL.name
         assert data["dynType"] == "WORD"
         # 2.36.0：Feed 元数据行已建（计数表惰性）
         feed = (
@@ -223,7 +264,7 @@ async def test_create_word_auditing():
             )
         ).one()
         assert feed is not None
-        assert feed.auditStatus == MomentAuditStatusEnum.AUDITING.value
+        assert feed.auditStatus is ResourceAuditStatusEnum.NORMAL
         # 审核日志已写
         log = (
             await s.exec(
@@ -241,7 +282,7 @@ async def test_create_forward_requires_normal_src():
     async with new_session() as s:
         # 源动态是 auditing（未通过）→ 创建转发应拒绝
         src = await _seed_dynamic(
-            s, D_MID2, MomentTypeEnum.WORD, audit_status=MomentAuditStatusEnum.AUDITING
+            s, D_MID2, MomentTypeEnum.WORD, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         req = MomentCreateReq(
             scene="FORWARD",
@@ -271,8 +312,9 @@ async def test_create_forward_ok_and_no_repost_incr():
             repostSrc={"dynId": src},
         )
         data = await MomentPublishService.create(s, D_MID, req)
-        assert data["auditStatus"] == MomentAuditStatusEnum.AUDITING
-        # 创建时源动态 repostCount 不 +1（状态机触发点⑥）
+        # 普通转发内容（未命中敏感词）→ 自动审核 PASS，直接 normal 对外可见（接入 B）
+        assert data["auditStatus"] == ResourceAuditStatusEnum.NORMAL.name
+        # 创建时源动态 repostCount 不 +1（状态机触发点⑥，仍由「通过」链路触发）
         src_stat2 = (
             await s.exec(
                 select(TInteractionStat).where(
@@ -319,7 +361,7 @@ async def test_remove_normal_forward_decrs_src():
 async def test_top_requires_normal():
     async with new_session() as s:
         dyn = await _seed_dynamic(
-            s, D_MID, MomentTypeEnum.WORD, audit_status=MomentAuditStatusEnum.AUDITING
+            s, D_MID, MomentTypeEnum.WORD, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         with pytest.raises(ValueError):
             await MomentPublishService.top(s, D_MID, MomentTopReq(dynId=dyn), untop=False)

@@ -11,7 +11,7 @@
 但词库本身加载失败时应**降级放行**（只允许放行，不允许误杀），并向告警通道报错。
 """
 
-from app.models.enums import CommentStateEnum
+from app.models.enums import ResourceAuditStatusEnum
 
 # ==================== 默认词库（演示用，后续由管理端 / 配置覆盖）====================
 # 高危：命中即拒审
@@ -96,7 +96,7 @@ def reload_words(high_risk: list[str], suspect: list[str]) -> None:
         _SUSPECT_TRIE.add(w)
 
 
-def audit_text(message: str) -> tuple[CommentStateEnum, list[str]]:
+def audit_text(message: str) -> tuple[ResourceAuditStatusEnum, list[str]]:
     """对评论正文做敏感词审核。
 
     Returns:
@@ -104,22 +104,22 @@ def audit_text(message: str) -> tuple[CommentStateEnum, list[str]]:
         词库加载异常时降级为 `NORMAL` 放行，不误杀。
     """
     if not message:
-        return CommentStateEnum.NORMAL, []
+        return ResourceAuditStatusEnum.NORMAL, []
     try:
         high, suspect = _build()
     except Exception:
         # 词库构建失败：宁可放行也不误杀，交由后续异步复审兜底
-        return CommentStateEnum.NORMAL, []
+        return ResourceAuditStatusEnum.NORMAL, []
 
     high_hits = high.match_all(message)
     if high_hits:
-        return CommentStateEnum.REJECTED, high_hits
+        return ResourceAuditStatusEnum.REJECTED, high_hits
 
     suspect_hits = suspect.match_all(message)
     if suspect_hits:
-        return CommentStateEnum.AUDITING, suspect_hits
+        return ResourceAuditStatusEnum.AUDITING, suspect_hits
 
-    return CommentStateEnum.NORMAL, []
+    return ResourceAuditStatusEnum.NORMAL, []
 
 
 __all__ = ["audit_text", "reload_words"]

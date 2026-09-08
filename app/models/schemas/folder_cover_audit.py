@@ -20,7 +20,7 @@ class FolderCoverAuditItem(SQLModel, AutoStrMixin):
     authorName: str | None = Field(default=None, description="提交者昵称（pptr 回查）")
     oldCover: str | None = Field(default=None, description="旧封面 URL")
     newCover: str = Field(description="申请的新封面 URL")
-    auditStatus: str = Field(description="审核状态：pending/approved/rejected")
+    auditStatus: str = Field(description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回")
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
 
 
@@ -55,8 +55,8 @@ class FolderCoverAuditMineResp(SQLModel, AutoStrMixin):
     folderId: str = Field(description="所属收藏夹 id（字符串）")
     newCover: str = Field(description="申请的新封面 URL")
     oldCover: str | None = Field(default=None, description="旧封面 URL")
-    auditStatus: str = Field(description="审核状态：pending/approved/rejected")
-    auditReason: str | None = Field(default=None, description="驳回原因（rejected 时有值）")
+    auditStatus: str = Field(description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回")
+    auditReason: str | None = Field(default=None, description="驳回原因（REJECTED 时有值）")
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
     auditedAt: str | None = Field(default=None, description="审核时间（ISO）")
 

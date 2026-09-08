@@ -64,9 +64,17 @@ class DmMsgStatusEnum(IntEnumAutoDoc):
 
 
 class DmSessionTypeEnum(IntEnumAutoDoc):
-    """会话类型，预留群聊扩展。"""
+    """会话类型。
+
+    - `SINGLE`：1 对 1 私信（普通 DM）。陌生人但被接收方接受的会话也归此类。
+    - `STRANGER`：陌生人私信分类（参考 B 站「陌生人消息」集合）。
+      仅在接收方开启「陌生人私信拦截」且发送方为陌生人时产生 —— 消息会落
+      接收方的 STRANGER 收件箱，而**不会**进 SINGLE 主列表；前端在会话列
+      表顶部以聚合条目展示，点击后进入专门的陌生人子列表。
+    """
 
     SINGLE = 1
+    STRANGER = 2
 
 
 class DmRelationEnum(IntEnumAutoDoc):
@@ -76,21 +84,6 @@ class DmRelationEnum(IntEnumAutoDoc):
     NORMAL = 1
     # 陌生人会话：接收方从未回复过，落入「陌生人消息」分组
     STRANGER = 2
-
-
-class DmAuditStateEnum(IntEnumAutoDoc):
-    """私信管理端审核状态（与评论审核对齐）。
-
-    可见性规则：
-    - `NORMAL`(1)   ：正常可见；
-    - `AUDITING`(2) ：待审核（先发后审，作者无感知）；
-    - `REJECTED`(3) / `HIDDEN`(4)：对用户不可见（聊天窗过滤，列表不返回）。
-    """
-
-    NORMAL = 1
-    AUDITING = 2
-    REJECTED = 3
-    HIDDEN = 4
 
 
 # ==================== 评论系统 ====================
@@ -103,27 +96,6 @@ class CommentSubjectStateEnum(IntEnumAutoDoc):
     NORMAL = 1
     # 已关闭：只读，不接受新评论
     CLOSED = 2
-
-
-class CommentStateEnum(IntEnumAutoDoc):
-    """单条评论的生命周期状态。
-
-    可见性规则（Phase 5 审核落地后完整生效）：
-
-    - `NORMAL`(1)   ：所有人可见
-    - `AUDITING`(2) ：仅作者本人可见（对齐 B 站「先发后审」，作者无感知）
-    - `REJECTED`(3) / `HIDDEN`(4) / `DELETED`(5)：列表不返回
-    """
-
-    NORMAL = 1
-    # 待审核：命中疑似敏感词，等待人工 / AI 复审
-    AUDITING = 2
-    # 审核驳回
-    REJECTED = 3
-    # 管理员下架
-    HIDDEN = 4
-    # 用户 / 管理员删除（软删）
-    DELETED = 5
 
 
 class CommentActionEnum(IntEnumAutoDoc):
@@ -222,34 +194,6 @@ class MomentTypeEnum(IntEnumAutoDoc):
     WORD = 6
 
 
-class MomentAuditStatusEnum(IntEnumAutoDoc):
-    """Moment 审核生命周期状态。
-
-    - `AUDITING`(1)：审核中（先发后审，作者本人空间可见，普通用户不可见）；
-    - `NORMAL`(2)  ：审核通过，进入 Feed 流全量可见；
-    - `REJECTED`(3)：审核驳回，作者可编辑后重新提交或删除；
-    - `HIDDEN`(4)  ：管理员下架。
-    """
-
-    AUDITING = 1
-    NORMAL = 2
-    REJECTED = 3
-    HIDDEN = 4
-
-
-class MomentTopicAuditStatusEnum(IntEnumAutoDoc):
-    """话题审核生命周期状态（TMomentTopic.auditStatus，对齐动态审核）。
-
-    - `AUDITING`(1)：待审核（用户创建，不公开展示）；
-    - `NORMAL`(2)  ：审核通过，进入话题广场 / Feed / 热搜；
-    - `REJECTED`(3)：审核驳回，仅创建者「我的话题」可见（含驳回原因）。
-    """
-
-    AUDITING = 1
-    NORMAL = 2
-    REJECTED = 3
-
-
 class MomentVisibleScopeEnum(IntEnumAutoDoc):
     """Moment 可见范围。"""
 
@@ -299,6 +243,29 @@ class MomentAuditLogOperatorRoleEnum(IntEnumAutoDoc):
     ADMIN = 2
 
 
+class ResourceAuditStatusEnum(IntEnumAutoDoc):
+    """统一审核生命周期状态（`NORMAL=1` 基准，实体 / 单据可共同表达）。
+
+    阶段二起为 be-message 各资源审核态列的**唯一枚举**（原 `MomentAuditStatusEnum` /
+    `MomentTopicAuditStatusEnum` / `CommentStateEnum` / `DmAuditStateEnum` /
+    `AvatarAuditStatusEnum` / `FolderCoverAuditStatusEnum` 均收敛于此）：
+
+    - `NORMAL`(1)   ：通过 / 公开 / 已批准（可入 Feed、可互动；单据=已通过）；
+    - `AUDITING`(2) ：待审（实体先发后审；头像/封面等单据的 PENDING 亦映射本值）；
+    - `REJECTED`(3) ：驳回（实体 / 单据驳回）；
+    - `HIDDEN`(4)   ：管理员下架（实体类）；
+    - `DELETED`(5)  ：软删（当前仅评论表达；动态软删走独立 `deletedAt` 列）。
+
+    举报单（`ReportAuditStatusEnum`）独立，不并入本枚举。
+    """
+
+    NORMAL = 1
+    AUDITING = 2
+    REJECTED = 3
+    HIDDEN = 4
+    DELETED = 5
+
+
 # 互动资源类型枚举（`InteractionBizTypeEnum`）与互动操作枚举（`InteractionActionTypeEnum`）
 # 已从本文件移除（不再 re-export），使用方直接从 `bili_common.models` 导入；
 # 举报枚举（`ReportReasonEnum` / `ReportAuditStatusEnum`）同样收口在 bili-common，
@@ -321,32 +288,6 @@ class FollowStatusEnum(IntEnumAutoDoc):
 
     FOLLOWING = 1
     BLOCKED = 2
-
-
-class AvatarAuditStatusEnum(IntEnumAutoDoc):
-    """头像更换审核状态（TUserAvatarAudit.auditStatus）。
-
-    - `PENDING`(1)：待审核，未对外展示；
-    - `APPROVED`(2)：审核通过，newAvatar 已写入 TUserDetail.avatar 公开显示；
-    - `REJECTED`(3)：审核驳回，保持原头像。
-    """
-
-    PENDING = 1
-    APPROVED = 2
-    REJECTED = 3
-
-
-class FolderCoverAuditStatusEnum(IntEnumAutoDoc):
-    """收藏夹封面审核状态（TFolderCoverAudit.auditStatus）。
-
-    - `PENDING`(1)：待审核，新封面未对外展示（TFavoriteFolder.cover_url 保持原封面）；
-    - `APPROVED`(2)：审核通过，newCover 已写入 TFavoriteFolder.cover_url 公开显示；
-    - `REJECTED`(3)：审核驳回，保持原封面。
-    """
-
-    PENDING = 1
-    APPROVED = 2
-    REJECTED = 3
 
 
 # ==================== 前端路由名（跳转契约）====================

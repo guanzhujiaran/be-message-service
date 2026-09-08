@@ -17,7 +17,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import DmMessageIndex
-from app.models.enums import DmAuditStateEnum, NotifyLevelEnum
+from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas import (
     DmAuditItem,
     DmSessionContextResp,
@@ -38,15 +38,15 @@ class DmAdminService:
 
     # 被处置后在会话列表预览里展示的占位文案
     _PREVIEW_PLACEHOLDER = {
-        DmAuditStateEnum.REJECTED: "[该消息已被管理员驳回]",
-        DmAuditStateEnum.HIDDEN: "[该消息已被管理员下架]",
+        ResourceAuditStatusEnum.REJECTED: "[该消息已被管理员驳回]",
+        ResourceAuditStatusEnum.HIDDEN: "[该消息已被管理员下架]",
     }
 
     @staticmethod
     async def set_state(
         session: AsyncSession,
         msgkey: int,
-        state: DmAuditStateEnum,
+        state: ResourceAuditStatusEnum,
         note: str | None = None,
     ) -> bool:
         """人工设置一条私信的审核状态（通过 / 驳回 / 下架 / 恢复）。
@@ -66,9 +66,9 @@ class DmAdminService:
         ).all()
         if not rows:
             return False
-        prev_state = rows[0].audit_state
+        prev_state = rows[0].auditStatus
         for r in rows:
-            r.audit_state = state
+            r.auditStatus = state
             session.add(r)
 
         # 驳回 / 下架：把双方会话列表的最后一条预览替换为占位
@@ -81,7 +81,7 @@ class DmAdminService:
 
         # 审核通过（auditing -> normal）：把接收方会话快照刷新为真实内容并补未读，
         # 使「先审后发」的私信在通过后对接收方正常浮现。
-        if prev_state == DmAuditStateEnum.AUDITING and state == DmAuditStateEnum.NORMAL:
+        if prev_state == ResourceAuditStatusEnum.AUDITING and state == ResourceAuditStatusEnum.NORMAL:
             receiver_row = next(
                 (r for r in rows if r.owner_mid != r.sender_uid), None
             )
@@ -112,23 +112,23 @@ class DmAdminService:
         return True
 
     # 私信状态 → (通知标题, 正文首句, 通知级别)
-    _NOTIFY_TEMPLATE: dict[DmAuditStateEnum, tuple[str, str, NotifyLevelEnum]] = {
-        DmAuditStateEnum.NORMAL: (
+    _NOTIFY_TEMPLATE: dict[ResourceAuditStatusEnum, tuple[str, str, NotifyLevelEnum]] = {
+        ResourceAuditStatusEnum.NORMAL: (
             "私信审核通过",
             "已通过审核，对方现已可见。",
             NotifyLevelEnum.NORMAL,
         ),
-        DmAuditStateEnum.AUDITING: (
+        ResourceAuditStatusEnum.AUDITING: (
             "私信审核中",
             "已被移入审核队列，通过后对方可见。",
             NotifyLevelEnum.NORMAL,
         ),
-        DmAuditStateEnum.REJECTED: (
+        ResourceAuditStatusEnum.REJECTED: (
             "私信审核未通过",
             "未通过审核，已被驳回。",
             NotifyLevelEnum.IMPORTANT,
         ),
-        DmAuditStateEnum.HIDDEN: (
+        ResourceAuditStatusEnum.HIDDEN: (
             "私信已被下架",
             "已被管理员下架，当前对对方不可见。",
             NotifyLevelEnum.IMPORTANT,
@@ -138,7 +138,7 @@ class DmAdminService:
     @staticmethod
     async def _notify_state_changed(
         row: DmMessageIndex,
-        state: DmAuditStateEnum,
+        state: ResourceAuditStatusEnum,
         msgkey: int,
         note: str | None = None,
     ) -> None:
@@ -161,7 +161,7 @@ class DmAdminService:
         lines = [f"您发送给{target_link}的私信{summary}"]
         if row.content_preview:
             lines.append(f"私信内容：{summarize_text(row.content_preview)}")
-        if note and (state in (DmAuditStateEnum.REJECTED, DmAuditStateEnum.HIDDEN)):
+        if note and (state in (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN)):
             lines.append(f"处理原因：{note}")
 
         await NotifyService.send_to_user(
@@ -176,7 +176,7 @@ class DmAdminService:
     async def bulk_set_state(
         session: AsyncSession,
         msgkeys: list[int],
-        state: DmAuditStateEnum,
+        state: ResourceAuditStatusEnum,
         note: str | None = None,
         notes: dict[str, str] | None = None,
     ) -> tuple[int, list[int]]:
@@ -219,7 +219,7 @@ class DmAdminService:
     @staticmethod
     async def list_audit_queue(
         session: AsyncSession,
-        states: list[DmAuditStateEnum],
+        states: list[ResourceAuditStatusEnum],
         page_num: int = 1,
         page_size: int = 20,
     ) -> tuple[list[DmAuditItem], int]:
@@ -229,7 +229,7 @@ class DmAdminService:
                 await session.exec(
                     select(func.count())
                     .select_from(DmMessageIndex)
-                    .where(col(DmMessageIndex.audit_state).in_(states))
+                    .where(col(DmMessageIndex.auditStatus).in_(states))
                 )
             ).one()
             or 0
@@ -237,7 +237,7 @@ class DmAdminService:
         rows = (
             await session.exec(
                 select(DmMessageIndex)
-                .where(col(DmMessageIndex.audit_state).in_(states))
+                .where(col(DmMessageIndex.auditStatus).in_(states))
                 .order_by(col(DmMessageIndex.msgkey).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -279,7 +279,7 @@ class DmAdminService:
             session_key=r.session_key,
             message=r.content_preview or "",
             msg_type=r.msg_type,
-            audit_state=r.audit_state,
+            audit_state=r.auditStatus,
             msg_ts=r.msg_ts,
             content_ready=r.content_ready,
             created_at=r.created_at,
@@ -390,13 +390,13 @@ class DmAdminService:
             or 0
         )
 
-        async def _count(state: DmAuditStateEnum) -> int:
+        async def _count(state: ResourceAuditStatusEnum) -> int:
             return int(
                 (
                     await session.exec(
                         select(func.count())
                         .select_from(DmMessageIndex)
-                        .where(col(DmMessageIndex.audit_state) == state)
+                        .where(col(DmMessageIndex.auditStatus) == state)
                     )
                 ).one()
                 or 0
@@ -405,9 +405,9 @@ class DmAdminService:
         return DmStatsResp(
             total_dm=total_dm,
             today_new=today_new,
-            auditing=await _count(DmAuditStateEnum.AUDITING),
-            rejected=await _count(DmAuditStateEnum.REJECTED),
-            hidden=await _count(DmAuditStateEnum.HIDDEN),
+            auditing=await _count(ResourceAuditStatusEnum.AUDITING),
+            rejected=await _count(ResourceAuditStatusEnum.REJECTED),
+            hidden=await _count(ResourceAuditStatusEnum.HIDDEN),
         )
 
 

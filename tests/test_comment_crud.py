@@ -31,7 +31,7 @@ from app.models.db import (
     )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import CommentStateEnum, MomentAuditStatusEnum, MomentTypeEnum
+from app.models.enums import ResourceAuditStatusEnum, ResourceAuditStatusEnum, MomentTypeEnum
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_read import CommentReadService
@@ -120,7 +120,7 @@ async def _ensure_moment(session, oid: int, mid: int) -> None:
                 dynType=MomentTypeEnum.WORD,
                 contentText="comment-seed",
                 contentJson=[{"type": "WORDS", "text": "comment-seed"}],
-                auditStatus=MomentAuditStatusEnum.NORMAL,
+                auditStatus=ResourceAuditStatusEnum.NORMAL,
                 pubTime=now,
                 created_at=now,
                 updated_at=now,
@@ -144,7 +144,7 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
             select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
         )
     ).one()
-    row.state = CommentStateEnum.NORMAL
+    row.auditStatus = ResourceAuditStatusEnum.NORMAL
     session.add(row)
     subject = (
         await session.exec(
@@ -300,7 +300,7 @@ async def test_reply_to_sub_comment_stays_under_root() -> None:
                 await s.exec(
                     select(CommentIndex).where(
                         CommentIndex.root == int(root_rpid),
-                        CommentIndex.state.in_([CommentStateEnum.NORMAL]),
+                        CommentIndex.auditStatus.in_([ResourceAuditStatusEnum.NORMAL]),
                     )
                 )
             ).all()

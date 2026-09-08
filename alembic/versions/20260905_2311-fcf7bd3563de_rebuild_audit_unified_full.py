@@ -1,8 +1,8 @@
-"""empty message
+"""rebuild audit unified full
 
-Revision ID: 03349acc2bb4
+Revision ID: fcf7bd3563de
 Revises: 
-Create Date: 2026-09-04 01:52:26.825520
+Create Date: 2026-09-05 23:11:41.041966
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '03349acc2bb4'
+revision: str = 'fcf7bd3563de'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -61,7 +61,7 @@ def upgrade() -> None:
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('oldCover', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=True),
     sa.Column('newCover', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=False),
-    sa.Column('auditStatus', sa.Enum('PENDING', 'APPROVED', 'REJECTED', name='foldercoverauditstatusenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('auditOperatorMid', sa.BIGINT(), nullable=True),
     sa.Column('auditReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('auditedAt', sa.DateTime(), nullable=True),
@@ -124,7 +124,7 @@ def upgrade() -> None:
     sa.Column('closeComment', sa.Integer(), nullable=False),
     sa.Column('upChooseComment', sa.Integer(), nullable=False),
     sa.Column('foldType', sa.Enum('NONE', 'USER_FOLD', 'OVER_FREQ_FOLD', name='momentfoldtypeenum'), nullable=False),
-    sa.Column('auditStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('auditRejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('isTop', sa.Integer(), nullable=False),
     sa.Column('topTime', sa.DateTime(), nullable=True),
@@ -156,7 +156,7 @@ def upgrade() -> None:
     sa.Column('isHot', sa.Integer(), nullable=False),
     sa.Column('sortWeight', sa.Integer(), nullable=False),
     sa.Column('creatorMid', sa.BIGINT(), nullable=False),
-    sa.Column('auditStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', name='momenttopicauditstatusenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('auditRejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('pubTime', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('topicId', name='TMomentTopic_pkey'),
@@ -174,8 +174,8 @@ def upgrade() -> None:
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('operatorRole', sa.Enum('AUTHOR', 'ADMIN', name='momentauditlogoperatorroleenum'), nullable=False),
-    sa.Column('fromStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=True),
-    sa.Column('toStatus', sa.Enum('AUDITING', 'NORMAL', 'REJECTED', 'HIDDEN', name='momentauditstatusenum'), nullable=False),
+    sa.Column('fromStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=True),
+    sa.Column('toStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('actionType', sa.Enum('CREATE', 'EDIT', 'APPROVE', 'REJECT', 'RESUBMIT', 'DELETE', name='momentauditlogactionenum'), nullable=False),
     sa.Column('rejectReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('remark', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
@@ -227,7 +227,7 @@ def upgrade() -> None:
     sa.Column('bizId', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=True),
     sa.Column('pubTime', sa.DateTime(), nullable=True),
-    sa.Column('auditStatus', sqlmodel.sql.sqltypes.AutoString(length=32), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=True),
     sa.Column('visibleScope', sa.Enum('PUBLIC', 'FOLLOWER', 'SELF', 'CHARGE', name='momentvisiblescopeenum'), nullable=True),
     sa.Column('tags', sa.JSON(), nullable=False),
     sa.Column('deletedAt', sa.DateTime(), nullable=True),
@@ -281,7 +281,7 @@ def upgrade() -> None:
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('oldAvatar', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=True),
     sa.Column('newAvatar', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=False),
-    sa.Column('auditStatus', sa.Enum('PENDING', 'APPROVED', 'REJECTED', name='avatarauditstatusenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('auditOperatorMid', sa.BIGINT(), nullable=True),
     sa.Column('auditReason', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
     sa.Column('auditedAt', sa.DateTime(), nullable=True),
@@ -412,21 +412,21 @@ def upgrade() -> None:
     sa.Column('hate_count', sa.Integer(), nullable=False),
     sa.Column('rcount', sa.Integer(), nullable=False),
     sa.Column('hot_score', sa.Float(), nullable=False),
-    sa.Column('state', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='commentstateenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('attr', sa.Integer(), nullable=False),
     sa.PrimaryKeyConstraint('rpid')
     )
-    op.create_index('idx_comment_hot', 'msg_comment_index', ['oid', 'type', 'root', 'state', 'hot_score', 'rpid'], unique=False)
-    op.create_index('idx_comment_sub', 'msg_comment_index', ['root', 'state', 'rpid'], unique=False)
-    op.create_index('idx_comment_time', 'msg_comment_index', ['oid', 'type', 'root', 'state', 'rpid'], unique=False)
+    op.create_index('idx_comment_hot', 'msg_comment_index', ['oid', 'type', 'root', 'auditStatus', 'hot_score', 'rpid'], unique=False)
+    op.create_index('idx_comment_sub', 'msg_comment_index', ['root', 'auditStatus', 'rpid'], unique=False)
+    op.create_index('idx_comment_time', 'msg_comment_index', ['oid', 'type', 'root', 'auditStatus', 'rpid'], unique=False)
     op.create_index('idx_comment_user', 'msg_comment_index', ['mid', 'rpid'], unique=False)
+    op.create_index(op.f('ix_msg_comment_index_auditStatus'), 'msg_comment_index', ['auditStatus'], unique=False)
     op.create_index(op.f('ix_msg_comment_index_created_at'), 'msg_comment_index', ['created_at'], unique=False)
     op.create_index(op.f('ix_msg_comment_index_dialog'), 'msg_comment_index', ['dialog'], unique=False)
     op.create_index(op.f('ix_msg_comment_index_hot_score'), 'msg_comment_index', ['hot_score'], unique=False)
     op.create_index(op.f('ix_msg_comment_index_mid'), 'msg_comment_index', ['mid'], unique=False)
     op.create_index(op.f('ix_msg_comment_index_oid'), 'msg_comment_index', ['oid'], unique=False)
     op.create_index(op.f('ix_msg_comment_index_root'), 'msg_comment_index', ['root'], unique=False)
-    op.create_index(op.f('ix_msg_comment_index_state'), 'msg_comment_index', ['state'], unique=False)
     op.create_table('msg_comment_report',
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('bizType', sa.Integer(), nullable=False),
@@ -503,14 +503,14 @@ def upgrade() -> None:
     sa.Column('msg_ts', sa.BIGINT(), nullable=False),
     sa.Column('content_preview', sqlmodel.sql.sqltypes.AutoString(length=256), nullable=True),
     sa.Column('content_ready', sa.Boolean(), nullable=False),
-    sa.Column('audit_state', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', name='dmauditstateenum'), nullable=False),
+    sa.Column('auditStatus', sa.Enum('NORMAL', 'AUDITING', 'REJECTED', 'HIDDEN', 'DELETED', name='resourceauditstatusenum'), nullable=False),
     sa.Column('recalled_at', sa.DateTime(), nullable=True),
     sa.Column('recalled_by', sa.BIGINT(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('owner_mid', 'msgkey', name='uq_dm_index_owner_msgkey')
     )
     op.create_index('idx_dm_index_chat', 'msg_dm_index', ['owner_mid', 'talker_mid', 'msgkey'], unique=False)
-    op.create_index(op.f('ix_msg_dm_index_audit_state'), 'msg_dm_index', ['audit_state'], unique=False)
+    op.create_index(op.f('ix_msg_dm_index_auditStatus'), 'msg_dm_index', ['auditStatus'], unique=False)
     op.create_index(op.f('ix_msg_dm_index_content_ready'), 'msg_dm_index', ['content_ready'], unique=False)
     op.create_index(op.f('ix_msg_dm_index_created_at'), 'msg_dm_index', ['created_at'], unique=False)
     op.create_index(op.f('ix_msg_dm_index_msg_status'), 'msg_dm_index', ['msg_status'], unique=False)
@@ -795,7 +795,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_msg_dm_index_msg_status'), table_name='msg_dm_index')
     op.drop_index(op.f('ix_msg_dm_index_created_at'), table_name='msg_dm_index')
     op.drop_index(op.f('ix_msg_dm_index_content_ready'), table_name='msg_dm_index')
-    op.drop_index(op.f('ix_msg_dm_index_audit_state'), table_name='msg_dm_index')
+    op.drop_index(op.f('ix_msg_dm_index_auditStatus'), table_name='msg_dm_index')
     op.drop_index('idx_dm_index_chat', table_name='msg_dm_index')
     op.drop_table('msg_dm_index')
     op.drop_index(op.f('ix_msg_dm_content_dlq_retry_count'), table_name='msg_dm_content_dlq')
@@ -813,13 +813,13 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_msg_comment_report_bizId'), table_name='msg_comment_report')
     op.drop_index('idx_comment_report_biz', table_name='msg_comment_report')
     op.drop_table('msg_comment_report')
-    op.drop_index(op.f('ix_msg_comment_index_state'), table_name='msg_comment_index')
     op.drop_index(op.f('ix_msg_comment_index_root'), table_name='msg_comment_index')
     op.drop_index(op.f('ix_msg_comment_index_oid'), table_name='msg_comment_index')
     op.drop_index(op.f('ix_msg_comment_index_mid'), table_name='msg_comment_index')
     op.drop_index(op.f('ix_msg_comment_index_hot_score'), table_name='msg_comment_index')
     op.drop_index(op.f('ix_msg_comment_index_dialog'), table_name='msg_comment_index')
     op.drop_index(op.f('ix_msg_comment_index_created_at'), table_name='msg_comment_index')
+    op.drop_index(op.f('ix_msg_comment_index_auditStatus'), table_name='msg_comment_index')
     op.drop_index('idx_comment_user', table_name='msg_comment_index')
     op.drop_index('idx_comment_time', table_name='msg_comment_index')
     op.drop_index('idx_comment_sub', table_name='msg_comment_index')

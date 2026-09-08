@@ -33,6 +33,8 @@ from app.models.schemas.follow import (
     FollowOpResp,
     FollowRelationResp,
 )
+from app.models.schemas.user_brief import UserBriefOut
+from app.services.user.account import PptrUser
 
 
 class FollowService:
@@ -107,13 +109,23 @@ class FollowService:
         - 幂等：已拉黑则保持 `blocked`；
         - 若此前关注过对方（mid → target_mid 为 `following`），状态翻转为 `blocked`；
         - **同时删除对方对自己的 `following` 记录**（target_mid → mid），使对方不再是
-          自己的粉丝，且后续对方也无法重新关注自己。
+          自己的粉丝，且后续对方也无法重新关注自己；
+        - **目标用户必须真实存在**：用户主数据只在 pptr Postgres，不存在 / 已注销 /
+          已软删的用户一律拒绝拉黑，避免黑名单写入幽灵 mid（已注销账号的关系记录由
+          注销清理 `cleanup_follow` 负责移除，不会残留）。
 
         Raises:
-            ValueError: 不能拉黑自己。
+            ValueError: 不能拉黑自己 / 对方账号不存在或已注销。
         """
         if mid == target_mid:
             raise ValueError("不能拉黑自己")
+
+        # 校验目标用户存在且未被注销 / 软删（`msg_user_follow` 不冗余用户快照，
+        # 存在性只能问 pptr 主库）。
+        from app.services.user.account import PptrUser
+
+        if not await PptrUser.exists_active(target_mid):
+            raise ValueError("对方账号不存在或已注销，无法拉黑")
 
         now = datetime.now()
         # 1. upsert mid → target_mid 为 blocked
@@ -385,7 +397,13 @@ class FollowService:
     ) -> FollowListResp:
         """我拉黑的用户列表（按拉黑时间倒序），供用户侧黑名单管理页使用。
 
-        `items` 仅含被拉黑用户的 `mid` 与拉黑时间，展示信息由前端按 mid 回查。
+        `items` 除 `mid` / 拉黑时间外，还内联被拉黑用户的展示信息 `user`
+        （一次 `PptrUser.get_many` 批量回查 pptr 主数据，弱依赖：回查失败
+        仅告警并降级为 `user=None`，不拖垮列表）。
+
+        **读取不做用户存在性过滤**：只要本地 `blocked` 记录在，即使对方后来注销 /
+        账号在 pptr 已不存在（如清理未覆盖到的残留），该 `mid` 也会原样返回
+        （`user=None`），由前端据此渲染「账号已注销」并提供解除拉黑入口。
         """
         total = int(
             (
@@ -413,8 +431,23 @@ class FollowService:
             )
         ).all()
 
+        # 批量回查被拉黑用户展示信息（pptr 只读，直连自建会话）。
+        # 弱依赖：失败只告警，items 的 user 字段降级为 null（前端显示「账号已注销」）。
+        briefs: dict[int, UserBriefOut] = {}
+        if rows:
+            try:
+                briefs = await PptrUser.get_many([r.target_mid for r in rows])
+            except Exception as e:  # noqa: BLE001 - 弱依赖，任何异常都不阻断列表
+                logger.warning(f"黑名单列表回查用户信息失败（降级为 null）: {e}")
+
+        # 黑名单管理页是「我看他人」视角：私域字段由序列化期自动剥离，不回传邮箱 / 经验
         items = [
-            FollowListItem(mid=r.target_mid, created_at=r.created_at) for r in rows
+            FollowListItem(
+                mid=r.target_mid,
+                created_at=r.created_at,
+                user=briefs.get(r.target_mid),
+            )
+            for r in rows
         ]
         return FollowListResp(
             items=items, total=total, page_num=page_num, page_size=page_size

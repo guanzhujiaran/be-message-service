@@ -7,7 +7,7 @@
 from bili_common.exceptions import BiliException
 from bili_common.models.response_code import ResponseCode
 
-from app.models.enums import CommentStateEnum
+from app.models.enums import ResourceAuditStatusEnum
 
 
 class CommentNotInteractiveException(BiliException):
@@ -18,11 +18,11 @@ class CommentNotInteractiveException(BiliException):
     """
 
     # 评论生命周期状态 → 对外反馈（仅覆盖不可互动的非 NORMAL 状态）
-    _STATE_MSG: dict[CommentStateEnum, str] = {
-        CommentStateEnum.AUDITING: "评论审核中，暂不可互动",
-        CommentStateEnum.REJECTED: "评论未通过审核，不可互动",
-        CommentStateEnum.HIDDEN: "评论已被下架，不可互动",
-        CommentStateEnum.DELETED: "评论不存在或已删除",
+    _STATE_MSG: dict[ResourceAuditStatusEnum, str] = {
+        ResourceAuditStatusEnum.AUDITING: "评论审核中，暂不可互动",
+        ResourceAuditStatusEnum.REJECTED: "评论未通过审核，不可互动",
+        ResourceAuditStatusEnum.HIDDEN: "评论已被下架，不可互动",
+        ResourceAuditStatusEnum.DELETED: "评论不存在或已删除",
     }
 
     def __init__(self, detail: str = "评论不存在或已删除") -> None:
@@ -33,7 +33,7 @@ class CommentNotInteractiveException(BiliException):
         )
 
     @classmethod
-    def for_state(cls, state: CommentStateEnum) -> "CommentNotInteractiveException":
+    def for_state(cls, state: ResourceAuditStatusEnum) -> "CommentNotInteractiveException":
         """按评论生命周期状态构造异常，反馈对应状态的准确文案。"""
         return cls(cls._STATE_MSG.get(state, "评论不可互动"))
 

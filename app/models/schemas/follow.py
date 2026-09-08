@@ -1,9 +1,10 @@
 """关注 / 拉黑接口请求 / 响应体（与 `msg_user_follow` 表解耦）。
 
 用户可关注 / 取关其他用户，也可拉黑 / 解除拉黑。用户展示信息（昵称 / 头像 /
-等级 / 大会员等）**不在本服务冗余**：响应里只回 `mid` 与关系元数据，前端如需
-展示昵称 / 头像，可调用 `/api/v1/message/admin/user/batch`（管理端）或
-`/api/v1/message/user/batch`（前端轻量版，可选）按 mid 批量回查 pptr 主数据。
+等级 / 大会员等）**不在本服务冗余**：列表接口在装配时经 `PptrUser.get_many`
+按 mid 批量回查 pptr 主数据并内联到 `item.user`（弱依赖，注销 / 回查失败
+时为 `null`，前端渲染「账号已注销」）；黑名单列表读取不做用户存在性过滤，
+已注销用户的 `mid` 仍会原样返回。
 """
 
 from datetime import datetime
@@ -14,6 +15,7 @@ from app.models.str_int import StrInt
 
 from app.models.enums import FollowStatusEnum
 from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.user_brief import UserBriefOut
 
 # ==================== 请求体 ====================
 
@@ -96,6 +98,13 @@ class FollowListItem(SQLModel, AutoStrMixin):
     created_at: datetime = Field(description="关系建立时间")
     # 是否互相关注（仅在「我的关注」列表中需要时填充）
     mutual: bool = Field(default=False, description="是否互相关注")
+    # 对方展示信息（黑名单列表填充）：服务端经 PptrUser.get_many 批量回查后直接填入，
+    # 私域字段由序列化期按访问者身份自动剥离；对方已注销 / pptr 回查失败时为 null，
+    # 前端按「账号已注销」降级渲染
+    user: UserBriefOut | None = Field(
+        default=None,
+        description="对方公开展示信息（他人可见字段；注销或回查失败时为 null）",
+    )
 
 
 FollowListResp.model_rebuild()

@@ -25,8 +25,8 @@ from app.core.sharding import generate_moment_id
 from app.models.db import TMoment, TMomentTopic, TResourceFeed
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    MomentAuditStatusEnum,
-    MomentTopicAuditStatusEnum,
+    ResourceAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.models.schemas.moment import (
@@ -114,7 +114,7 @@ def _new_topic(
     is_hot: int = 0,
     sort_weight: int = 0,
     dyn_count: int = 0,
-    audit_status: MomentTopicAuditStatusEnum = MomentTopicAuditStatusEnum.NORMAL,
+    audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL,
 ) -> TMomentTopic:
     now = __import__("datetime").datetime.now()
     return TMomentTopic(
@@ -125,7 +125,7 @@ def _new_topic(
         dynCount=dyn_count,
         creatorMid=0,
         auditStatus=audit_status,
-        pubTime=now if audit_status is MomentTopicAuditStatusEnum.NORMAL else None,
+        pubTime=now if audit_status is ResourceAuditStatusEnum.NORMAL else None,
     )
 
 
@@ -138,7 +138,7 @@ async def _seed_moment(
     session,
     mid: int,
     *,
-    audit_status: MomentAuditStatusEnum = MomentAuditStatusEnum.NORMAL,
+    audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL,
     topic_id: int | None = None,
     lbs_poi: str | None = None,
     lbs_lat: float | None = None,
@@ -159,7 +159,7 @@ async def _seed_moment(
         lbsLat=lbs_lat,
         lbsLng=lbs_lng,
         auditStatus=audit_status,
-        pubTime=now if audit_status is MomentAuditStatusEnum.NORMAL else None,
+        pubTime=now if audit_status is ResourceAuditStatusEnum.NORMAL else None,
         created_at=now,
         updated_at=now,
     )
@@ -173,7 +173,7 @@ async def _seed_moment(
             bizId=did,
             mid=mid,
             auditStatus="normal",
-            pubTime=now if audit_status is MomentAuditStatusEnum.NORMAL else None,
+            pubTime=now if audit_status is ResourceAuditStatusEnum.NORMAL else None,
             tags=[topic_id] if topic_id else [],
         )
     )
@@ -240,7 +240,7 @@ async def test_topic_feed_filters_normal_and_topic():
         # 同话题 normal
         m1 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_A)
         # 同话题 auditing（不可见）
-        m2 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_A, audit_status=MomentAuditStatusEnum.AUDITING)
+        m2 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_A, audit_status=ResourceAuditStatusEnum.AUDITING)
         # 其他话题 normal（不应出现）
         m3 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_B)
 

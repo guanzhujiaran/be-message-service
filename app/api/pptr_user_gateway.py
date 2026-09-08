@@ -57,6 +57,7 @@ from app.services.user.avatar_check import verify_avatar_url
 from app.services.user.casdoor_service import CasdoorError
 from app.services.user.follow import FollowService
 from app.services.user.account import PptrUser
+from app.services.audit import audit_text
 from app.models.schemas.follow import (
     BlockReq,
     FollowListResp,
@@ -299,6 +300,16 @@ async def update_user_info(
 
     if params.uname and not (2 <= len(params.uname) <= 24):
         raise HTTPException(status_code=422, detail="昵称需为 2-24 个字！")
+
+    # 内容审核：昵称 / 签名（文字内容过统一审核引擎；命中即拒绝，detail 已脱敏）
+    if params.uname:
+        uname_res = audit_text(params.uname, check_link=False)
+        if uname_res.rejected:
+            raise HTTPException(status_code=422, detail=f"昵称未通过审核：{uname_res.reason}")
+    if params.usersign:
+        sign_res = audit_text(params.usersign)
+        if sign_res.rejected:
+            raise HTTPException(status_code=422, detail=f"签名未通过审核：{sign_res.reason}")
 
     if params.sex and params.sex not in VALID_SEX_VALUES:
         raise HTTPException(status_code=422, detail="性别不正确！")

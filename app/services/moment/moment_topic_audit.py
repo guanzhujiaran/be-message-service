@@ -17,7 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TMomentTopic
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
-from app.models.enums import MomentTopicAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.moment import (
     MomentTopicAuditItem,
     MomentTopicAuditListResp,
@@ -89,7 +89,7 @@ class MomentTopicAuditService:
                 await session.exec(
                     select(func.count())
                     .select_from(TMomentTopic)
-                    .where(col(TMomentTopic.auditStatus) == MomentTopicAuditStatusEnum.AUDITING)
+                    .where(col(TMomentTopic.auditStatus) == ResourceAuditStatusEnum.AUDITING)
                 )
             ).one()
             or 0
@@ -97,7 +97,7 @@ class MomentTopicAuditService:
         rows = (
             await session.exec(
                 select(TMomentTopic)
-                .where(col(TMomentTopic.auditStatus) == MomentTopicAuditStatusEnum.AUDITING)
+                .where(col(TMomentTopic.auditStatus) == ResourceAuditStatusEnum.AUDITING)
                 .order_by(col(TMomentTopic.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -127,11 +127,11 @@ class MomentTopicAuditService:
         ).one_or_none()
         if topic is None:
             raise ValueError("话题不存在")
-        if topic.auditStatus is not MomentTopicAuditStatusEnum.AUDITING:
+        if topic.auditStatus is not ResourceAuditStatusEnum.AUDITING:
             raise ValueError("该话题已处理，不能重复审核")
 
         now = datetime.now()
-        topic.auditStatus = MomentTopicAuditStatusEnum.NORMAL
+        topic.auditStatus = ResourceAuditStatusEnum.NORMAL
         topic.pubTime = now
         topic.updated_at = now
         session.add(topic)
@@ -158,11 +158,11 @@ class MomentTopicAuditService:
         ).one_or_none()
         if topic is None:
             raise ValueError("话题不存在")
-        if topic.auditStatus is not MomentTopicAuditStatusEnum.AUDITING:
+        if topic.auditStatus is not ResourceAuditStatusEnum.AUDITING:
             raise ValueError("该话题已处理，不能重复审核")
 
         now = datetime.now()
-        topic.auditStatus = MomentTopicAuditStatusEnum.REJECTED
+        topic.auditStatus = ResourceAuditStatusEnum.REJECTED
         topic.auditRejectReason = reject_reason
         topic.updated_at = now
         session.add(topic)

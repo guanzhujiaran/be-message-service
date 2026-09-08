@@ -21,7 +21,7 @@ from sqlmodel import Field
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import FolderCoverAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 
 
 class TFolderCoverAudit(TimestampMixin, table=True):
@@ -45,9 +45,9 @@ class TFolderCoverAudit(TimestampMixin, table=True):
     mid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="提交封面的用户 UID")
     oldCover: str | None = Field(default=None, max_length=1024, description="提交时的旧封面 URL（用于对比/追溯）")
     newCover: str = Field(default=None, nullable=False, max_length=1024, description="申请的新封面 URL")
-    auditStatus: FolderCoverAuditStatusEnum = Field(
-        default=FolderCoverAuditStatusEnum.PENDING,
-        sa_type=SAEnum(FolderCoverAuditStatusEnum),
+    auditStatus: ResourceAuditStatusEnum = Field(
+        default=ResourceAuditStatusEnum.AUDITING,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
         description="审核状态：pending/approved/rejected",
     )
     auditOperatorMid: int | None = Field(default=None, sa_type=BIGINT, description="审核人 MID（admin）")

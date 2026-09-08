@@ -18,7 +18,7 @@ class AvatarAuditItem(SQLModel, AutoStrMixin):
     authorName: str | None = Field(default=None, description="申请者昵称（pptr 回查）")
     oldAvatar: str | None = Field(default=None, description="旧头像 URL")
     newAvatar: str = Field(description="申请的新头像 URL")
-    auditStatus: str = Field(description="审核状态：pending/approved/rejected")
+    auditStatus: str = Field(description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回")
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
 
 
@@ -52,8 +52,8 @@ class AvatarAuditMineResp(SQLModel, AutoStrMixin):
     pk: int = Field(description="审核记录主键")
     newAvatar: str = Field(description="申请的新头像 URL")
     oldAvatar: str | None = Field(default=None, description="旧头像 URL")
-    auditStatus: str = Field(description="审核状态：pending/approved/rejected")
-    auditReason: str | None = Field(default=None, description="驳回原因（rejected 时有值）")
+    auditStatus: str = Field(description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回")
+    auditReason: str | None = Field(default=None, description="驳回原因（REJECTED 时有值）")
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
     auditedAt: str | None = Field(default=None, description="审核时间（ISO）")
 

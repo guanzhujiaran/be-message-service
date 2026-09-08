@@ -24,8 +24,8 @@ from app.models.db import (
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
-    CommentStateEnum,
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
@@ -36,6 +36,18 @@ from app.services.comment.comment_admin import CommentAdminService
 from app.services.comment.comment_audit import audit_text
 from app.services.comment.comment_read import CommentReadService
 from app.services.user.account import PptrUser
+from app.services.audit.word_filter import word_filter as audit_word_filter
+
+
+@pytest.fixture(autouse=True)
+async def _test_sensitive_words():
+    """评论审核集成用可控测试敏感词（真实词库不保证含演示词，避免断言依赖词库内容）。
+
+    测试后用 load(force=True) 恢复真实词库。
+    """
+    audit_word_filter.reload_words(high=["诈骗"], medium=["加微信", "广告"])
+    yield
+    audit_word_filter.load(force=True)
 
 
 @pytest.fixture(autouse=True)
@@ -123,7 +135,7 @@ async def _ensure_moment(session, oid: int, mid: int) -> None:
                 dynType=MomentTypeEnum.WORD,
                 contentText="comment-seed",
                 contentJson=[{"type": "WORDS", "text": "comment-seed"}],
-                auditStatus=MomentAuditStatusEnum.NORMAL,
+                auditStatus=ResourceAuditStatusEnum.NORMAL,
                 pubTime=now,
                 created_at=now,
                 updated_at=now,
@@ -145,7 +157,7 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
             select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
         )
     ).one()
-    row.state = CommentStateEnum.NORMAL
+    row.auditStatus = ResourceAuditStatusEnum.NORMAL
     session.add(row)
     subject = (
         await session.exec(
@@ -353,9 +365,9 @@ async def test_admin_audit_plaintext_ip_stats() -> None:
 
         async with new_session() as s:
             # 驳回
-            assert await CommentAdminService.set_state(s, int(rpid), CommentStateEnum.REJECTED)
+            assert await CommentAdminService.set_state(s, int(rpid), ResourceAuditStatusEnum.REJECTED)
             item = await CommentAdminService.get_audit_item(s, int(rpid))
-            assert item is not None and item.state is CommentStateEnum.REJECTED
+            assert item is not None and item.state is ResourceAuditStatusEnum.REJECTED
             # 明文 IP 仅管理端可见
             ip_v4, ip_v6 = await CommentAdminService.get_plaintext_ip(s, int(rpid))
             assert ip_v4 == "203.0.113.45" and ip_v6 == "2408:8207:78d2:1a00::1"
@@ -390,9 +402,9 @@ async def test_anti_spam_rate_limit() -> None:
 async def test_sensitive_word_audit() -> None:
     """敏感词审核：高危拒审、疑似待审，且拒审评论对外不可见。"""
     # 单元层：词库匹配
-    assert audit_text("今天天气真好")[0] is CommentStateEnum.NORMAL
-    assert audit_text("这是诈骗内容")[0] is CommentStateEnum.REJECTED
-    assert audit_text("加微信看广告")[0] is CommentStateEnum.AUDITING
+    assert audit_text("今天天气真好")[0] is ResourceAuditStatusEnum.NORMAL
+    assert audit_text("这是诈骗内容")[0] is ResourceAuditStatusEnum.REJECTED
+    assert audit_text("加微信看广告")[0] is ResourceAuditStatusEnum.AUDITING
 
     # 集成层：高危词评论被拒审，不出现在列表/详情
     oid = _next_oid()
@@ -402,7 +414,7 @@ async def test_sensitive_word_audit() -> None:
                 s, _AUTHOR, CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.DYNAMIC, message="这是诈骗内容"),
                 uname="u",
             )
-            assert resp.state is CommentStateEnum.REJECTED
+            assert resp.state is ResourceAuditStatusEnum.REJECTED
             assert resp.need_audit is True
         async with new_session() as s:
             listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
@@ -436,7 +448,7 @@ async def test_author_sees_own_auditing_comment(
                 CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.LOTTERY, message="一条正常评论"),
                 uname=f"user{_AUTHOR}",
             )
-            assert normal_resp.state is CommentStateEnum.NORMAL
+            assert normal_resp.state is ResourceAuditStatusEnum.NORMAL
             normal_rpid = normal_resp.rpid
             # 疑似敏感词评论：进入 AUDITING
             audit_resp = await CommentService.add(
@@ -449,7 +461,7 @@ async def test_author_sees_own_auditing_comment(
                 ),
                 uname=f"user{_AUTHOR}",
             )
-            assert audit_resp.state is CommentStateEnum.AUDITING
+            assert audit_resp.state is ResourceAuditStatusEnum.AUDITING
             audit_rpid = audit_resp.rpid
 
         # 作者视角：能看到自己审核中的评论，带 auditing 标识；计数只算 NORMAL
@@ -463,7 +475,7 @@ async def test_author_sees_own_auditing_comment(
             assert normal_rpid in rpids, "普通评论应出现在列表"
             assert audit_rpid in rpids, "作者应看到自己审核中的评论"
             audit_item = next(it for it in own.items if it.rpid == audit_rpid)
-            assert audit_item.state is CommentStateEnum.AUDITING, "审核中评论应带 auditing 标识"
+            assert audit_item.state is ResourceAuditStatusEnum.AUDITING, "审核中评论应带 auditing 标识"
 
         # 他人视角 / 匿名视角：看不到审核中的评论
         async with new_session() as s:
@@ -553,7 +565,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
             resp = await CommentService.add(
                 s, _AUTHOR, _build(root_rpid, "正常回复内容"), uname=f"user{_AUTHOR}"
             )
-            assert resp.state is CommentStateEnum.NORMAL
+            assert resp.state is ResourceAuditStatusEnum.NORMAL
         assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), "NORMAL 应投递回复通知"
         assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "NORMAL 应投递@通知"
         calls.clear()
@@ -563,7 +575,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
             resp = await CommentService.add(
                 s, _AUTHOR, _build(root_rpid, "这是诈骗内容"), uname=f"user{_AUTHOR}"
             )
-            assert resp.state is CommentStateEnum.REJECTED
+            assert resp.state is ResourceAuditStatusEnum.REJECTED
         assert calls == [], "REJECTED 评论不应投递回复 / @ 通知"
 
         # 3) AUDITING 评论（疑似词 + 回复 + @）：不投递互动通知
@@ -571,7 +583,7 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
             resp = await CommentService.add(
                 s, _AUTHOR, _build(root_rpid, "这个链接加微信看广告"), uname=f"user{_AUTHOR}"
             )
-            assert resp.state is CommentStateEnum.AUDITING
+            assert resp.state is ResourceAuditStatusEnum.AUDITING
         assert calls == [], "AUDITING 评论不应投递回复 / @ 通知"
     finally:
         await _cleanup(oid, {_AUTHOR, _UP})
@@ -630,14 +642,14 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
                 ),
                 uname=f"user{_AUTHOR}",
             )
-            assert resp.state is CommentStateEnum.AUDITING
+            assert resp.state is ResourceAuditStatusEnum.AUDITING
         assert calls == [], "AUDITING 评论不应投递回复 / @ 通知"
         rpid = int(resp.rpid)
 
         # 2) 管理端审核通过（AUDITING → NORMAL）：补发回复 + @ 通知
         async with new_session() as s:
             ok = await CommentAdminService.set_state(
-                s, rpid, CommentStateEnum.NORMAL, note="内容合规", operator_mid=_VIEWER
+                s, rpid, ResourceAuditStatusEnum.NORMAL, note="内容合规", operator_mid=_VIEWER
             )
             assert ok
         assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), "审核通过应补发回复通知"
@@ -648,12 +660,12 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
         #    回复通知无独立标记字段，会再次调用（EventService dedup_key 幂等兜底，不落重复事件）
         async with new_session() as s:
             await CommentAdminService.set_state(
-                s, rpid, CommentStateEnum.HIDDEN, note="违规", operator_mid=_VIEWER
+                s, rpid, ResourceAuditStatusEnum.HIDDEN, note="违规", operator_mid=_VIEWER
             )
         calls.clear()
         async with new_session() as s:
             await CommentAdminService.set_state(
-                s, rpid, CommentStateEnum.NORMAL, operator_mid=_VIEWER
+                s, rpid, ResourceAuditStatusEnum.NORMAL, operator_mid=_VIEWER
             )
         assert not any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "已投递的@不应重复补发"
     finally:
@@ -717,7 +729,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 ),
                 uname=f"user{_AUTHOR}",
             )
-            assert resp.state is CommentStateEnum.NORMAL
+            assert resp.state is ResourceAuditStatusEnum.NORMAL
             rpid = int(resp.rpid)
 
         # 3) @ 本身仍然允许：@ 关系照常落库（黑名单只拦提醒，不拦 @）
@@ -766,11 +778,11 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 ),
                 uname=f"user{_AUTHOR}",
             )
-            assert audit_resp.state is CommentStateEnum.AUDITING
+            assert audit_resp.state is ResourceAuditStatusEnum.AUDITING
             audit_rpid = int(audit_resp.rpid)
         async with new_session() as s:
             await CommentAdminService.set_state(
-                s, audit_rpid, CommentStateEnum.NORMAL, operator_mid=_VIEWER
+                s, audit_rpid, ResourceAuditStatusEnum.NORMAL, operator_mid=_VIEWER
             )
         async with new_session() as s:
             after = (

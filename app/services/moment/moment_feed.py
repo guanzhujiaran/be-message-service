@@ -39,7 +39,7 @@ from app.models.db.comment_tbl import CommentSubject
 from bili_common.models import InteractionBizTypeEnum
 from bili_common.models.report import ReportAuditStatusEnum
 from app.models.enums import (
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
 )
@@ -585,7 +585,7 @@ async def _recall_dynamic_candidates(
 
     feed_base = [
         col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
-        col(TResourceFeed.auditStatus) == "normal",
+        col(TResourceFeed.auditStatus) == ResourceAuditStatusEnum.NORMAL,
         col(TResourceFeed.deletedAt).is_(None),
         col(TResourceFeed.pubTime).isnot(None),
         col(TResourceFeed.pubTime) >= window_dt,
@@ -694,7 +694,7 @@ async def _recall_dynamic_candidates(
                         select(TMoment.dynId)
                         .where(
                             col(TMoment.dynId).in_(rel_dyn_ids),
-                            col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+                            col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
                             col(TMoment.deletedAt).is_(None),
                             col(TMoment.pubTime).isnot(None),
                             col(TMoment.pubTime) >= window_dt,
@@ -716,7 +716,7 @@ async def _recall_dynamic_candidates(
             await session.exec(
                 select(TMoment.dynId)
                 .where(
-                    col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+                    col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
                     col(TMoment.deletedAt).is_(None),
                     col(TMoment.pubTime).isnot(None),
                     col(TMoment.pubTime) >= window_dt,
@@ -813,7 +813,7 @@ class MomentFeedService:
         page_size = min(max(1, page_size), 50)
 
         base_where = [
-            col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+            col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
             col(TMoment.deletedAt).is_(None),
             col(TMoment.pubTime).isnot(None),
             # 2.46.0：公共综合页（time/recommend）仅展示可见范围为公开的动态
@@ -1022,7 +1022,7 @@ class MomentFeedService:
         stmt = (
             select(TMoment)
             .where(col(TMoment.mid).in_(following_mids))
-            .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
+            .where(col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL)
             .where(col(TMoment.deletedAt).is_(None))
             .where(col(TMoment.pubTime).isnot(None))
             # 2.46.0：关注流仅展示可见范围为公开的动态
@@ -1093,7 +1093,7 @@ class MomentFeedService:
         )
         if not is_self:
             # 访客：仅 normal + 2.46.0 可见范围为公开
-            stmt = stmt.where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
+            stmt = stmt.where(col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL)
             stmt = stmt.where(col(TMoment.pubTime).isnot(None))
             stmt = stmt.where(
                 col(TMoment.visibleScope) == MomentVisibleScopeEnum.PUBLIC
@@ -1161,7 +1161,7 @@ class MomentFeedService:
         ).one_or_none()
         if dyn is None or dyn.deletedAt is not None:
             return None
-        if dyn.auditStatus != MomentAuditStatusEnum.NORMAL and dyn.mid != viewer_mid:
+        if dyn.auditStatus != ResourceAuditStatusEnum.NORMAL and dyn.mid != viewer_mid:
             return None
 
         # 2.41.0：卡片不再装配统计（module_stat 已移除），互动状态/计数统一走 /interaction/status
@@ -1208,7 +1208,7 @@ class MomentFeedService:
             dyn = by_id.get(did)
             if dyn is None or dyn.deletedAt is not None:
                 continue
-            if dyn.auditStatus != MomentAuditStatusEnum.NORMAL and dyn.mid != viewer_mid:
+            if dyn.auditStatus != ResourceAuditStatusEnum.NORMAL and dyn.mid != viewer_mid:
                 continue
             visible.append(dyn)
 
@@ -1255,7 +1255,7 @@ class MomentFeedService:
         visible = (
             col(TMoment.mid) == mid,
             col(TMoment.deletedAt).is_(None),
-            col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+            col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
         )
 
         dynamic_count = (
@@ -1364,7 +1364,7 @@ class MomentFeedService:
         base = (
             select(TMoment)
             .where(col(TMoment.repostSrcDynId) == dyn_id)
-            .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
+            .where(col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL)
             .where(col(TMoment.deletedAt).is_(None))
         )
 

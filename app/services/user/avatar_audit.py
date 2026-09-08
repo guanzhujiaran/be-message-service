@@ -20,7 +20,7 @@ from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TUserAvatarAudit
-from app.models.enums import AvatarAuditStatusEnum, NotifyLevelEnum
+from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas.avatar_audit import (
     AvatarAuditItem,
     AvatarAuditListResp,
@@ -82,13 +82,13 @@ class AvatarAuditService:
             await session.exec(
                 select(TUserAvatarAudit).where(
                     TUserAvatarAudit.mid == uid,
-                    TUserAvatarAudit.auditStatus == AvatarAuditStatusEnum.PENDING,
+                    TUserAvatarAudit.auditStatus == ResourceAuditStatusEnum.AUDITING,
                 )
             )
         ).all()
         now = datetime.now()
         for p in pending_rows:
-            p.auditStatus = AvatarAuditStatusEnum.REJECTED
+            p.auditStatus = ResourceAuditStatusEnum.REJECTED
             p.auditReason = "已重新提交新申请"
             p.auditedAt = now
             p.updated_at = now
@@ -98,7 +98,7 @@ class AvatarAuditService:
             mid=uid,
             oldAvatar=old_avatar,
             newAvatar=new_avatar,
-            auditStatus=AvatarAuditStatusEnum.PENDING,
+            auditStatus=ResourceAuditStatusEnum.AUDITING,
         )
         session.add(row)
         await session.commit()
@@ -149,7 +149,7 @@ class AvatarAuditService:
                 await session.exec(
                     select(func.count())
                     .select_from(TUserAvatarAudit)
-                    .where(TUserAvatarAudit.auditStatus == AvatarAuditStatusEnum.PENDING)
+                    .where(TUserAvatarAudit.auditStatus == ResourceAuditStatusEnum.AUDITING)
                 )
             ).one()
             or 0
@@ -157,7 +157,7 @@ class AvatarAuditService:
         rows = (
             await session.exec(
                 select(TUserAvatarAudit)
-                .where(TUserAvatarAudit.auditStatus == AvatarAuditStatusEnum.PENDING)
+                .where(TUserAvatarAudit.auditStatus == ResourceAuditStatusEnum.AUDITING)
                 .order_by(TUserAvatarAudit.created_at.desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -185,11 +185,11 @@ class AvatarAuditService:
         row = await session.get(TUserAvatarAudit, pk)
         if row is None:
             raise ValueError("头像审核记录不存在")
-        if row.auditStatus is not AvatarAuditStatusEnum.PENDING:
+        if row.auditStatus is not ResourceAuditStatusEnum.AUDITING:
             raise ValueError("该记录已处理，不能重复审核")
 
         now = datetime.now()
-        row.auditStatus = AvatarAuditStatusEnum.APPROVED
+        row.auditStatus = ResourceAuditStatusEnum.NORMAL
         row.auditOperatorMid = operator_mid
         row.auditReason = remark
         row.auditedAt = now
@@ -225,11 +225,11 @@ class AvatarAuditService:
         row = await session.get(TUserAvatarAudit, pk)
         if row is None:
             raise ValueError("头像审核记录不存在")
-        if row.auditStatus is not AvatarAuditStatusEnum.PENDING:
+        if row.auditStatus is not ResourceAuditStatusEnum.AUDITING:
             raise ValueError("该记录已处理，不能重复审核")
 
         now = datetime.now()
-        row.auditStatus = AvatarAuditStatusEnum.REJECTED
+        row.auditStatus = ResourceAuditStatusEnum.REJECTED
         row.auditOperatorMid = operator_mid
         row.auditReason = reason or remark
         row.auditedAt = now

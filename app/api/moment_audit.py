@@ -17,7 +17,7 @@ from app.core.database import SessionDep
 from app.dependencies import RootUser
 from app.models import StandardResponse
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import MomentAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.str_int import StrInt
 from app.models.schemas.moment import (
     MomentAuditActionReq,
@@ -41,8 +41,8 @@ router = APIRouter(prefix="/api/v1/community/audit", tags=["moment-audit"])
 async def audit_list(
     session: SessionDep,
     user: RootUser,
-    auditStatus: MomentAuditStatusEnum = Query(
-        default=MomentAuditStatusEnum.AUDITING,
+    auditStatus: ResourceAuditStatusEnum = Query(
+        default=ResourceAuditStatusEnum.AUDITING,
         description="审核状态筛选：auditing（默认，待审核）/normal（已过审）/rejected（已驳回）/hidden（已下架）",
     ),
     page_num: int = Query(default=1, ge=1),

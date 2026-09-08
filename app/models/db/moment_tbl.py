@@ -24,10 +24,9 @@ from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    MomentAuditStatusEnum,
     MomentFoldTypeEnum,
-    MomentTopicAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
     MomentVisibleScopeEnum,
 )
 
@@ -88,9 +87,9 @@ class TMoment(TimestampMixin, table=True):
     foldType: MomentFoldTypeEnum = Field(
         default=MomentFoldTypeEnum.NONE, sa_type=SAEnum(MomentFoldTypeEnum), description="折叠类型：0=无,1=用户折叠,2=超频折叠"
     )
-    auditStatus: MomentAuditStatusEnum = Field(
-        default=MomentAuditStatusEnum.AUDITING,
-        sa_type=SAEnum(MomentAuditStatusEnum),
+    auditStatus: ResourceAuditStatusEnum = Field(
+        default=ResourceAuditStatusEnum.AUDITING,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
         description="审核状态：auditing/normal/rejected/hidden，发布默认审核中",
     )
     auditRejectReason: str | None = Field(default=None, max_length=500, description="最近一次驳回原因（rejected 状态卡片展示）")
@@ -149,9 +148,9 @@ class TMomentTopic(TimestampMixin, table=True):
     sortWeight: int = Field(default=0, description="广场排序权重")
     # 话题创建与审核（2.19.0 起；seed 灌入的真实话题置 0 表示系统/预置）
     creatorMid: int = Field(default=0, nullable=False, sa_type=BIGINT, description="创建者 UID（0=系统/seed 预置）")
-    auditStatus: MomentTopicAuditStatusEnum = Field(
-        default=MomentTopicAuditStatusEnum.AUDITING,
-        sa_type=SAEnum(MomentTopicAuditStatusEnum),
+    auditStatus: ResourceAuditStatusEnum = Field(
+        default=ResourceAuditStatusEnum.AUDITING,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
         description="审核状态：auditing/normal/rejected（用户创建默认 auditing，不公开展示）",
     )
     auditRejectReason: str | None = Field(default=None, max_length=500, description="最近一次驳回原因")

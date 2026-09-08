@@ -41,10 +41,9 @@ from bili_common.models import (
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
-    MomentAuditStatusEnum,
-    MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas import EventReportReq
 from app.models.schemas.moment import (
@@ -115,9 +114,9 @@ def _build_audit_log(
     biz_type: InteractionBizTypeEnum,
     biz_id: int,
     operator_mid: int,
-    to_status: MomentAuditStatusEnum,
+    to_status: ResourceAuditStatusEnum,
     action: MomentAuditLogActionEnum,
-    from_status: MomentAuditStatusEnum | None = None,
+    from_status: ResourceAuditStatusEnum | None = None,
     reject_reason: str | None = None,
     remark: str | None = None,
     operator_role: MomentAuditLogOperatorRoleEnum = MomentAuditLogOperatorRoleEnum.AUTHOR,
@@ -280,7 +279,7 @@ async def _validate_topics(
     valid: list[MomentTopicRef] = []
     for t in topics:
         row = by_id.get(t.topicId)
-        if row is None or row.auditStatus is not MomentTopicAuditStatusEnum.NORMAL:
+        if row is None or row.auditStatus is not ResourceAuditStatusEnum.NORMAL:
             raise ValueError("话题不存在或未通过审核")
         valid.append(t)
     return valid
@@ -304,24 +303,58 @@ def _persist_resource_feed(
     mid: int,
     topics: list[Any] | None,
     visible_scope: MomentVisibleScopeEnum | None = None,
+    *,
+    audit_status: str = "auditing",
+    pub_time: datetime | None = None,
 ) -> None:
     """发布时写通用 Feed 元数据行（2.36.0，计数统一 TInteractionStat）。
 
     初始状态：``auditStatus=auditing``、``pubTime=None``（审核通过后由
-    ``moment_audit`` 写 pubTime 并置 normal）；``tags`` 冗余话题 id 列表，
-    供推荐流个性化 / 话题流过滤；``visibleScope``（2.46.0）冗余可见范围，
-    推荐流候选零 join 过滤 PUBLIC（WORD 传实际值、FORWARD 强制 PUBLIC）。
+    ``moment_audit`` 写 pubTime 并置 normal）；自动审核 `PASS` 直接上公域时
+    （8.x 内容审核自动直发）传 ``audit_status="normal"`` + ``pub_time``。
+    ``tags`` 冗余话题 id 列表，供推荐流个性化 / 话题流过滤；``visibleScope``（2.46.0）
+    冗余可见范围，推荐流候选零 join 过滤 PUBLIC。
     """
     session.add(
         TResourceFeed(
             bizType=InteractionBizTypeEnum.DYNAMIC,
             bizId=moment_id,
             mid=mid,
-            auditStatus="auditing",
+            auditStatus=audit_status,
+            pubTime=pub_time,
             tags=[t.topicId for t in topics] if topics else [],
             visibleScope=visible_scope,
         )
     )
+
+
+async def _decide_content_audit(
+    mid: int,
+    content_text: str | None,
+    now: datetime,
+) -> tuple[ResourceAuditStatusEnum, datetime | None, str]:
+    """动态正文自动审核：返回 (audit_status, pub_time, feed_audit_status)。
+
+    8.x 内容审核自动优先：
+    - REJECT：给作者发通知并抛 ValueError 拒绝发布；
+    - AUDIT：返回 AUDITING（进人工，pubTime=None）；
+    - PASS：返回 NORMAL（自动直发公域，pubTime=now）。
+    """
+    from app.services.audit import audit_text as audit_moment_text
+    from app.services.audit.notify import send_audit_notice
+
+    audit_result = audit_moment_text(content_text) if content_text else None
+    if audit_result is not None and audit_result.rejected:
+        try:
+            await send_audit_notice(
+                mid, audit_result, subject_label="动态", content_excerpt=content_text[:60]
+            )
+        except Exception:  # noqa: BLE001 通知弱依赖，不阻塞拒绝
+            pass
+        raise ValueError(f"动态内容未通过审核：{audit_result.reason}")
+    if audit_result is not None and audit_result.need_manual:
+        return ResourceAuditStatusEnum.AUDITING, None, "auditing"
+    return ResourceAuditStatusEnum.NORMAL, now, "normal"
 
 
 async def _get_dynamic_or_404(session: AsyncSession, moment_id: int) -> TMoment:
@@ -444,6 +477,8 @@ class MomentPublishService:
         moment_id = await generate_moment_id()
         now = datetime.now()
         content_text = _nodes_to_text(nodes)
+        # 8.x 内容审核：PASS 自动直发公域(normal)、REJECT 拒绝并通知、AUDIT 进人工
+        audit_status, pub_time, feed_status = await _decide_content_audit(mid, content_text, now)
         # 2.22.0：多话题——主话题写 TMoment.topicId（=topics[0]），全部写 TMomentTopicRel
         topic_id = topics[0].topicId if topics else None
         option = req.option or None
@@ -469,7 +504,8 @@ class MomentPublishService:
             closeComment=option.closeComment if option else 0,
             # 2.46.0：WORD 可设可见范围（缺省 None → 模型默认 PUBLIC）
             visibleScope=option.visibleScope if option else None,
-            auditStatus=MomentAuditStatusEnum.AUDITING,
+            auditStatus=audit_status,
+            pubTime=pub_time,
             created_at=now,
             updated_at=now,
         )
@@ -478,13 +514,18 @@ class MomentPublishService:
         await session.flush()
         if topics:
             await _persist_topic_rels(session, moment_id, [t.topicId for t in topics])
-        _persist_resource_feed(session, moment_id, mid, topics, visible_scope=dyn.visibleScope)
+        _persist_resource_feed(
+            session, moment_id, mid, topics,
+            visible_scope=dyn.visibleScope,
+            audit_status=feed_status,
+            pub_time=pub_time,
+        )
         session.add(
             _build_audit_log(
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
                 biz_id=moment_id,
                 operator_mid=mid,
-                to_status=MomentAuditStatusEnum.AUDITING,
+                to_status=audit_status,
                 action=MomentAuditLogActionEnum.CREATE,
                 client_ip=client_ip,
                 user_agent=user_agent,
@@ -511,12 +552,14 @@ class MomentPublishService:
             raise ValueError("转发动态必须指定 repostSrc.dynId")
         src_dyn = await _get_dynamic_or_404(session, req.repostSrc.dynId)
         # 源动态必须已通过审核（normal）且未软删
-        if src_dyn.auditStatus != MomentAuditStatusEnum.NORMAL or src_dyn.deletedAt is not None:
+        if src_dyn.auditStatus != ResourceAuditStatusEnum.NORMAL or src_dyn.deletedAt is not None:
             raise ValueError("只能转发审核通过的动态")
 
         moment_id = await generate_moment_id()
         now = datetime.now()
         content_text = _nodes_to_text(nodes)
+        # 8.x 内容审核：PASS 自动直发公域(normal)、REJECT 拒绝并通知、AUDIT 进人工
+        audit_status, pub_time, feed_status = await _decide_content_audit(mid, content_text, now)
         # 2.22.0：多话题——主话题写 TMoment.topicId（=topics[0]），全部写 TMomentTopicRel
         topic_id = topics[0].topicId if topics else None
         option = req.option or None
@@ -537,7 +580,8 @@ class MomentPublishService:
             closeComment=option.closeComment if option else 0,
             # 2.46.0：FORWARD 一律强制 PUBLIC（服务端忽略传入值）
             visibleScope=MomentVisibleScopeEnum.PUBLIC,
-            auditStatus=MomentAuditStatusEnum.AUDITING,
+            auditStatus=audit_status,
+            pubTime=pub_time,
             created_at=now,
             updated_at=now,
         )
@@ -545,17 +589,22 @@ class MomentPublishService:
         await session.flush()
         if topics:
             await _persist_topic_rels(session, moment_id, [t.topicId for t in topics])
-        _persist_resource_feed(session, moment_id, mid, topics, visible_scope=MomentVisibleScopeEnum.PUBLIC)
+        _persist_resource_feed(
+            session, moment_id, mid, topics,
+            visible_scope=MomentVisibleScopeEnum.PUBLIC,
+            audit_status=feed_status,
+            pub_time=pub_time,
+        )
         # 注意：创建转发动态时源动态 repostCount 不 +1（状态机触发点 ⑥），
-        # 必须等管理员审核通过（P6-T2）才对 srcDyn.repostCount +1。
+        # 必须等「PASS 自动放行或管理员审核通过」才对 srcDyn.repostCount +1。
         session.add(
             _build_audit_log(
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
                 biz_id=moment_id,
                 operator_mid=mid,
-                to_status=MomentAuditStatusEnum.AUDITING,
+                to_status=audit_status,
                 action=MomentAuditLogActionEnum.CREATE,
-                from_status=MomentAuditStatusEnum.NORMAL,
+                from_status=ResourceAuditStatusEnum.NORMAL,
                 remark=f"repost from {src_dyn.dynId}",
                 client_ip=client_ip,
                 user_agent=user_agent,
@@ -579,13 +628,15 @@ class MomentPublishService:
     ) -> dict[str, Any]:
         """转发指定动态（FORWARD）。与 create(FORWARD) 共用核心逻辑。"""
         src_dyn = await _get_dynamic_or_404(session, req.srcDynId)
-        if src_dyn.auditStatus != MomentAuditStatusEnum.NORMAL or src_dyn.deletedAt is not None:
+        if src_dyn.auditStatus != ResourceAuditStatusEnum.NORMAL or src_dyn.deletedAt is not None:
             raise ValueError("只能转发审核通过的动态")
 
         moment_id = await generate_moment_id()
         now = datetime.now()
         nodes = req.content or []
         content_text = _nodes_to_text(nodes)
+        # 8.x 内容审核：PASS 自动直发公域(normal)、REJECT 拒绝并通知、AUDIT 进人工
+        audit_status, pub_time, feed_status = await _decide_content_audit(mid, content_text, now)
 
         dyn = TMoment(
             dynId=moment_id,
@@ -597,21 +648,27 @@ class MomentPublishService:
             repostDepth=(src_dyn.repostDepth or 0) + 1,
             # 2.46.0：FORWARD 一律强制 PUBLIC
             visibleScope=MomentVisibleScopeEnum.PUBLIC,
-            auditStatus=MomentAuditStatusEnum.AUDITING,
+            auditStatus=audit_status,
+            pubTime=pub_time,
             created_at=now,
             updated_at=now,
         )
         session.add(dyn)
         await session.flush()
-        _persist_resource_feed(session, moment_id, mid, None, visible_scope=MomentVisibleScopeEnum.PUBLIC)
+        _persist_resource_feed(
+            session, moment_id, mid, None,
+            visible_scope=MomentVisibleScopeEnum.PUBLIC,
+            audit_status=feed_status,
+            pub_time=pub_time,
+        )
         session.add(
             _build_audit_log(
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
                 biz_id=moment_id,
                 operator_mid=mid,
-                to_status=MomentAuditStatusEnum.AUDITING,
+                to_status=audit_status,
                 action=MomentAuditLogActionEnum.CREATE,
-                from_status=MomentAuditStatusEnum.NORMAL,
+                from_status=ResourceAuditStatusEnum.NORMAL,
                 remark=f"repost from {src_dyn.dynId}",
                 client_ip=client_ip,
                 user_agent=user_agent,
@@ -619,6 +676,8 @@ class MomentPublishService:
         )
         await session.commit()
         await session.refresh(dyn)
+        # 弱依赖：转发语里的 @ 与发布路径同源，同样批量生产 AT 事件（P6-T8）
+        await MomentPublishService._notify_at_batch(mid, moment_id, nodes)
         logger.info(f"用户 {mid} 转发动态(repost) srcDynId={src_dyn.dynId} → dynId={moment_id}")
         return _to_base_resp(dyn)
 
@@ -651,7 +710,7 @@ class MomentPublishService:
             # 幂等：已删除直接返回成功
             return {"dynId": dyn.dynId, "dynIdStr": str(dyn.dynId), "success": True}
 
-        was_normal = dyn.auditStatus == MomentAuditStatusEnum.NORMAL
+        was_normal = dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
         from_status = dyn.auditStatus
 
         # 状态机触发点 ④：软删 normal 转发动态 → 源动态 repostCount -1
@@ -710,7 +769,7 @@ class MomentPublishService:
             raise ValueError("只能置顶自己的动态")
         if dyn.deletedAt is not None:
             raise ValueError("动态已删除，无法置顶")
-        if dyn.auditStatus != MomentAuditStatusEnum.NORMAL:
+        if dyn.auditStatus != ResourceAuditStatusEnum.NORMAL:
             raise ValueError("仅审核通过的动态可置顶")
         if dyn.isTop == (0 if untop else 1):
             # 已是目标状态，幂等返回

@@ -24,13 +24,13 @@ from sqlmodel import col, func, select
 from app.core.config import settings
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas import (
-    CommentUserBrief,
     EventReportReq,
     ReportCreateReq,
     ReportItem,
     ReportListResp,
     ReportReviewReq,
 )
+from app.models.schemas.user_brief import UserBriefOut
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base_biz import (
     BaseBiz,
@@ -85,11 +85,14 @@ def _status_name(value) -> str:
         return ReportAuditStatusEnum.PENDING.name.lower()
 
 
-async def _load_user_briefs(rows) -> dict[int, CommentUserBrief]:
+async def _load_user_briefs(rows) -> dict[int, UserBriefOut]:
     """批量回查举报人 / 被举报人展示信息（§5.19）。
 
     一次 ``PptrUser.get_many`` 覆盖本页全部 mid（直连 pptr 只读，不冗余用户快照）；
     **弱依赖**：回查失败只告警并降级为空字典（item 侧字段为 null），不拖垮审核列表。
+
+    审核端属于管理视角，保留**私有**简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色）；
+    对外展示项只取昵称 / 头像，不会把私密字段带进 `ReportItem`。
     """
     mids: set[int] = set()
     for r in rows:
@@ -307,9 +310,11 @@ class ReportService:
         if rec is None:
             raise ValueError("举报记录不存在")
         biz = get_biz(InteractionBizTypeEnum(int(rec.bizType)), session, rec.bizId, admin_mid)
-        if req.decision == ReportReviewDecisionEnum.REJECT.value:
+        # req.decision 是字符串（"reject"/"resolve"，见 ReportReviewReq.decision），
+        # 用成员名小写比较（决策枚举 value 是 int，不能直接比字符串）。
+        if req.decision == ReportReviewDecisionEnum.REJECT.name.lower():
             await biz.report_reject(report_pk=req.reportPk, admin_mid=admin_mid, remark=req.remark)
-        elif req.decision == ReportReviewDecisionEnum.RESOLVE.value:
+        elif req.decision == ReportReviewDecisionEnum.RESOLVE.name.lower():
             await biz.report_resolved(
                 report_pk=req.reportPk,
                 admin_mid=admin_mid,
@@ -399,7 +404,7 @@ class ReportService:
     @staticmethod
     def _to_item(
         r,
-        users: dict[int, CommentUserBrief] | None = None,
+        users: dict[int, UserBriefOut] | None = None,
         resources: dict[tuple[int, int], InteractionResource] | None = None,
     ) -> ReportItem:
         """举报记录行 → 展示项。

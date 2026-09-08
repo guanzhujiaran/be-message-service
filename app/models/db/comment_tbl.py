@@ -33,7 +33,7 @@ from sqlalchemy import Enum as SAEnum
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
-    CommentStateEnum,
+    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
     MomentReportReasonEnum,
 )
@@ -92,15 +92,15 @@ class CommentIndex(TimestampMixin, table=True):
 
     __tablename__ = "msg_comment_index"
     __table_args__ = (
-        # 热度排序：等值段 (oid,type,root,state) + 排序段 (hot_score,rpid)，
+        # 热度排序：等值段 (oid,type,root,auditStatus) + 排序段 (hot_score,rpid)，
         # 排序直接吃冗余列，因此接口层**禁止** ORDER BY 表达式（会退化成 filesort）
         Index(
-            "idx_comment_hot", "oid", "type", "root", "state", "hot_score", "rpid"
+            "idx_comment_hot", "oid", "type", "root", "auditStatus", "hot_score", "rpid"
         ),
         # 时间排序：rpid 单调递增，等价于按 ctime
-        Index("idx_comment_time", "oid", "type", "root", "state", "rpid"),
-        # 楼中楼批量拉取：WHERE root IN (...) AND state=... ORDER BY rpid
-        Index("idx_comment_sub", "root", "state", "rpid"),
+        Index("idx_comment_time", "oid", "type", "root", "auditStatus", "rpid"),
+        # 楼中楼批量拉取：WHERE root IN (...) AND auditStatus=... ORDER BY rpid
+        Index("idx_comment_sub", "root", "auditStatus", "rpid"),
         # 用户维度：个人评论列表 / 数据统计
         Index("idx_comment_user", "mid", "rpid"),
         {"extend_existing": True},
@@ -145,11 +145,11 @@ class CommentIndex(TimestampMixin, table=True):
         description="热度分（冗余列）：like - hate*1.5 + rcount*0.5 + 时间衰减",
     )
 
-    state: CommentStateEnum = Field(
-        default=CommentStateEnum.NORMAL,
-        sa_type=SAEnum(CommentStateEnum),
+    auditStatus: ResourceAuditStatusEnum = Field(
+        default=ResourceAuditStatusEnum.NORMAL,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
         index=True,
-        description="评论状态，决定可见性",
+        description="评论审核状态，决定可见性（对齐统一审核态）",
     )
     attr: int = Field(
         default=0, description="位图标记：1置顶 / 2精选 / 4UP主赞过（见 CommentAttrBit）"

@@ -20,7 +20,7 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
 from app.models.db import NotifyMessage, TUserAvatarAudit
-from app.models.enums import AvatarAuditStatusEnum, NotifyTargetTypeEnum
+from app.models.enums import ResourceAuditStatusEnum, NotifyTargetTypeEnum
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.services.user.avatar_audit import AvatarAuditService
 
@@ -169,7 +169,7 @@ async def test_submit_creates_pending():
         assert pk > 0
         row = await s.get(TUserAvatarAudit, pk)
         assert row is not None
-        assert row.auditStatus is AvatarAuditStatusEnum.PENDING
+        assert row.auditStatus is ResourceAuditStatusEnum.AUDITING
         assert row.newAvatar == NEW_AVATAR
         assert row.oldAvatar == OLD_AVATAR
 
@@ -184,11 +184,11 @@ async def test_resubmit_overrides_old_pending():
         )
         # 旧 pending 被覆盖为 rejected
         old = await s.get(TUserAvatarAudit, pk1)
-        assert old.auditStatus is AvatarAuditStatusEnum.REJECTED
+        assert old.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert old.auditReason == "已重新提交新申请"
         # 新记录为 pending
         new = await s.get(TUserAvatarAudit, pk2)
-        assert new.auditStatus is AvatarAuditStatusEnum.PENDING
+        assert new.auditStatus is ResourceAuditStatusEnum.AUDITING
 
 
 # ==================== 待审核列表 ====================
@@ -204,7 +204,7 @@ async def test_pending_list_only_pending():
         )
         # 处理 A_MID2 的记录为 rejected
         row = await _latest_for(s, A_MID2)
-        row.auditStatus = AvatarAuditStatusEnum.REJECTED
+        row.auditStatus = ResourceAuditStatusEnum.REJECTED
         await s.commit()
 
         resp = await AvatarAuditService.pending_list(s, page_num=1, page_size=20)
@@ -225,9 +225,9 @@ async def test_approve_sets_approved():
         item = await AvatarAuditService.approve(
             s, pk, operator_mid=ADMIN_MID, remark="ok"
         )
-        assert item.auditStatus == AvatarAuditStatusEnum.APPROVED.value
+        assert item.auditStatus == ResourceAuditStatusEnum.NORMAL.name
         row = await s.get(TUserAvatarAudit, pk)
-        assert row.auditStatus is AvatarAuditStatusEnum.APPROVED
+        assert row.auditStatus is ResourceAuditStatusEnum.NORMAL
         assert row.auditOperatorMid == ADMIN_MID
     # 公开头像（pptr TUserDetail.avatar）应已写入新头像（FK 外键需父表 TUserInfo 存在）
     from sqlmodel import select
@@ -283,9 +283,9 @@ async def test_reject_sets_rejected_and_reason():
         item = await AvatarAuditService.reject(
             s, pk, operator_mid=ADMIN_MID, reason="图片不清晰"
         )
-        assert item.auditStatus == AvatarAuditStatusEnum.REJECTED.value
+        assert item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
         row = await s.get(TUserAvatarAudit, pk)
-        assert row.auditStatus is AvatarAuditStatusEnum.REJECTED
+        assert row.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert row.auditReason == "图片不清晰"
         assert row.auditOperatorMid == ADMIN_MID
 
@@ -320,7 +320,7 @@ async def test_mine_returns_latest():
         )
         mine = await AvatarAuditService.mine(s, uid=A_MID)
         assert mine is not None
-        assert mine.auditStatus == AvatarAuditStatusEnum.PENDING.value
+        assert mine.auditStatus == ResourceAuditStatusEnum.AUDITING.name
         assert mine.newAvatar == NEW_AVATAR
 
 

@@ -20,7 +20,7 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TFavoriteFolder, TFolderCoverAudit
-from app.models.enums import FolderCoverAuditStatusEnum, NotifyLevelEnum
+from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas.folder_cover_audit import (
     FolderCoverAuditItem,
     FolderCoverAuditListResp,
@@ -75,13 +75,13 @@ class FolderCoverAuditService:
             await session.exec(
                 select(TFolderCoverAudit).where(
                     TFolderCoverAudit.folderId == folder_id,
-                    TFolderCoverAudit.auditStatus == FolderCoverAuditStatusEnum.PENDING,
+                    TFolderCoverAudit.auditStatus == ResourceAuditStatusEnum.AUDITING,
                 )
             )
         ).all()
         now = datetime.now()
         for p in pending_rows:
-            p.auditStatus = FolderCoverAuditStatusEnum.REJECTED
+            p.auditStatus = ResourceAuditStatusEnum.REJECTED
             p.auditReason = "已重新提交新申请"
             p.auditedAt = now
             p.updated_at = now
@@ -92,7 +92,7 @@ class FolderCoverAuditService:
             mid=uid,
             oldCover=old_cover,
             newCover=new_cover,
-            auditStatus=FolderCoverAuditStatusEnum.PENDING,
+            auditStatus=ResourceAuditStatusEnum.AUDITING,
         )
         session.add(row)
         await session.commit()
@@ -149,7 +149,7 @@ class FolderCoverAuditService:
                 await session.exec(
                     select(func.count())
                     .select_from(TFolderCoverAudit)
-                    .where(TFolderCoverAudit.auditStatus == FolderCoverAuditStatusEnum.PENDING)
+                    .where(TFolderCoverAudit.auditStatus == ResourceAuditStatusEnum.AUDITING)
                 )
             ).one()
             or 0
@@ -157,7 +157,7 @@ class FolderCoverAuditService:
         rows = (
             await session.exec(
                 select(TFolderCoverAudit)
-                .where(TFolderCoverAudit.auditStatus == FolderCoverAuditStatusEnum.PENDING)
+                .where(TFolderCoverAudit.auditStatus == ResourceAuditStatusEnum.AUDITING)
                 .order_by(TFolderCoverAudit.created_at.desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -185,11 +185,11 @@ class FolderCoverAuditService:
         row = await session.get(TFolderCoverAudit, pk)
         if row is None:
             raise ValueError("封面审核记录不存在")
-        if row.auditStatus is not FolderCoverAuditStatusEnum.PENDING:
+        if row.auditStatus is not ResourceAuditStatusEnum.AUDITING:
             raise ValueError("该记录已处理，不能重复审核")
 
         now = datetime.now()
-        row.auditStatus = FolderCoverAuditStatusEnum.APPROVED
+        row.auditStatus = ResourceAuditStatusEnum.NORMAL
         row.auditOperatorMid = operator_mid
         row.auditReason = remark
         row.auditedAt = now
@@ -228,11 +228,11 @@ class FolderCoverAuditService:
         row = await session.get(TFolderCoverAudit, pk)
         if row is None:
             raise ValueError("封面审核记录不存在")
-        if row.auditStatus is not FolderCoverAuditStatusEnum.PENDING:
+        if row.auditStatus is not ResourceAuditStatusEnum.AUDITING:
             raise ValueError("该记录已处理，不能重复审核")
 
         now = datetime.now()
-        row.auditStatus = FolderCoverAuditStatusEnum.REJECTED
+        row.auditStatus = ResourceAuditStatusEnum.REJECTED
         row.auditOperatorMid = operator_mid
         row.auditReason = reason or remark
         row.auditedAt = now

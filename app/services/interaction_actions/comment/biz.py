@@ -4,7 +4,7 @@
 
 - **落库表**：`CommentReport`（`bizType=comment`，bizId = rpid）；
 - **作者回查**：查 `CommentIndex` 取 `mid`；
-- **下架**：`CommentIndex.state` 置 hidden（评论不进 Feed，无需同步 `TResourceFeed`）。
+- **下架**：`CommentIndex.auditStatus` 置 hidden（评论不进 Feed，无需同步 `TResourceFeed`）。
 
 注：`reply` / `at` 由评论子系统（`app/services/comment/`）承载，此处不重复实现，
 故沿用基类默认（调用时抛「该资源不支持」）。
@@ -14,7 +14,7 @@ from sqlmodel import col, select
 
 from app.models.db.comment_tbl import CommentContent, CommentIndex, CommentReport
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import CommentStateEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
 from app.services.interaction_actions.common import ops
@@ -67,7 +67,7 @@ class CommentBiz(BaseBiz):
         row = await self._index()
         if row is None:
             return None
-        return row.state is CommentStateEnum.NORMAL
+        return row.auditStatus is ResourceAuditStatusEnum.NORMAL
 
     def _build_jump_target(self, rpid: str | None = None) -> str | None:
         """评论无独立详情页：按所属**顶层资源**（`CommentIndex.type` + `oid`）拼跳转 + 楼层锚点。
@@ -126,7 +126,7 @@ class CommentBiz(BaseBiz):
                 bizId=bid,
                 authorMid=int(idx.mid),
                 exists=True,
-                interactable=idx.state is CommentStateEnum.NORMAL,
+                interactable=idx.auditStatus is ResourceAuditStatusEnum.NORMAL,
                 title=content.message if content else None,
                 cover=None,
                 jumpTarget=jump_target_for(idx.type, idx.oid, rpid_map.get(bid) or bid),
@@ -165,14 +165,14 @@ class CommentBiz(BaseBiz):
         return int(row.mid)
 
     async def hide(self, *, operator_mid: int = 0, **kwargs) -> None:
-        """评论下架：`CommentIndex.state` 置 hidden。"""
+        """评论下架：`CommentIndex.auditStatus` 置 hidden。"""
         row = (
             await self.session.exec(
                 select(CommentIndex).where(col(CommentIndex.rpid) == self.biz_id)
             )
         ).one_or_none()
-        if row is not None and row.state is not CommentStateEnum.HIDDEN:
-            row.state = CommentStateEnum.HIDDEN
+        if row is not None and row.auditStatus is not ResourceAuditStatusEnum.HIDDEN:
+            row.auditStatus = ResourceAuditStatusEnum.HIDDEN
         await self.session.commit()
 
     # ==================== 评论类操作（reply / at）====================

@@ -31,7 +31,7 @@ from app.models.db import (
 )
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentReportReasonEnum,
     MomentTypeEnum,
 )
@@ -55,7 +55,7 @@ _BASE = datetime.datetime(2026, 8, 1, 12, 0, 0)  # noqa: DTZ001
 
 async def _seed(session, mid, *, real: RealDyn | None = None, **kw) -> int:
     did = await _new_moment_id()
-    audit = kw.get("audit", MomentAuditStatusEnum.NORMAL)
+    audit = kw.get("audit", ResourceAuditStatusEnum.NORMAL)
     now = _BASE - datetime.timedelta(minutes=kw.get("minutes_ago", 0))
     content_text = real.content_text if real else "seed"
     dyn = TMoment(
@@ -66,7 +66,7 @@ async def _seed(session, mid, *, real: RealDyn | None = None, **kw) -> int:
         contentJson=[{"type": "WORDS", "text": content_text}],
         repostSrcDynId=kw.get("repost_src"),
         auditStatus=audit,
-        pubTime=now if audit is MomentAuditStatusEnum.NORMAL else None,
+        pubTime=now if audit is ResourceAuditStatusEnum.NORMAL else None,
         deletedAt=(now if kw.get("deleted") else None),
         created_at=now,
         updated_at=now,
@@ -78,9 +78,9 @@ async def _seed(session, mid, *, real: RealDyn | None = None, **kw) -> int:
 async def _commit_seed(session, mid, **kw) -> int:
     did = await _seed(session, mid, **kw)
     await session.flush()
-    audit = kw.get("audit", MomentAuditStatusEnum.NORMAL)
+    audit = kw.get("audit", ResourceAuditStatusEnum.NORMAL)
     pub = None
-    if audit is MomentAuditStatusEnum.NORMAL:
+    if audit is ResourceAuditStatusEnum.NORMAL:
         pub = _BASE - datetime.timedelta(minutes=kw.get("minutes_ago", 0))
     # 2.36.0：计数统一 TInteractionStat + Feed 元数据 TResourceFeed
     session.add(TInteractionStat(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=did))
@@ -215,7 +215,7 @@ async def test_thumb_reject_non_normal():
     dids = []
     reals = await fetch_real_dyns(1)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=MomentAuditStatusEnum.AUDITING))
+        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.AUDITING))
     try:
         async with new_session() as s:
             with pytest.raises(ValueError):
@@ -276,7 +276,7 @@ async def test_report_writes_and_keeps_status():
             ).one()
             assert rep.reportMid == D_MID2 and rep.accusedMid == D_MID
             dyn = (await s.exec(select(TMoment).where(TMoment.dynId == dids[0]))).one()
-            assert dyn.auditStatus is MomentAuditStatusEnum.NORMAL  # 不改状态
+            assert dyn.auditStatus is ResourceAuditStatusEnum.NORMAL  # 不改状态
     finally:
         await _cleanup(dids)
 
@@ -293,7 +293,7 @@ async def test_repost_count_state_machine():
             now = _BASE
             s.add(TMoment(dynId=fwd, mid=D_MID2, dynType=MomentTypeEnum.FORWARD, contentText=reals[1].content_text,
                            contentJson=[{"type": "WORDS", "text": reals[1].content_text}], repostSrcDynId=src,
-                           auditStatus=MomentAuditStatusEnum.AUDITING, created_at=now, updated_at=now))
+                           auditStatus=ResourceAuditStatusEnum.AUDITING, created_at=now, updated_at=now))
             await s.flush()
             s.add(TInteractionStat(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=fwd))
             s.add(

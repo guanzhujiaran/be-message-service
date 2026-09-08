@@ -1,6 +1,7 @@
 """通用资源收藏夹路由（收藏夹系统，P4-T10；2.55.0 全面通用化）。
 
-路由前缀 `/api/v1/favorite`，全部需登录（`RequiredUser`）。
+路由前缀 `/api/v1/favorite`，除「他人主页公开读」（`/user/folders`、`/user/dynamics`）
+外全部需登录（`RequiredUser`）。
 `folder_id` / 资源 `bizId` 均为雪花 ID，传输用字符串，路由层 `int()` 转换。
 2.55.0 起去除 `[兼容] dynId` 字段：`bizId` 同时承载 dynId 语义（dynamic 时值等于 dynId）。
 """
@@ -307,7 +308,8 @@ async def public_folders(
         StrInt, Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）")
     ],
 ) -> StandardResponse[list[FavoriteFolderResp] | None]:
-    folders = await FavoriteFolderAction(session, user.mid).list_public_folders(int(mid))
+    # 公开读无需登录：以目标用户 mid 构造 action（方法内部按 target_mid 校验可见性）
+    folders = await FavoriteFolderAction(session, int(mid)).list_public_folders(int(mid))
     if folders is None:
         return StandardResponse(code=403, msg="该用户未公开收藏")
     return StandardResponse(data=[FavoriteFolderResp(**f) for f in folders])
@@ -326,7 +328,7 @@ async def public_dynamics(
     folder_id = await _parse_int(folderId, "folderId")
     if folder_id is None:
         return StandardResponse(code=400, msg="folderId 不合法")
-    result = await FavoriteFolderAction(session, user.mid).list_public_items(
+    result = await FavoriteFolderAction(session, int(mid)).list_public_items(
         int(mid), folder_id, page, pageSize
     )
     if result is None:

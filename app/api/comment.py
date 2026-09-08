@@ -34,7 +34,7 @@ from app.models.schemas import (
     CommentSubListResp,
     CommentTopReq,
     CommentTopResp,
-    CommentUserBrief,
+    UserBriefOut,
     )
 from app.services.user.account import CommentAdminUser
 from app.services.comment import CommentService
@@ -356,18 +356,21 @@ async def report_comment(
     )
 
 
-@router.get("/at/search", response_model=StandardResponse[list[CommentUserBrief]], summary="@用户搜索")
+@router.get("/at/search", response_model=StandardResponse[list[UserBriefOut]], summary="@用户搜索")
 async def at_search(
     user: RequiredUser,
     keyword: str = Query(min_length=1, max_length=32, description="昵称前缀"),
     limit: int = Query(default=10, ge=1, le=20, description="最多返回条数"),
-) -> StandardResponse[list[CommentUserBrief]]:
+) -> StandardResponse[list[UserBriefOut]]:
     """@ 面板昵称搜索：直连 pptr Postgres 按昵称 / 注册名前缀匹配（Phase 3.1）。
 
     走前缀匹配 `keyword%`，对索引友好，不会退化成 `%keyword%` 全表扫描。
+
+    搜索结果用于 @ 他人，属他人可见场景：返回 :class:`UserBriefOut`，其私域字段
+    由序列化期按访问者身份自动剥离。
     """
     items = await CommentAdminUser.search_by_uname(keyword, limit=limit)
-    return StandardResponse(data=items)
+    return StandardResponse(data=[b for b in items])
 
 
 @router.post("/top", response_model=StandardResponse[CommentTopResp], summary="置顶/取消置顶")

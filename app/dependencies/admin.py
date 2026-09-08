@@ -12,6 +12,7 @@ from fastapi import Depends, HTTPException, status
 from sqlmodel import select
 
 from app.core.database import SessionDep
+from app.core.viewer_context import bind_viewer
 from app.dependencies.user import get_current_user
 from app.models.db.admin_tbl import MessageAdmin
 
@@ -27,6 +28,9 @@ async def msg_admin_user(
     """
     if auth.is_root:
         auth.permissions = ["*"]
+        # 管理端需看到完整字段（如审核队列 member 的私域字段用于溯源）：
+        # 提升为管理员视角，请求结束由 viewer_context_middleware 统一回滚。
+        bind_viewer(mid=auth.mid, is_admin=True)
         return auth
     admin = (
         await session.exec(select(MessageAdmin).where(MessageAdmin.mid == auth.mid))
@@ -36,6 +40,8 @@ async def msg_admin_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限"
         )
     auth.permissions = admin.permissions or []
+    # 同上：细粒度管理员同样按管理员视角序列化（权限来自 msg_admin 表，中间件无从判定）
+    bind_viewer(mid=auth.mid, is_admin=True)
     return auth
 
 

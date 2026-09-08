@@ -51,10 +51,11 @@ from app.core.config import settings
 from app.core.sharding import generate_msgkey, parse_timestamp_ms
 from app.models.db import DmContentDeadLetter, DmMessageIndex, DmSession
 from app.models.enums import (
-    DmAuditStateEnum,
+    ResourceAuditStatusEnum,
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
+    DmSessionTypeEnum,
 )
 from app.models.schemas import (
     DmContentPayload,
@@ -69,7 +70,7 @@ import app.services.message.infrastructure.publisher as publisher
 from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm_content import DmContentService
 from app.services.user.follow import FollowService
-from app.models.schemas import CommentUserBrief
+from app.models.schemas.user_brief import UserBriefOut
 from app.services.user.account import PptrUser
 from app.services.message.insite.notify import NotifyService
 from app.services.message.insite.setting import SettingService
@@ -146,12 +147,15 @@ async def _get_session_row(
 
 
 def _to_session_item(
-    row: DmSession, user_cache: dict[int, CommentUserBrief]
+    row: DmSession, user_cache: dict[int, UserBriefOut]
 ) -> DmSessionItem:
     """把会话 ORM 行拼成对外展示的 `DmSessionItem`。
 
-    `user_cache` 是 `talker_mid -> CommentUserBrief`，由调用方批量拉取后传入，
+    `user_cache` 是 `talker_mid -> UserBriefOut`，由调用方批量拉取后传入，
     优先用实时用户卡片，缺漏时回落到会话快照里存储的 name/avatar。
+
+    会话对端对当前用户而言是「他人」，其私域字段（邮箱 / 经验 / 大会员到期 /
+    角色）由 ``VisibilityMixin`` 在序列化期自动剥离，装配时无需投影。
     """
     uc = user_cache.get(row.talker_mid)
     return DmSessionItem(
@@ -301,11 +305,15 @@ class DmSessionObject:
         # ---- 0. 先审后发开关 ----
         is_auditing = settings.dm_pre_audit
         audit_state = (
-            DmAuditStateEnum.AUDITING if is_auditing else DmAuditStateEnum.NORMAL
+            ResourceAuditStatusEnum.AUDITING if is_auditing else ResourceAuditStatusEnum.NORMAL
         )
 
-        # ---- 拦截：接收方已拉黑发送方 → 直接拒绝发送 ----
-        if await FollowService.is_blocked_by(self.session, sender_mid, receiver_mid):
+        # ---- 拦截：任一向黑名单关系 → 直接拒绝发送 ----
+        # 单方面拉黑同样禁止互动：我拉黑了对方，也不能再给对方发私信。
+        rel = await FollowService.get_relation(self.session, sender_mid, receiver_mid)
+        if rel.i_blocked:
+            raise ValueError("你已拉黑对方，无法发送私信")
+        if rel.blocked_by:
             raise ValueError("对方已拉黑你，无法发送私信")
 
         # ---- 发送限制（2.57.0，命中一律不落库）----
@@ -313,6 +321,9 @@ class DmSessionObject:
         await self._check_stranger_gate(sender_mid, receiver_mid)
 
         # ---- 1. 陌生人过滤 ----
+        # filtered=True 意味着该消息被接收方的「陌生人私信拦截」开关拦截：不会进入
+        # 主会话列表（session_type=SINGLE），而是落进 session_type=STRANGER 分类，
+        # 前端在最近消息顶部以聚合条目展示，用户点开才能看到具体会话。
         is_stranger = await self._is_stranger(receiver_mid, sender_mid)
         filtered = False
         if is_stranger and not await SettingService.accept_stranger_dm(
@@ -320,7 +331,7 @@ class DmSessionObject:
         ):
             filtered = True
             logger.debug(
-                f"用户 {receiver_mid} 关闭陌生人私信，来自 {sender_mid} 的消息被过滤"
+                f"用户 {receiver_mid} 关闭陌生人私信，来自 {sender_mid} 的消息进入 STRANGER 分类"
             )
 
         # ---- 2 + 3. 写扩散落库（索引行 + 会话行）----
@@ -401,7 +412,7 @@ class DmSessionObject:
         msg_ts: int,
         preview: str,
         is_auditing: bool,
-        audit_state: DmAuditStateEnum,
+        audit_state: ResourceAuditStatusEnum,
         is_stranger: bool,
         filtered: bool,
     ) -> None:
@@ -415,7 +426,10 @@ class DmSessionObject:
         receiver_mid = self.talker_mid
 
         # ---- 2. 写扩散：索引行 ----
-        owners: list[int] = [sender_mid] if filtered else [sender_mid, receiver_mid]
+        # 收发双方都落索引行：filter 命中时，接收方的索引行也写入，使其能进入
+        # STRANGER 分类的会话与聊天流（聊天接口按 owner_mid 查索引，与
+        # session_type 无关，索引行存在即可读到正文）。
+        owners: list[int] = [sender_mid, receiver_mid]
         for owner in owners:
             self.session.add(
                 DmMessageIndex(
@@ -438,6 +452,11 @@ class DmSessionObject:
         # 并发双向发送（A→B 与 B→A）若都以发送方视角先行，会以相反顺序
         # 获取 (A,B) / (B,A) 两行的锁，形成写扩散死锁（MySQL 1213）。
         # 按固定顺序取锁可消除该模式的死锁；各视角行的参数语义保持不变。
+        # 接收方会话的 session_type：
+        #   - 拦截命中（filtered=True）→ STRANGER，落陌生人分类，不进主列表
+        #   - 未拦截                       → SINGLE，与既有行为一致
+        # session_type 在 upsert 的 on_duplicate_key_update 里同步覆盖，
+        # 避免「原会话为 SINGLE 来了一条被拦截的消息」时分类不更新。
         session_rows: list[tuple[int, Any, dict]] = [
             (
                 sender_mid,
@@ -451,31 +470,31 @@ class DmSessionObject:
                     "talker_name": req.receiver_name,
                     "talker_avatar": req.receiver_avatar,
                     "relation": DmRelationEnum.NORMAL,
+                    "session_type": DmSessionTypeEnum.SINGLE,
                 },
-            )
+            ),
+            (
+                receiver_mid,
+                self._upsert_peer_row,
+                {
+                    "msgkey": msgkey,
+                    "preview": "[私信审核中]" if is_auditing else preview,
+                    "msg_ts": msg_ts,
+                    "sender_uid": sender_mid,
+                    # 审核中：先不发未读红点，待管理端通过后再在 set_state 里补；
+                    # 陌生人分类同理（即便被拦截，处于审核态也不计未读）。
+                    "incr_unread": not is_auditing,
+                    "talker_name": sender_name,
+                    "talker_avatar": None,
+                    "relation": DmRelationEnum.STRANGER,
+                    "session_type": (
+                        DmSessionTypeEnum.STRANGER
+                        if filtered
+                        else DmSessionTypeEnum.SINGLE
+                    ),
+                },
+            ),
         ]
-        if not filtered:
-            session_rows.append(
-                (
-                    receiver_mid,
-                    self._upsert_peer_row,
-                    {
-                        "msgkey": msgkey,
-                        "preview": "[私信审核中]" if is_auditing else preview,
-                        "msg_ts": msg_ts,
-                        "sender_uid": sender_mid,
-                        # 审核中：先不发未读红点，待管理端通过后再在 set_state 里补
-                        "incr_unread": not is_auditing,
-                        "talker_name": sender_name,
-                        "talker_avatar": None,
-                        "relation": (
-                            DmRelationEnum.STRANGER
-                            if is_stranger
-                            else DmRelationEnum.NORMAL
-                        ),
-                    },
-                )
-            )
         session_rows.sort(key=lambda r: r[0])  # owner_mid 小者先行，统一锁顺序
         for _owner_mid, upsert_fn, params in session_rows:
             await upsert_fn(**params)
@@ -508,32 +527,52 @@ class DmSessionObject:
         self,
         cursor: int | None = None,
         page_size: int | None = None,
+        direction: str = "back",
     ) -> DmMessageListResp:
-        """拉取本会话聊天记录（按 msgkey 游标倒序翻页）。
+        """拉取本会话聊天记录（按 msgkey 游标翻页，支持双向）。
 
-        读取分两步：先从主库拿索引（轻量、走联合索引），
+        - ``back``（默认，查旧）：``msgkey < cursor`` 倒序，cursor 回填本页**最小**
+          msgkey，继续往更旧翻；
+        - ``forward``（查新，增量）：``msgkey > cursor`` **升序**，cursor 回填本页
+          **最大** msgkey，前端轮询带「已见最大 msgkey」即可只拉增量新消息，
+          不必每次重拉最新一页。未传 cursor 时与 back 等价（返回最新一页）。
+
+        读取分两步：先从主库拿索引（轻量、走联合索引 idx_dm_index_chat），
         再按 msgkey 批量回捞分片里的正文。正文缺失时用摘要兜底。
         """
         owner_mid = self.owner_mid
         talker_mid = self.talker_mid
         page_size = page_size or settings.dm_default_page_size
+        # forward 必须携带 cursor（已见最大 msgkey）才有增量语义；
+        # 未带 cursor 时退化为 back（返回最新一页），避免返回最旧一页。
+        forward = direction == "forward" and cursor is not None
         conditions = [
             DmMessageIndex.owner_mid == owner_mid,
             DmMessageIndex.talker_mid == talker_mid,
             DmMessageIndex.msg_status != DmMsgStatusEnum.DELETED,
             # 先审后发：审核中的私信对「非发送者」不可见，发送者本人始终可见
             or_(
-                DmMessageIndex.audit_state != DmAuditStateEnum.AUDITING,
+                DmMessageIndex.auditStatus != ResourceAuditStatusEnum.AUDITING,
                 DmMessageIndex.sender_uid == owner_mid,
             ),
         ]
         if cursor:
-            conditions.append(DmMessageIndex.msgkey < cursor)
+            # back: 只取比 cursor 旧的；forward: 只取比 cursor（已见最大）新的
+            conditions.append(
+                col(DmMessageIndex.msgkey) > cursor
+                if forward
+                else col(DmMessageIndex.msgkey) < cursor
+            )
 
         stmt = (
             select(DmMessageIndex)
             .where(*conditions)
-            .order_by(col(DmMessageIndex.msgkey).desc())  # type: ignore[union-attr]
+            # back 倒序（最新在前）；forward 升序（增量新消息按时间正序，前端可直接追加）
+            .order_by(
+                col(DmMessageIndex.msgkey).asc()
+                if forward
+                else col(DmMessageIndex.msgkey).desc()  # type: ignore[union-attr]
+            )
             .limit(page_size + 1)
         )
         rows = list((await self.session.exec(stmt)).all())
@@ -550,10 +589,10 @@ class DmSessionObject:
         for r in rows:
             if r.msg_status is DmMsgStatusEnum.RECALLED:
                 content, ready = None, True
-            elif r.audit_state in (DmAuditStateEnum.REJECTED, DmAuditStateEnum.HIDDEN):
+            elif r.auditStatus in (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN):
                 content = (
                     "[该消息已被管理员下架]"
-                    if r.audit_state is DmAuditStateEnum.HIDDEN
+                    if r.auditStatus is ResourceAuditStatusEnum.HIDDEN
                     else "[该消息已被管理员驳回]"
                 )
                 ready = True
@@ -572,7 +611,7 @@ class DmSessionObject:
                     msg_ts=r.msg_ts,
                     content_ready=ready,
                     created_at=r.created_at,
-                    audit_state=r.audit_state,
+                    audit_state=r.auditStatus,
                     recalled_at=r.recalled_at,
                     recalled_by=r.recalled_by,
                 )
@@ -872,6 +911,7 @@ class DmSessionObject:
         talker_name: str | None,
         talker_avatar: str | None,
         relation: DmRelationEnum,
+        session_type: DmSessionTypeEnum,
     ) -> None:
         """更新（或创建）self.owner_mid 视角的会话行（主动发起方视角）。"""
         await self._upsert_row(
@@ -885,6 +925,7 @@ class DmSessionObject:
             talker_name=talker_name,
             talker_avatar=talker_avatar,
             relation=relation,
+            session_type=session_type,
         )
 
     async def _upsert_peer_row(
@@ -898,6 +939,7 @@ class DmSessionObject:
         talker_name: str | None,
         talker_avatar: str | None,
         relation: DmRelationEnum,
+        session_type: DmSessionTypeEnum,
     ) -> None:
         """更新（或创建）self.talker_mid 视角的会话行（接收方视角）。"""
         await self._upsert_row(
@@ -911,6 +953,7 @@ class DmSessionObject:
             talker_name=talker_name,
             talker_avatar=talker_avatar,
             relation=relation,
+            session_type=session_type,
         )
 
     async def _upsert_row(
@@ -926,6 +969,7 @@ class DmSessionObject:
         talker_name: str | None,
         talker_avatar: str | None,
         relation: DmRelationEnum,
+        session_type: DmSessionTypeEnum,
     ) -> None:
         """原子 upsert（INSERT ... ON DUPLICATE KEY UPDATE）某一方视角的会话行。
 
@@ -941,12 +985,18 @@ class DmSessionObject:
         那样在**原始实例**上引用 ``inserted``，SQLAlchemy 2.0.51 在 MySQL 8.0.20+
         下无法把 ``inserted.x`` 替换为行别名 ``new.x``，生成 ``AS new ... inserted.x``
         的非法 SQL，MySQL 9.x 报 `Unknown column 'inserted.updated_at'`）。
+
+        `session_type` 在 INSERT 与 UPDATE 两侧都按本条消息的分类写入；
+        UPDATE 不做有向迁移——一条被拦截的消息会让 SINGLE 旧会话迁到 STRANGER，
+        而用户回复后下一条又会把 STRANGER 迁回 SINGLE（消息列表的
+        分类应当反映「最新一条消息的分类」）。
         """
         now = datetime.now()
         ins = mysql_insert(DmSession.__table__).values(
             owner_mid=owner_mid,
             talker_mid=talker_mid,
             session_key=make_session_key(owner_mid, talker_mid),
+            session_type=session_type.value,
             talker_name=talker_name,
             talker_avatar=talker_avatar,
             last_msgkey=msgkey,
@@ -981,6 +1031,8 @@ class DmSessionObject:
                 ),
                 else_=DmSession.relation,
             ),
+            # session_type 以本条消息的分类为准：拦截/未拦截切换时即时反映
+            session_type=ins.inserted.session_type,
             is_deleted=False,
             updated_at=ins.inserted.updated_at,
         )
@@ -1003,13 +1055,21 @@ class DmInbox:
     async def list_sessions(
         self,
         relation: DmRelationEnum | None = None,
+        session_type: DmSessionTypeEnum | None = None,
         page_num: int = 1,
         page_size: int | None = None,
     ) -> DmSessionListResp:
         """会话列表。
 
-        `relation` 用于把「陌生人消息」折叠成独立分组：
-        传 NORMAL 得到主列表，传 STRANGER 得到陌生人列表，不传则全部。
+        - `relation`：可选过滤。`NORMAL` 取主列表，`STRANGER` 取陌生人；
+          不传则在 `session_type` 内再按 relation 过滤。
+        - `session_type`：会话类型过滤。`SINGLE` 取主 DM 列表；`STRANGER`
+          取被「陌生人私信拦截」开关拦下的会话集合；不传则按 relation 过滤。
+
+        响应里同时返回两类聚合字段，与本页 `session_type` 过滤无关：
+          - `unread_total`：主列表（SINGLE）未读之和，用于顶部私信红点；
+          - `stranger_unread` / `stranger_total`：STRANGER 分类聚合，供
+            「陌生人私信」聚合条目展示红点与 [N 条] 副标题。
         """
         page_size = page_size or settings.dm_default_page_size
         conditions = [
@@ -1018,6 +1078,8 @@ class DmInbox:
         ]
         if relation is not None:
             conditions.append(DmSession.relation == relation)
+        if session_type is not None:
+            conditions.append(DmSession.session_type == session_type)
 
         total = int(
             (
@@ -1045,29 +1107,52 @@ class DmInbox:
         else:
             user_cache = {}
 
-        # 未读汇总：主列表红点与陌生人红点分开展示
-        unread_stmt = (
-            select(DmSession.relation, func.sum(DmSession.unread_count))
-            .where(DmSession.owner_mid == self.owner_mid, DmSession.is_deleted == False)
-            .group_by(DmSession.relation)
-        )
-        unread_map = {
-            str(rel): int(cnt or 0)
-            for rel, cnt in (await self.session.exec(unread_stmt)).all()
+        # 未读 & 总会话数汇总：主列表（SINGLE）与陌生人分类（STRANGER）分开
+        # 统计，供前端聚合条 + 顶部红点用。这里不再按 `relation` 聚合——
+        # 拦截后所有 STRANGER 分类行的 relation 都是 STRANGER，但用
+        # session_type 区分能避免与「被接收方接受但尚未回过消息的
+        # 陌生人 SINGLE 会话」混淆。
+        agg_stmt = select(
+            DmSession.session_type,
+            func.coalesce(func.sum(DmSession.unread_count), 0),
+            func.count(),
+        ).where(
+            DmSession.owner_mid == self.owner_mid,
+            DmSession.is_deleted == False,
+        ).group_by(DmSession.session_type)
+        agg_map: dict[str, tuple[int, int]] = {
+            str(st): (int(ucnt or 0), int(cnt or 0))
+            for st, ucnt, cnt in (await self.session.exec(agg_stmt)).all()
         }
+        single_unread, _ = agg_map.get(str(DmSessionTypeEnum.SINGLE), (0, 0))
+        stranger_unread, stranger_total = agg_map.get(
+            str(DmSessionTypeEnum.STRANGER), (0, 0)
+        )
+        # 拦截开关：recv_stranger_dm=false 表示开启拦截（不接收陌生人私信）。
+        # 前端据此决定是否展示「陌生人私信」聚合条——没开启或没有 STRANGER 会话时不展示。
+        intercept_enabled = not await SettingService.accept_stranger_dm(
+            self.session, self.owner_mid
+        )
 
         return DmSessionListResp(
             items=[_to_session_item(r, user_cache) for r in rows],
             total=total,
-            unread_total=sum(unread_map.values()),
-            stranger_unread=unread_map.get(str(DmRelationEnum.STRANGER), 0),
+            unread_total=single_unread,
+            stranger_unread=stranger_unread,
+            stranger_total=stranger_total,
+            stranger_dm_intercept_enabled=intercept_enabled,
         )
 
     async def count_unread(self) -> int:
-        """本用户私信未读总数。"""
+        """本用户主列表私信未读总数。
+
+        仅统计 `session_type=SINGLE` 的会话：被「陌生人私信拦截」的
+        消息归入 STRANGER 分类、不进主列表，顶部 DM 红点不应包含它们。
+        """
         stmt = select(func.sum(DmSession.unread_count)).where(
             DmSession.owner_mid == self.owner_mid,
             DmSession.is_deleted == False,
+            DmSession.session_type == DmSessionTypeEnum.SINGLE,
         )
         return int((await self.session.exec(stmt)).one() or 0)
 

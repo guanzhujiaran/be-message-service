@@ -10,9 +10,13 @@ from loguru import logger
 from sqlmodel import col, select
 
 from app.models.db import TResourceFeed, TResourceReport
+from app.models.enums import ResourceAuditStatusEnum
 from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.interaction import InteractionResource
-from app.services.interaction_actions.base import InteractionRelationScopeEnum
+from app.services.interaction_actions.base import (
+    InteractionActionError,
+    InteractionRelationScopeEnum,
+)
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
 from app.services.interaction_actions.common import ops
 
@@ -174,7 +178,7 @@ class GenericResourceBiz(BaseBiz):
             )
         ).one_or_none()
         if feed is not None:
-            feed.auditStatus = "hidden"
+            feed.auditStatus = ResourceAuditStatusEnum.HIDDEN
         await self.session.commit()
 
         from app.services.infrastructure.rpa_rpc import rpa_rpc_client
@@ -190,3 +194,45 @@ class GenericResourceBiz(BaseBiz):
             logger.warning(
                 f"举报处置 RPC 失败（资源层降级）: {self.biz_type!r}/{self.biz_id}"
             )
+
+    # ==================== 审核（RPA 系列经 RPC 对接发布审批单）====================
+    # 通用基类被 lottery 与 rpa_* 共享：仅 RPA 系列(rpa_action/rpa_workflow/rpa_plugin)
+    # 经 RPA RPC 审核「发布到社区审批单」；lottery 等其它类型不支持该审核操作。
+
+    async def _rpa_review(self, decision: str, note: str | None) -> None:
+        from bili_common.models import InteractionActionTypeEnum
+        from app.services.infrastructure.rpa_rpc import rpa_rpc_client
+
+        if self.biz_type not in (
+            InteractionBizTypeEnum.RPA_ACTION,
+            InteractionBizTypeEnum.RPA_WORKFLOW,
+            InteractionBizTypeEnum.RPA_PLUGIN,
+        ):
+            raise self._unsupported(
+                InteractionActionTypeEnum.AUDIT_APPROVE
+                if decision == "approved"
+                else InteractionActionTypeEnum.AUDIT_REJECT
+            )
+        result = await rpa_rpc_client.review_resource(
+            biz_type=self.biz_type.to_text(),
+            biz_id=self.biz_id,
+            decision=decision,
+            operator_mid=int(self.actor_mid or 0),
+            note=note or "",
+        )
+        if result is None:
+            raise InteractionActionError("审核调用失败，请稍后重试")
+        if not result.success:
+            raise InteractionActionError(result.message or "审核失败")
+
+    @biz_action(acl=[])
+    async def audit_approve(self, remark: str | None = None, **kwargs):
+        """审核通过：经 RPA RPC 把该资源「发布到社区审批单」置 approved。"""
+        await self._rpa_review("approved", remark)
+        return {"success": True}
+
+    @biz_action(acl=[])
+    async def audit_reject(self, reject_reason: str | None = None, remark: str | None = None, **kwargs):
+        """审核驳回：经 RPA RPC 把该资源「发布到社区审批单」置 rejected。"""
+        await self._rpa_review("rejected", remark or reject_reason)
+        return {"success": True}

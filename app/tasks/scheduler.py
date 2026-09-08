@@ -41,7 +41,7 @@ from app.models.db import (
     UserFollow,
 )
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import FollowStatusEnum
+from app.models.enums import FollowStatusEnum, ResourceAuditStatusEnum
 from app.models.pptr_db import PptrUserLevel
 from app.services.comment import VISIBLE_STATES
 from app.services.comment.comment_action import compute_hot_score
@@ -109,7 +109,7 @@ async def comment_hot_score_job() -> None:
             rows = (
                 await session.exec(
                     select(CommentIndex).where(
-                        CommentIndex.state.in_(VISIBLE_STATES)
+                        CommentIndex.auditStatus.in_(VISIBLE_STATES)
                     )
                 )
             ).all()
@@ -177,7 +177,9 @@ async def author_quality_job() -> None:
                         func.sum(
                             case(
                                 (
-                                    TMoment.auditStatus.in_(["rejected", "hidden"]),
+                                    TMoment.auditStatus.in_(
+                                        (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN)
+                                    ),
                                     1,
                                 ),
                                 else_=0,

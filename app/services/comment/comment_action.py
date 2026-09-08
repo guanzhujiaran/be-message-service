@@ -22,6 +22,7 @@ from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import CommentActionEnum
 from app.models.schemas import CommentActionResp, EventReportReq
 from app.services.comment import VISIBLE_STATES
+from app.services.user.follow import FollowService
 
 
 def compute_hot_score(
@@ -63,8 +64,17 @@ class CommentActionService:
         ).one_or_none()
         if row is None:
             raise CommentNotInteractiveException("评论不存在或已删除")
-        if row.state not in VISIBLE_STATES:
-            raise CommentNotInteractiveException.for_state(row.state)
+        if row.auditStatus not in VISIBLE_STATES:
+            raise CommentNotInteractiveException.for_state(row.auditStatus)
+
+        # ---- 拉黑拦截：评论作者与我存在任一向黑名单关系 → 禁止点赞 / 踩 ----
+        # 单方面拉黑同样禁止互动：我拉黑了对方，也不能再给对方评论点赞。
+        if row.mid != mid:
+            rel = await FollowService.get_relation(session, mid, row.mid)
+            if rel.i_blocked:
+                raise CommentNotInteractiveException("你已拉黑对方，无法点赞")
+            if rel.blocked_by:
+                raise CommentNotInteractiveException("对方已拉黑你，无法点赞")
 
         prev = (
             await session.exec(

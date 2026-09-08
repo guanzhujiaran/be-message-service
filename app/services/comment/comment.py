@@ -49,7 +49,7 @@ from bili_common.models import (
 from app.services.common.daily_limit import count_created_today
 from app.models.enums import (
     CommentAttrBit,
-    CommentStateEnum,
+    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
     MomentReportReasonEnum,
     NotifyLevelEnum,
@@ -95,7 +95,7 @@ def normalize_at_mentions(message: str, at_name_to_mid: dict[str, int] | None) -
     return message
 
 # 列表中「对所有人可见」的状态集合
-VISIBLE_STATES: tuple[CommentStateEnum, ...] = (CommentStateEnum.NORMAL,)
+VISIBLE_STATES: tuple[ResourceAuditStatusEnum, ...] = (ResourceAuditStatusEnum.NORMAL,)
 
 # ==================== 防刷（Phase 2.6）====================
 # 同用户、相同正文，10s 内最多 3 次。进程内近似实现（单实例够用）；
@@ -325,27 +325,42 @@ class CommentService:
             session, subject, root, parent
         )
 
-        # ---- 拉黑拦截：被拉黑者不能在对方评论区发言、也不能直接回复对方 ----
-        # 评论区作者（up_mid）拉黑了我 → 不能在该评论区发任何评论
+        # ---- 拉黑拦截：任一向黑名单关系都不能在对方评论区发言 / 回复 ----
+        # 单方面拉黑同样禁止互动：我拉黑了对方，也不能去对方评论区发言。
+        # 评论区作者（up_mid）与我存在黑名单关系 → 不能在该评论区发任何评论
         up_mid = subject.up_mid or 0
         if up_mid > 0 and up_mid != mid:
-            if await FollowService.is_blocked_by(session, mid, up_mid):
+            rel = await FollowService.get_relation(session, mid, up_mid)
+            if rel.i_blocked:
+                raise ValueError("你已拉黑对方，无法评论")
+            if rel.blocked_by:
                 raise ValueError("对方已拉黑你，无法评论")
-        # 楼中楼场景：reply_to_mid（回复对象）拉黑了我 → 不能直接回复对方
+        # 楼中楼场景：reply_to_mid（回复对象）与我存在黑名单关系 → 不能直接回复对方
         if reply_to_mid > 0 and reply_to_mid != up_mid and reply_to_mid != mid:
-            if await FollowService.is_blocked_by(session, mid, reply_to_mid):
+            rel = await FollowService.get_relation(session, mid, reply_to_mid)
+            if rel.i_blocked:
+                raise ValueError("你已拉黑对方，无法回复")
+            if rel.blocked_by:
                 raise ValueError("对方已拉黑你，无法回复")
 
         rpid = await generate_rpid()
         now = datetime.now()
 
-        # ---- 内容审核（Phase 5.1，强依赖）：命中高危直接 rejected，疑似置 auditing ----
-        audit_state, _hit_words = audit_text(message)
+        # ---- 内容审核（统一引擎）：REJECT 直接 rejected / AUDIT 置 auditing / PASS 展示 ----
+        from app.services.audit import audit_text as audit_engine_text
+
+        audit_result = audit_engine_text(message)
+        if audit_result.rejected:
+            audit_state = ResourceAuditStatusEnum.REJECTED
+        elif audit_result.need_manual:
+            audit_state = ResourceAuditStatusEnum.AUDITING
+        else:
+            audit_state = ResourceAuditStatusEnum.NORMAL
         # 全局「先审后发」开关：开启后，原本可直接展示的评论也先进入审核态，
         # 对外不可见，需管理端审核通过（置 NORMAL）后才展示。命中高危词(REJECTED)不变。
-        if settings.comment_pre_audit and audit_state is CommentStateEnum.NORMAL:
-            audit_state = CommentStateEnum.AUDITING
-        need_audit = audit_state != CommentStateEnum.NORMAL
+        if settings.comment_pre_audit and audit_state is ResourceAuditStatusEnum.NORMAL:
+            audit_state = ResourceAuditStatusEnum.AUDITING
+        need_audit = audit_state != ResourceAuditStatusEnum.NORMAL
 
         # ---- 计数 + 楼层发号：数据库侧原子自增后回读楼层号 ----
         # 仅「对外可见（NORMAL）」的评论才计入评论区冗余计数；
@@ -353,7 +368,7 @@ class CommentService:
         subject_values: dict = {
             "floor_seq": col(CommentSubject.floor_seq) + 1,
         }
-        if audit_state is CommentStateEnum.NORMAL:
+        if audit_state is ResourceAuditStatusEnum.NORMAL:
             subject_values["all_count"] = col(CommentSubject.all_count) + 1
             if root == 0:
                 subject_values["root_count"] = col(CommentSubject.root_count) + 1
@@ -386,7 +401,7 @@ class CommentService:
             dialog=dialog,
             reply_to_mid=reply_to_mid,
             floor=subject.floor_seq,
-            state=audit_state,
+            auditStatus=audit_state,
             hot_score=0.0,
             created_at=now,
             updated_at=now,
@@ -442,16 +457,17 @@ class CommentService:
         # 审核过程性状态不通知（D6）：进入审核态 / 审核通过不打扰作者，
         # 仅命中高危词被自动驳回时通知作者原因。
         try:
-            if audit_state == CommentStateEnum.REJECTED:
+            if audit_state == ResourceAuditStatusEnum.REJECTED:
+                reject_reason = audit_result.reason or "评论内容包含违规或敏感词"
                 await CommentService.notify_audit_rejected(
                     mid, rpid, oid, req.type,
-                    reason="评论内容包含违规或敏感词",
+                    reason=reject_reason,
                     excerpt=message,
                 )
             # 互动通知仅对 NORMAL 可见评论投递（D6）：auditing（审核中，暂不可见）
             # 与 rejected / hidden（未通过 / 下架）的评论一律不投递回复 / @ 通知，
             # 避免接收方点开看到「评论不可见」；审核通过后由管理端补发已跳过的通知。
-            if audit_state == CommentStateEnum.NORMAL:
+            if audit_state == ResourceAuditStatusEnum.NORMAL:
                 if root != 0 and reply_to_mid and reply_to_mid != mid:
                     await CommentService._notify_reply(
                         mid, oid, rpid, root, reply_to_mid, message, uname, req.type
@@ -565,8 +581,8 @@ class CommentService:
         ).one_or_none()
         if root_row is None:
             raise CommentNotInteractiveException("根评论不存在或已删除")
-        if root_row.state not in VISIBLE_STATES:
-            raise CommentNotInteractiveException.for_state(root_row.state)
+        if root_row.auditStatus not in VISIBLE_STATES:
+            raise CommentNotInteractiveException.for_state(root_row.auditStatus)
         if root_row.oid != subject.oid or root_row.type != subject.type:
             raise ValueError("根评论不属于该评论区")
         if root_row.root != 0:
@@ -583,8 +599,8 @@ class CommentService:
         ).one_or_none()
         if parent_row is None:
             raise CommentNotInteractiveException("父评论不存在或已删除")
-        if parent_row.state not in VISIBLE_STATES:
-            raise CommentNotInteractiveException.for_state(parent_row.state)
+        if parent_row.auditStatus not in VISIBLE_STATES:
+            raise CommentNotInteractiveException.for_state(parent_row.auditStatus)
         if parent_row.root != root:
             raise ValueError("父评论与 root 不匹配")
 
@@ -623,7 +639,7 @@ class CommentService:
         ).one_or_none()
         if row is None:
             return 0, "评论不存在"
-        if row.state is CommentStateEnum.DELETED:
+        if row.auditStatus is ResourceAuditStatusEnum.DELETED:
             return 0, "评论已删除"
 
         subject = await CommentService.get_subject(session, row.oid, row.type)
@@ -634,8 +650,8 @@ class CommentService:
             return 0, "无权删除该评论"
 
         # 先记下原始状态：只有「曾计入冗余计数」的可见评论才回减计数
-        was_visible = row.state is CommentStateEnum.NORMAL
-        row.state = CommentStateEnum.DELETED
+        was_visible = row.auditStatus is ResourceAuditStatusEnum.NORMAL
+        row.auditStatus = ResourceAuditStatusEnum.DELETED
         # 置顶评论被删时同步清掉置顶态，避免列表顶部出现空洞
         row.attr = row.attr & ~CommentAttrBit.TOP.value
         session.add(row)
@@ -705,7 +721,7 @@ class CommentService:
                 select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
             )
         ).one_or_none()
-        if row is None or row.state not in VISIBLE_STATES:
+        if row is None or row.auditStatus not in VISIBLE_STATES:
             return False
         if row.root != 0:
             # 只有一级评论可置顶

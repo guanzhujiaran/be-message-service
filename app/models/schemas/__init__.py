@@ -152,6 +152,13 @@ from app.models.schemas.report import (
     ReportListResp,
     ReportReviewReq,
 )
+from app.models.schemas.user_brief import (
+    UserBriefOut,
+)
+from app.models.schemas.visibility import (
+    Private,
+    VisibilityMixin,
+)
 from app.models.schemas.user_records import (
     UserActLogItem,
     UserActLogListResp,
@@ -302,6 +309,11 @@ __all__ = [
     "ReportReviewReq",
     "UnbanReq",
     "UserActLogItem",
+    # 用户展示简档：单一输出模型（§5.12）
+    "UserBriefOut",
+    # 字段级可见性：标记 + 序列化期裁剪 mixin（§5.12）
+    "Private",
+    "VisibilityMixin",
     "UserActLogListResp",
     "UserActivityResp",
     "UserExpRecordItem",

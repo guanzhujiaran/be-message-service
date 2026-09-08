@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.dependencies import MsgAdminUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
-from app.models.schemas import CommentUserBrief
+from app.models.schemas import UserBriefOut
 from app.services.user.account import PptrUser
 
 router = APIRouter(prefix="/api/v1/message/admin/user", tags=["message-admin-user"])
@@ -39,17 +39,21 @@ def parse_user_search_params(
 
 @router.get(
     "/batch",
-    response_model=StandardResponse[list[CommentUserBrief]],
-    summary="批量查询用户信息（按 mid）",
+    response_model=StandardResponse[list[UserBriefOut]],
+    summary="批量查询用户信息（按 mid，管理端：含私有字段）",
 )
 async def batch_user_info(
     user: MsgAdminUser,
     mids: Annotated[list[StrInt], Query(description="要查询的用户 mid 列表，可重复（StrInt 兼容前端 str 传参）")] = [],
-) -> StandardResponse[list[CommentUserBrief]]:
+) -> StandardResponse[list[UserBriefOut]]:
     """按 mid 批量回查用户展示信息（昵称 / 头像 / 等级 / 大会员 / 性别 / 签名）。
 
     用于审核列表里把作者 `mid` 渲染成具体用户名，并支持悬浮查看详情。
     数据从 pptr Postgres 只读取回；mid 不存在（或已软删）不会报错，仅不出现在返回中。
+
+    **管理端接口**（`MsgAdminUser`）：访问者被提升为管理员视角，:class:`UserBriefOut`
+    会带出脱敏邮箱 / 经验 / 大会员到期 / 角色等私域字段；同一模型在用户侧接口
+    下这些字段由序列化期自动剥离。
     """
     data = await PptrUser.get_many(mids)
     return StandardResponse(data=list(data.values()))

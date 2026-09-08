@@ -18,6 +18,8 @@ from bili_common.rpc.rpa import (
     HideResourceParams,
     HideResourceResult,
     RpaRpcMethodName,
+    ReviewResourceParams,
+    ReviewResourceResult,
 )
 from loguru import logger
 
@@ -115,6 +117,48 @@ class RpaRpcClient:
                 f"[RpaRpcClient] hide_resource 处置失败: {result.message}"
             )
         return result.success
+
+    async def review_resource(
+        self,
+        *,
+        biz_type: str,
+        biz_id: int,
+        decision: str,
+        operator_mid: int,
+        note: str = "",
+    ) -> ReviewResourceResult | None:
+        """审核 RPA 资源：对其「发布到社区审批单」置通过/驳回（经 RPA RPC，弱依赖）。
+
+        仅改审批单状态，不动资源 is_public。RPC 超时 / 未连接 / 失败返回 None。
+        """
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.REVIEW_RESOURCE)
+        payload = ReviewResourceParams(
+            bizType=biz_type,
+            bizId=biz_id,
+            decision=decision,
+            operatorMid=operator_mid,
+            note=note,
+        ).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 review_resource")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning(f"[RpaRpcClient] review_resource 超时: {biz_type}/{biz_id}")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] review_resource 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] review_resource 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] review_resource 业务失败: {resp.msg}")
+            return None
+        return ReviewResourceResult.model_validate(resp.data)
 
 
 # 全局单例

@@ -25,7 +25,7 @@ from sqlmodel import Field, Index, SQLModel, UniqueConstraint
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
-    DmAuditStateEnum,
+    ResourceAuditStatusEnum,
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
@@ -135,9 +135,9 @@ class DmMessageIndex(TimestampMixin, table=True):
     )
 
     # ---- 管理端审核状态（与评论审核对齐）----
-    audit_state: DmAuditStateEnum = Field(
-        default=DmAuditStateEnum.NORMAL,
-        sa_type=SAEnum(DmAuditStateEnum),
+    auditStatus: ResourceAuditStatusEnum = Field(
+        default=ResourceAuditStatusEnum.NORMAL,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
         index=True,
         description="管理端审核状态：normal/auditing/rejected/hidden",
     )

@@ -55,7 +55,6 @@ from app.models.pptr_user import (
     PptrUserVip,
 )
 from app.models.schemas import (
-    CommentUserBrief,
     SpaceInfoResp,
     SpaceOfficial,
     SpaceVipWrap,
@@ -64,6 +63,7 @@ from app.models.schemas import (
     UserExpRecordItem,
     UserExpRecordListResp,
 )
+from app.models.schemas.user_brief import UserBriefOut
 
 
 # ----------------------------------------------------------------------------
@@ -127,8 +127,13 @@ def _build_brief(
     detail: PptrUserDetail | None,
     vip: PptrUserVip | None,
     level: PptrUserLevel | None,
-) -> CommentUserBrief:
-    """把 pptr 四张表的一行拼成评论卡片用户信息。"""
+) -> UserBriefOut:
+    """把 pptr 四张表的一行拼成**完整**用户简档（含私密字段，仅供本人 / 管理员视角）。
+
+    私域字段（脱敏邮箱 / 经验 / 大会员到期 / 角色）带 ``Private()`` 标记，
+    在序列化期由 ``VisibilityMixin`` 按访问者身份自动剥离，对外展示路径
+    （评论 / 私信 / 黑名单 / @ 面板）无需额外处理。
+    """
     uname = detail.uname if (detail and detail.uname) else info.user_name
     level_value = 0
     if level is not None and level.current_level is not None:
@@ -143,7 +148,7 @@ def _build_brief(
             vip_type = int(vip.vip_type)
         if vip.vip_due_date is not None:
             vip_due_date = int(vip.vip_due_date)
-    return CommentUserBrief(
+    return UserBriefOut(
         mid=int(info.uid),
         uname=uname or None,
         avatar=detail.avatar if detail else None,
@@ -457,8 +462,12 @@ class PptrUser:
         mids: list[int] | set[int],
         *,
         session: AsyncSession | None = None,
-    ) -> dict[int, CommentUserBrief]:
-        """批量取用户展示信息，返回 `mid -> 用户信息` 字典（评论 / 私信列表装配核心）。"""
+    ) -> dict[int, UserBriefOut]:
+        """批量取用户完整简档，返回 `mid -> 用户信息` 字典（评论 / 私信列表装配核心）。
+
+        返回完整简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色等私域字段）。
+        私域字段在序列化期按访问者身份自动剥离，仅本人 / 管理员可见。
+        """
         unique = {int(m) for m in mids if m}
         if not unique:
             return {}
@@ -468,7 +477,7 @@ class PptrUser:
             col(PptrUserInfo.deletedAt).is_(None),
         )
 
-        async def _run(s: AsyncSession) -> dict[int, CommentUserBrief]:
+        async def _run(s: AsyncSession) -> dict[int, UserBriefOut]:
             rows = (await s.exec(stmt)).all()
             return {
                 int(info.uid): _build_brief(info, detail, vip, level)
@@ -487,7 +496,7 @@ class PptrUser:
         limit: int = 10,
         *,
         session: AsyncSession | None = None,
-    ) -> list[CommentUserBrief]:
+    ) -> list[UserBriefOut]:
         """按昵称 / 注册名模糊搜索用户（@ 面板用）。"""
         keyword = (keyword or "").strip()
         if not keyword:
@@ -506,7 +515,7 @@ class PptrUser:
             .limit(limit)
         )
 
-        async def _run(s: AsyncSession) -> list[CommentUserBrief]:
+        async def _run(s: AsyncSession) -> list[UserBriefOut]:
             rows = (await s.exec(stmt)).all()
             return [
                 _build_brief(info, detail, vip, level)
@@ -654,11 +663,11 @@ class PptrUser:
             return None
         return cls(mid=int(mid))
 
-    async def to_brief(self) -> CommentUserBrief:
-        """装配评论 / 私信列表用的用户简卡。"""
+    async def to_brief(self) -> UserBriefOut:
+        """装配评论 / 私信列表用的用户简卡（私域字段由序列化期按访问者裁剪）。"""
         profile = await self.get_profile()
         if profile is None:
-            return CommentUserBrief(mid=self.mid)
+            return UserBriefOut(mid=self.mid)
         info, detail, vip, level = profile
         return _build_brief(info, detail, vip, level)
 

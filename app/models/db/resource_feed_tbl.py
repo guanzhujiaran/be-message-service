@@ -20,7 +20,7 @@ from sqlmodel import Field
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import MomentVisibleScopeEnum
+from app.models.enums import MomentVisibleScopeEnum, ResourceAuditStatusEnum
 
 
 class TResourceFeed(TimestampMixin, table=True):
@@ -53,10 +53,10 @@ class TResourceFeed(TimestampMixin, table=True):
         description="资源作者 UID（可能无作者，如 lottery/rpa_*；2.37.0 起可空）",
     )
     pubTime: datetime | None = Field(default=None, description="实际对外发布时间（审核通过写入），Feed 排序依据")
-    auditStatus: str = Field(
+    auditStatus: ResourceAuditStatusEnum | None = Field(
         default=None,
-        max_length=32,
-        description="资源审核状态字符串（各资源自定；'normal' 表示可公开入 Feed）",
+        sa_type=SAEnum(ResourceAuditStatusEnum),
+        description="资源审核状态（统一枚举：NORMAL 表示可公开入 Feed）",
     )
     # 2.46.0：动态冗余可见范围（与 TMoment.visibleScope 一致，发布/编辑同步），
     # 推荐流候选零 join 直接过滤 PUBLIC；非动态资源缺省 PUBLIC（可公开入 Feed 的合理默认）

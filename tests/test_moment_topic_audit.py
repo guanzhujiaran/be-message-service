@@ -22,7 +22,7 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import TMomentTopic
-from app.models.enums import MomentTopicAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.moment import (
     MomentTopicCreateReq,
     MomentTopicMineResp,
@@ -97,7 +97,7 @@ async def _create_topic(session, mid: int, name: str, **kw) -> TMomentTopic:
         topicId=await generate_topic_id(),
         topicName=name,
         creatorMid=mid,
-        auditStatus=MomentTopicAuditStatusEnum.AUDITING,
+        auditStatus=ResourceAuditStatusEnum.AUDITING,
         pubTime=None,
         **kw,
     )
@@ -119,10 +119,10 @@ async def test_create_topic_default_auditing():
         )
         assert resp.topicId > 0
         # 装配返回 auditStatus 为枚举成员名字符串（大写）
-        assert resp.auditStatus == MomentTopicAuditStatusEnum.AUDITING.name
+        assert resp.auditStatus == ResourceAuditStatusEnum.AUDITING.name
         row = await s.get(TMomentTopic, resp.topicId)
         assert row is not None
-        assert row.auditStatus is MomentTopicAuditStatusEnum.AUDITING
+        assert row.auditStatus is ResourceAuditStatusEnum.AUDITING
         assert row.pubTime is None
         assert row.creatorMid == A_MID
 
@@ -169,7 +169,7 @@ async def test_approve_sets_normal_and_pubtime():
         )
         assert item.topicId == topic.topicId
         row = await s.get(TMomentTopic, topic.topicId)
-        assert row.auditStatus is MomentTopicAuditStatusEnum.NORMAL
+        assert row.auditStatus is ResourceAuditStatusEnum.NORMAL
         assert row.pubTime is not None
 
 
@@ -194,7 +194,7 @@ async def test_reject_sets_rejected_and_reason():
         )
         assert item.topicId == topic.topicId
         row = await s.get(TMomentTopic, topic.topicId)
-        assert row.auditStatus is MomentTopicAuditStatusEnum.REJECTED
+        assert row.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert row.auditRejectReason == "名称不规范"
         assert row.pubTime is None
 
@@ -239,8 +239,8 @@ async def test_mine_returns_only_mine_with_status():
         assert isinstance(resp, MomentTopicMineResp)
         by_name = {it.topicName: it for it in resp.items}
         # 装配返回 auditStatus 为枚举成员名字符串（大写）
-        assert by_name["我的话题A"].auditStatus == MomentTopicAuditStatusEnum.AUDITING.name
-        assert by_name["我的话题B"].auditStatus == MomentTopicAuditStatusEnum.REJECTED.name
+        assert by_name["我的话题A"].auditStatus == ResourceAuditStatusEnum.AUDITING.name
+        assert by_name["我的话题B"].auditStatus == ResourceAuditStatusEnum.REJECTED.name
         assert by_name["我的话题B"].auditRejectReason == "违规"
 
 

@@ -19,7 +19,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import CommentStateEnum, NotifyLevelEnum
+from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas import (
     CommentAuditItem,
     CommentSourceResp,
@@ -49,7 +49,7 @@ class CommentAdminService:
     async def set_state(
         session: AsyncSession,
         rpid: int,
-        state: CommentStateEnum,
+        state: ResourceAuditStatusEnum,
         note: str | None = None,
         operator_mid: int = 0,
     ) -> bool:
@@ -71,8 +71,8 @@ class CommentAdminService:
         ).one_or_none()
         if row is None:
             return False
-        prev_state = row.state
-        row.state = state
+        prev_state = row.auditStatus
+        row.auditStatus = state
         session.add(row)
         await session.commit()
 
@@ -83,7 +83,7 @@ class CommentAdminService:
             # 先同步评论区冗余计数（Feed/详情展示的 stat.commentCount 读的就是 root_count），
             # 再回写动态计数 TInteractionStat.commentCount（2.36.0 起统一）；
             # 即使动态记录缺失，评论系统计数也已正确（评论计数以评论区为准）
-            if state is CommentStateEnum.NORMAL:
+            if state is ResourceAuditStatusEnum.NORMAL:
                 await CommentAdminService._sync_subject_count(
                     session,
                     row.oid,
@@ -92,7 +92,7 @@ class CommentAdminService:
                 )
                 await MomentStatService.ensure_stat_row(session, row.oid)
                 await MomentStatService.incr_stat(session, row.oid, "commentCount", 1)
-            elif prev_state is CommentStateEnum.NORMAL:
+            elif prev_state is ResourceAuditStatusEnum.NORMAL:
                 await CommentAdminService._sync_subject_count(
                     session,
                     row.oid,
@@ -112,7 +112,7 @@ class CommentAdminService:
         #   避免接收方错过"评论已可见"后的回复 / @ 提醒（D6 补偿通道）。
         if prev_state != state:
             try:
-                if state == CommentStateEnum.REJECTED:
+                if state == ResourceAuditStatusEnum.REJECTED:
                     await CommentService.notify_audit_rejected(
                         row.mid,
                         rpid,
@@ -122,7 +122,7 @@ class CommentAdminService:
                         creator_mid=operator_mid,
                         excerpt=await CommentAdminService._load_excerpt(session, rpid),
                     )
-                elif state == CommentStateEnum.HIDDEN:
+                elif state == ResourceAuditStatusEnum.HIDDEN:
                     await CommentAdminService._notify_hidden(
                         session,
                         rpid,
@@ -130,7 +130,7 @@ class CommentAdminService:
                         note=note,
                         operator_mid=operator_mid,
                     )
-                elif state == CommentStateEnum.NORMAL:
+                elif state == ResourceAuditStatusEnum.NORMAL:
                     await CommentAdminService._resend_interact_notify(session, rpid, row)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"评论状态变更通知投递失败（弱依赖）: {e}")
@@ -303,7 +303,7 @@ class CommentAdminService:
     async def bulk_set_state(
         session: AsyncSession,
         rpids: list[int],
-        state: CommentStateEnum,
+        state: ResourceAuditStatusEnum,
         note: str | None = None,
         notes: dict[str, str] | None = None,
         operator_mid: int = 0,
@@ -334,7 +334,7 @@ class CommentAdminService:
     @staticmethod
     async def list_audit_queue(
         session: AsyncSession,
-        states: list[CommentStateEnum] | None = None,
+        states: list[ResourceAuditStatusEnum] | None = None,
         page_num: int = 1,
         page_size: int = 20,
     ) -> tuple[list[CommentAuditItem], int]:
@@ -343,13 +343,13 @@ class CommentAdminService:
         `states` 由接口层根据调用者身份决定（root 可传任意状态，
         普通管理员被强制收敛为 `auditing`），此处不做鉴权。
         """
-        states = states or [CommentStateEnum.AUDITING, CommentStateEnum.REJECTED]
+        states = states or [ResourceAuditStatusEnum.AUDITING, ResourceAuditStatusEnum.REJECTED]
         total = int(
             (
                 await session.exec(
                     select(func.count())
                     .select_from(CommentIndex)
-                    .where(col(CommentIndex.state).in_(states))
+                    .where(col(CommentIndex.auditStatus).in_(states))
                 )
             ).one()
             or 0
@@ -357,7 +357,7 @@ class CommentAdminService:
         rows = (
             await session.exec(
                 select(CommentIndex)
-                .where(col(CommentIndex.state).in_(states))
+                .where(col(CommentIndex.auditStatus).in_(states))
                 .order_by(col(CommentIndex.rpid).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -390,7 +390,7 @@ class CommentAdminService:
                 type=r.type,
                 mid=r.mid,
                 message=contents[r.rpid].message if r.rpid in contents else "",
-                state=r.state,
+                state=r.auditStatus,
                 like_count=r.like_count,
                 ctime=r.created_at,
                 ip_v4=contents[r.rpid].ip_v4 if r.rpid in contents else None,
@@ -400,6 +400,7 @@ class CommentAdminService:
                 source=build_comment_source(
                     r.oid, r.type, r.rpid, up_mids.get((r.oid, r.type))
                 ),
+                # 管理端审核：依赖管理员视角序列化保留私域字段（含脱敏邮箱 / 经验等）
                 member=profiles.get(r.mid),
             )
             for r in rows
@@ -447,7 +448,7 @@ class CommentAdminService:
             type=row.type,
             mid=row.mid,
             message=content.message if content else "",
-            state=row.state,
+            state=row.auditStatus,
             like_count=row.like_count,
             ctime=row.created_at,
             ip_v4=content.ip_v4 if content else None,
@@ -490,7 +491,7 @@ class CommentAdminService:
             rpid=str(row.rpid),
             root=str(row.root),
             parent=str(row.parent),
-            state=row.state,
+            state=row.auditStatus,
             source=build_comment_source(
                 row.oid, row.type, row.rpid, subject.up_mid if subject else None
             ),
@@ -529,18 +530,18 @@ class CommentAdminService:
         # 各状态评论数：按 state 分组聚合
         state_rows = (
             await session.exec(
-                select(CommentIndex.state, func.count())
+                select(CommentIndex.auditStatus, func.count())
                 .select_from(CommentIndex)
-                .group_by(CommentIndex.state)
+                .group_by(CommentIndex.auditStatus)
             )
         ).all()
-        state_counts: dict[str, int] = {s.value: 0 for s in CommentStateEnum}
+        state_counts: dict[str, int] = {s.value: 0 for s in ResourceAuditStatusEnum}
         for st, cnt in state_rows:
             state_counts[st.value] = int(cnt)
 
         # 总数 = 全部状态之和减去已删除（deleted 视为移除，不计入在册评论）
         total_comments = sum(
-            v for k, v in state_counts.items() if k != CommentStateEnum.DELETED.value
+            v for k, v in state_counts.items() if k != ResourceAuditStatusEnum.DELETED.value
         )
 
         total_subjects = int(

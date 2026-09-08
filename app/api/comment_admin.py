@@ -18,7 +18,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import MsgAdminUser, RootUser
 from app.models import StandardResponse
-from app.models.enums import CommentStateEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas import (
     CommentAuditItem,
     CommentAuditListResp,
@@ -34,16 +34,16 @@ router = APIRouter(prefix="/api/v1/comment/admin", tags=["comment-admin"])
 
 
 _OP_TO_STATE = {
-    "pass": CommentStateEnum.NORMAL,
-    "reject": CommentStateEnum.REJECTED,
-    "hidden": CommentStateEnum.HIDDEN,
-    "restore": CommentStateEnum.NORMAL,
+    "pass": ResourceAuditStatusEnum.NORMAL,
+    "reject": ResourceAuditStatusEnum.REJECTED,
+    "hidden": ResourceAuditStatusEnum.HIDDEN,
+    "restore": ResourceAuditStatusEnum.NORMAL,
 }
 
 # root 默认可见的状态：全部（可再用 state 参数收窄）
-_ROOT_DEFAULT_STATES = list(CommentStateEnum)
+_ROOT_DEFAULT_STATES = list(ResourceAuditStatusEnum)
 # 非 root 管理员的硬上限：只能看待审核队列
-_LIMITED_STATES = [CommentStateEnum.AUDITING]
+_LIMITED_STATES = [ResourceAuditStatusEnum.AUDITING]
 
 
 @router.post("/audit", response_model=StandardResponse[CommentAuditItem], summary="人工审核")
@@ -143,14 +143,14 @@ async def audit_queue(
     if user.is_root:
         if state:
             try:
-                states = [CommentStateEnum(s) for s in state]
+                states = [ResourceAuditStatusEnum(s) for s in state]
             except ValueError:
                 return StandardResponse(code=400, msg="state 取值非法")
         else:
             states = _ROOT_DEFAULT_STATES
     else:
         # 非 root：无论传什么，都只能落在待审核；显式越权请求直接拒绝
-        if state and set(state) - {CommentStateEnum.AUDITING.value}:
+        if state and set(state) - {ResourceAuditStatusEnum.AUDITING.value}:
             return StandardResponse(
                 code=403, msg="无权限查看该状态的内容，仅可查看待审核评论"
             )

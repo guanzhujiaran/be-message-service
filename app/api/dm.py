@@ -17,7 +17,7 @@
 会触发 JS 的 `Number.MAX_SAFE_INTEGER` 精度丢失。
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 from loguru import logger
@@ -25,7 +25,7 @@ from loguru import logger
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.enums import BanServiceEnum, DmRelationEnum
+from app.models.enums import BanServiceEnum, DmRelationEnum, DmSessionTypeEnum
 from app.models.schemas import (
     DmAckReq,
     DmDeleteReq,
@@ -106,12 +106,19 @@ async def list_sessions(
     relation: DmRelationEnum | None = Query(
         default=None, description="normal=主列表；stranger=陌生人分组；不传=全部"
     ),
+    session_type: DmSessionTypeEnum | None = Query(
+        default=None,
+        description="single=主 DM 列表；stranger=陌生人分类（被拦截消息归此处）；不传=按 relation 过滤",
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[DmSessionListResp]:
     await ActivityService.touch(session, user.mid)
     data = await DmInbox(session, user.mid).list_sessions(
-        relation=relation, page_num=page_num, page_size=page_size
+        relation=relation,
+        session_type=session_type,
+        page_num=page_num,
+        page_size=page_size,
     )
     return StandardResponse(data=data)
 
@@ -170,17 +177,24 @@ async def list_messages(
         StrInt, Query(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
     ],
     cursor: str | None = Query(
-        default=None, description="上一页返回的 cursor（本页最小 msgkey），首屏不传"
+        default=None, description="游标 msgkey：back=本页最小（往更旧翻）；forward=已见最大（增量查新）。首屏不传"
     ),
     page_size: int = Query(default=20, ge=1, le=50),
+    direction: Literal["back", "forward"] = Query(
+        default="back",
+        description="翻页方向：back 向旧翻页（默认）；forward 增量查新（只返回比 cursor 新的消息，升序）",
+    ),
 ) -> StandardResponse[DmMessageListResp]:
-    """按 msgkey 游标倒序翻页拉取聊天记录。
+    """按 msgkey 游标翻页拉取聊天记录（back 查旧 / forward 查新）。
 
     正文按 msgkey 批量回捞分片；若异步落库尚未完成，
     会回落到索引行冗余的摘要（`content_ready=False`），保证会话流始终可读。
+
+    前端轮询查新建议：每次带上「已加载的最大 msgkey」作为 cursor、direction=forward，
+    服务端只返回增量新消息（升序），无新消息时返回空列表，开销恒定。
     """
     data = await DmSessionObject(session, user.mid, talker_mid).fetch_messages(
-        cursor=_to_msgkey(cursor), page_size=page_size
+        cursor=_to_msgkey(cursor), page_size=page_size, direction=direction
     )
     return StandardResponse(data=data)
 

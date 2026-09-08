@@ -43,7 +43,7 @@ from app.models.db import (
     EventReadCursor,
     UserFollow,
 )
-from app.models.enums import CommentStateEnum, FollowStatusEnum
+from app.models.enums import ResourceAuditStatusEnum, FollowStatusEnum
 from app.models.schemas import (
     EventAggregateItem,
     EventItem,
@@ -522,7 +522,7 @@ class BaseEvent(ABC):
                 resource_id=biz_id if biz_id.isdigit() else "",
                 comment_deleted=True,
             )
-        if idx.state is not CommentStateEnum.NORMAL:
+        if idx.auditStatus is not ResourceAuditStatusEnum.NORMAL:
             return CommentLocate(
                 resource_type=resource_type,
                 resource_id=str(idx.oid),

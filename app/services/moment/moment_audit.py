@@ -25,7 +25,7 @@ from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.models.schemas.moment import (
@@ -39,21 +39,41 @@ from app.services.moment.moment_stat import MomentStatService
 from app.services.user.account import PptrUser
 
 
+_AUDIT_STATUS_STR_MAP: dict[str, ResourceAuditStatusEnum] = {
+    "normal": ResourceAuditStatusEnum.NORMAL,
+    "auditing": ResourceAuditStatusEnum.AUDITING,
+    "rejected": ResourceAuditStatusEnum.REJECTED,
+    "hidden": ResourceAuditStatusEnum.HIDDEN,
+    "deleted": ResourceAuditStatusEnum.DELETED,
+}
+
+
+def _normalize_audit_status(v: str | ResourceAuditStatusEnum) -> ResourceAuditStatusEnum:
+    """兼容：Feed 审核态从字符串列改统一枚举后，历史调用方仍可能传字符串，做一次映射。"""
+    if isinstance(v, ResourceAuditStatusEnum):
+        return v
+    try:
+        return _AUDIT_STATUS_STR_MAP[v]
+    except KeyError:
+        raise ValueError(f"未知审核状态字符串: {v!r}") from None
+
+
 async def _sync_resource_feed(
     session: AsyncSession,
     moment_id: int,
     *,
-    audit_status: str | None = None,
+    audit_status: str | ResourceAuditStatusEnum | None = None,
     pub_time: datetime | None = None,
     deleted_at: datetime | None = None,
 ) -> None:
     """审核 / 删除时同步通用 Feed 元数据行（2.36.0）。
 
     仅更新传入字段；行不存在时静默跳过（发布链路已保证先建行）。
+    `audit_status` 接受统一枚举或历史字符串（自动映射）。
     """
     values: dict[str, object] = {}
     if audit_status is not None:
-        values["auditStatus"] = audit_status
+        values["auditStatus"] = _normalize_audit_status(audit_status)
     if pub_time is not None:
         values["pubTime"] = pub_time
     if deleted_at is not None:
@@ -138,9 +158,9 @@ def _build_audit_log(
     biz_type: InteractionBizTypeEnum,
     biz_id: int,
     operator_mid: int,
-    to_status: MomentAuditStatusEnum,
+    to_status: ResourceAuditStatusEnum,
     action: MomentAuditLogActionEnum,
-    from_status: MomentAuditStatusEnum | None = None,
+    from_status: ResourceAuditStatusEnum | None = None,
     reject_reason: str | None = None,
     remark: str | None = None,
 ) -> TResourceAuditLog:
@@ -202,7 +222,7 @@ class MomentAuditService:
     async def pending_list(
         session: AsyncSession,
         *,
-        audit_status: MomentAuditStatusEnum = MomentAuditStatusEnum.AUDITING,
+        audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.AUDITING,
         page_num: int = 1,
         page_size: int = 20,
     ) -> MomentAuditListResp:
@@ -270,7 +290,7 @@ class MomentAuditService:
             # 与 MomentAuditStatisticsResp 契约一致；`.value` 是 int（1-4），会导致前端取不到计数
             sname = (
                 audit_status.name.lower()
-                if isinstance(audit_status, MomentAuditStatusEnum)
+                if isinstance(audit_status, ResourceAuditStatusEnum)
                 else str(audit_status).lower()
             )
             bucket = by_type.setdefault(

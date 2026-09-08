@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from bili_common.exceptions import register_exception_handlers
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from faststream.rabbit import RabbitBroker
 from loguru import logger
 
@@ -53,6 +53,7 @@ from app.api.setting import router as setting_router
 from app.api.user import router as user_router
 from app.core.broker import broker
 from app.core.config import settings
+from app.core.viewer_context import bind_viewer, reset_viewer
 from app.core.database import ensure_database, test_pptr_connection
 from app.core.database import test_connection as test_mysql_connection
 from app.core.migration import run_alembic_pptr_upgrade, run_alembic_upgrade
@@ -221,6 +222,36 @@ app = FastAPI(
 # 未登录等认证异常使用 B 站官方约定业务码 -101，HTTP 状态码恒为 200
 # （详见 docs/response-code-design.md）。统一由 bili_common 处理。
 register_exception_handlers(app)
+
+
+# ==================== 访问者上下文（计划书 §5.12）====================
+# 输出模型的 Private() 标记字段在**序列化期**按「当前是谁在看」裁剪。
+# FastAPI 0.141 的 serialize_response 没有 context 入参，故由本中间件把身份写入
+# ContextVar，模型序列化时自行读取 —— 模型不依赖 FastAPI，MQ / 定时任务同样安全。
+def _resolve_viewer(headers) -> tuple[int, bool]:
+    """从网关注入的 x-bili-* 头解析访问者（mid 缺失时回退 JWT，对齐 get_current_user）。"""
+    from app.services.infrastructure import jwt_service
+
+    raw_mid = headers.get("x-bili-mid")
+    if not raw_mid and (jwt := headers.get("x-bili-jwt")):
+        payload = jwt_service.decode_token(jwt)
+        if payload and payload.get("uid") is not None:
+            raw_mid = str(payload["uid"])
+    role = headers.get("x-bili-role") or "normal"
+    return (int(raw_mid) if str(raw_mid).isdigit() else 0), role == "root"
+
+
+@app.middleware("http")
+async def viewer_context_middleware(request: Request, call_next):
+    """把访问者身份绑定到 ContextVar，供字段可见性裁剪使用（安全默认=他人视角）。"""
+    mid, is_admin = _resolve_viewer(request.headers)
+    token = bind_viewer(mid=mid, is_admin=is_admin)
+    try:
+        return await call_next(request)
+    finally:
+        reset_viewer(token)
+
+
 app.include_router(mq_router)
 
 

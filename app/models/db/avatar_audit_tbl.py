@@ -19,7 +19,7 @@ from sqlmodel import Field
 
 from app.models.db.base_tbl import TimestampMixin
 from sqlalchemy import Enum as SAEnum
-from app.models.enums import AvatarAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 
 
 class TUserAvatarAudit(TimestampMixin, table=True):
@@ -38,9 +38,9 @@ class TUserAvatarAudit(TimestampMixin, table=True):
     mid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="申请更换头像的用户 UID")
     oldAvatar: str | None = Field(default=None, max_length=1024, description="提交时的旧头像 URL（用于对比/追溯）")
     newAvatar: str = Field(default=None, nullable=False, max_length=1024, description="申请的新头像 URL")
-    auditStatus: AvatarAuditStatusEnum = Field(
-        default=AvatarAuditStatusEnum.PENDING,
-        sa_type=SAEnum(AvatarAuditStatusEnum),
+    auditStatus: ResourceAuditStatusEnum = Field(
+        default=ResourceAuditStatusEnum.AUDITING,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
         description="审核状态：pending/approved/rejected",
     )
     auditOperatorMid: int | None = Field(default=None, sa_type=BIGINT, description="审核人 MID（admin）")

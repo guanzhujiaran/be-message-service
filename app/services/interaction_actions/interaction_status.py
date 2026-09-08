@@ -25,7 +25,7 @@ from app.models.db import (
     TResourceLike,
     TResourceReport,
 )
-from app.models.enums import MomentAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.interaction import InteractionStatusItem
 from app.models.str_int import StrInt
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
@@ -83,7 +83,7 @@ class InteractionStatusService:
                     select(TMoment.dynId).where(
                         col(TMoment.dynId).in_(ids),
                         col(TMoment.deletedAt).is_(None),
-                        col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+                        col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
                     )
                 )
             ).all()
@@ -146,7 +146,7 @@ class InteractionStatusService:
                         col(TMoment.bizType) == biz_type,
                         col(TMoment.bizRid).in_(biz_ids),
                         col(TMoment.deletedAt).is_(None),
-                        col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL,
+                        col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
                     )
                     .group_by(col(TMoment.bizRid))
                 )

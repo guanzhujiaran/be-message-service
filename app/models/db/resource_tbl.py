@@ -20,7 +20,7 @@ from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
 )
 
 
@@ -120,11 +120,11 @@ class TResourceAuditLog(ResourceBase, TimestampMixin, table=True):
     operatorRole: MomentAuditLogOperatorRoleEnum = Field(
         default=None, nullable=False, sa_type=SAEnum(MomentAuditLogOperatorRoleEnum), description="author / admin"
     )
-    fromStatus: MomentAuditStatusEnum | None = Field(
-        default=None, sa_type=SAEnum(MomentAuditStatusEnum), description="流转前 auditStatus"
+    fromStatus: ResourceAuditStatusEnum | None = Field(
+        default=None, sa_type=SAEnum(ResourceAuditStatusEnum), description="流转前 auditStatus"
     )
-    toStatus: MomentAuditStatusEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(MomentAuditStatusEnum), description="流转后 auditStatus"
+    toStatus: ResourceAuditStatusEnum = Field(
+        default=None, nullable=False, sa_type=SAEnum(ResourceAuditStatusEnum), description="流转后 auditStatus"
     )
     actionType: MomentAuditLogActionEnum = Field(
         default=None, nullable=False, sa_type=SAEnum(MomentAuditLogActionEnum), description="create/edit/approve/reject/resubmit/delete"

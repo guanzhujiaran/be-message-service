@@ -7,53 +7,36 @@
 """
 
 from datetime import datetime
+from typing import Annotated
 
 from sqlmodel import Field, SQLModel
 
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
-    CommentStateEnum,
+    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
     MomentReportReasonEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
+from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.user_brief import UserBriefOut
+from app.models.schemas.visibility import Private, VisibilityMixin
 
 # ==================== 公共片段 ====================
 
 
-from app.models.schemas.base import AutoStrMixin
-class CommentUserBrief(SQLModel, AutoStrMixin):
+class CommentUserBrief(UserBriefOut):
     """评论卡片上展示的用户信息（直连 pptr Postgres 只读取得，本服务不冗余）。
 
-    仅使用 pptr 现有四张表（TUserInfo / TUserDetail / TUserVip / TUserLevel）中**实际存在**
-    的字段，**不新增任何表结构或表外字段**。参考 B 站 member 的展示结构，把数据库里
-    已有但此前未返回的字段（大会员到期时间、经验值、角色、脱敏邮箱）一并补齐。
+    评论是他人可见内容，故沿用 :class:`UserBriefOut`：昵称 / 头像 / 等级等公开字段
+    照常输出，``vip_due_date`` / ``exp`` / ``role`` / ``email`` 等私域字段由
+    ``VisibilityMixin`` 在**序列化期**按访问者身份自动剥离（仅本人 / 管理员可见），
+    装配层**无需**再手动投影。
     """
 
-    mid: int
-    uname: str | None = None
-    avatar: str | None = None
-    level: int = 0
-    vip_status: str | None = None
-    vip_type: int = 0
-    # 大会员到期时间（毫秒时间戳），来自 TUserVip.vip_due_date
-    vip_due_date: int | None = None
-    sex: str | None = None
-    sign: str | None = None
-    # 当前累积经验，来自 TUserLevel.current_exp
-    exp: int | None = None
-    # 角色标识（level0..level6 / root），来自 TUserInfo.role
-    role: str | None = None
-    # 脱敏后的邮箱，来自 TUserDetail.email
-    email: str | None = None
-    follower_count: int = 0
-    following_count: int = 0
-    like_count: int = 0
-    nameplate_name: str | None = None
-    nameplate_image: str | None = None
-    nameplate_level: str | None = None
-    official_title: str | None = None
+
+__all__ = ["CommentUserBrief"]
 
 
 class CommentItem(SQLModel, AutoStrMixin):
@@ -103,7 +86,7 @@ class CommentItem(SQLModel, AutoStrMixin):
         default=CommentActionEnum.NONE, description="当前登录用户的互动态：0无/1赞/2踩"
     )
 
-    state: CommentStateEnum = CommentStateEnum.NORMAL
+    state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     is_top: bool = False
     is_essence: bool = False
     is_up_liked: bool = False
@@ -159,7 +142,7 @@ class CommentAddResp(SQLModel, AutoStrMixin):
     rpid: str = Field(description="新评论id（字符串）")
     root: str = "0"
     parent: str = "0"
-    state: CommentStateEnum = CommentStateEnum.NORMAL
+    state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     need_audit: bool = Field(
         default=False, description="是否进入待审核（仅作者本人可见）"
     )
@@ -308,26 +291,31 @@ class CommentBulkAuditResp(SQLModel, AutoStrMixin):
     failed: list[str] = Field(default_factory=list, description="失败的 rpid 列表")
 
 
-class CommentAuditItem(SQLModel, AutoStrMixin):
-    """审核队列中的一条评论。"""
+class CommentAuditItem(SQLModel, AutoStrMixin, VisibilityMixin):
+    """审核队列中的一条评论。
+
+    原始 IP 属明文信息（决策 C3：出参打码、管理员明文），以 ``Private(admin_only=True)``
+    标记，非管理员视角下由序列化器自动剥离。
+    """
 
     rpid: str
     oid: str
     type: InteractionBizTypeEnum
     mid: int
     message: str
-    state: CommentStateEnum
+    state: ResourceAuditStatusEnum
     like_count: int = 0
     ctime: datetime
-    ip_v4: str | None = None
-    ip_v6: str | None = None
+    ip_v4: Annotated[str | None, Private(admin_only=True)] = None
+    ip_v6: Annotated[str | None, Private(admin_only=True)] = None
     plat: str | None = Field(default=None, max_length=32, description="来源平台")
     device: str | None = Field(default=None, max_length=64, description="来源设备")
     source: AuditSourceInfo | None = Field(
         default=None, description="内容来源，管理端可点击直达原始评论区"
     )
-    member: CommentUserBrief | None = Field(
-        default=None, description="发布者信息，装配时直连 pptr 只读取回"
+    # 管理端审核视角：可用**私有**简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色），便于溯源
+    member: UserBriefOut | None = Field(
+        default=None, description="发布者信息（管理端：含私有字段），装配时直连 pptr 只读取回"
     )
 
 
@@ -336,7 +324,7 @@ class CommentAuditListResp(SQLModel, AutoStrMixin):
     total: int = 0
     page_num: int = 1
     page_size: int = 20
-    states: list[CommentStateEnum] = Field(
+    states: list[ResourceAuditStatusEnum] = Field(
         default_factory=list, description="本次实际生效的状态过滤（非 root 恒为待审核）"
     )
     can_view_all_states: bool = Field(
@@ -350,7 +338,7 @@ class CommentSourceResp(SQLModel, AutoStrMixin):
     rpid: str
     root: str = "0"
     parent: str = "0"
-    state: CommentStateEnum = CommentStateEnum.NORMAL
+    state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     source: AuditSourceInfo
     subject_state: CommentSubjectStateEnum | None = Field(
         default=None, description="所属评论区状态；评论区不存在时为 null"
@@ -361,7 +349,7 @@ class CommentSourceResp(SQLModel, AutoStrMixin):
 
 class CommentAuditResp(SQLModel, AutoStrMixin):
     rpid: str
-    state: CommentStateEnum
+    state: ResourceAuditStatusEnum
 
 
 class CommentStatsResp(SQLModel, AutoStrMixin):
@@ -371,8 +359,9 @@ class CommentStatsResp(SQLModel, AutoStrMixin):
     total_root: int = 0
     total_subjects: int = 0
     today_new: int = 0
-    top_authors: list[CommentUserBrief] = Field(default_factory=list)
-    # 各状态评论数（以 CommentStateEnum.value 即 1~5 为整数键，
+    # 管理端统计：同样使用**私有**简档
+    top_authors: list[UserBriefOut] = Field(default_factory=list)
+    # 各状态评论数（以 ResourceAuditStatusEnum.value 即 1~5 为整数键，
     # normal / auditing / rejected / hidden / deleted）；
     # total_comments 为该字典中「非 deleted」各项之和，确保驳回等状态被计入总数。
     state_counts: dict[int, int] = Field(default_factory=dict)

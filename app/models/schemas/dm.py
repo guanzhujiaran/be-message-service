@@ -5,14 +5,15 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import (
-    DmAuditStateEnum,
+    ResourceAuditStatusEnum,
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
+    DmSessionTypeEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
 from app.models.schemas.base import AutoStrMixin
-from app.models.schemas.comment import CommentUserBrief
+from app.models.schemas.user_brief import UserBriefOut
 from app.models.str_int import StrInt
 
 
@@ -53,6 +54,10 @@ class DmSessionItem(SQLModel, AutoStrMixin):
     last_sender_uid: int | None = None
     unread_count: int = 0
     relation: DmRelationEnum = DmRelationEnum.NORMAL
+    session_type: DmSessionTypeEnum = Field(
+        default=DmSessionTypeEnum.SINGLE,
+        description="会话类型：SINGLE=普通 DM；STRANGER=陌生人私信分类",
+    )
     is_top: bool = Field(
         default=False, description="是否置顶（= top_ts != 0，兼容 flag 用法）"
     )
@@ -66,8 +71,18 @@ class DmSessionItem(SQLModel, AutoStrMixin):
 class DmSessionListResp(SQLModel):
     items: list[DmSessionItem] = Field(default_factory=list)
     total: int = 0
-    unread_total: int = Field(default=0, description="全部会话未读数之和")
-    stranger_unread: int = Field(default=0, description="陌生人会话未读数之和")
+    # 主列表（SINGLE）未读之和：用于顶部私信红点；不含 STRANGER（陌生人分类独立红点）
+    unread_total: int = Field(default=0, description="主列表（SINGLE）未读数之和")
+    # 陌生人分类聚合：用于「陌生人私信」顶部聚合条的红点与条数
+    stranger_unread: int = Field(default=0, description="陌生人分类（STRANGER）未读数之和")
+    stranger_total: int = Field(
+        default=0, description="陌生人分类（STRANGER）会话总数（用于聚合条 [N 条] 副标题）"
+    )
+    # 前端聚合条展示前提：开关开启 + 确有 STRANGER 会话，两个条件同时满足才展示
+    stranger_dm_intercept_enabled: bool = Field(
+        default=False,
+        description="当前用户是否开启了「陌生人私信拦截」（recv_stranger_dm=false）",
+    )
 
 
 class DmMessageItem(SQLModel, AutoStrMixin):
@@ -85,7 +100,7 @@ class DmMessageItem(SQLModel, AutoStrMixin):
         default=True, description="内容是否已从分片读到（False 表示当前为摘要兜底）"
     )
     created_at: datetime | None = None
-    audit_state: DmAuditStateEnum = DmAuditStateEnum.NORMAL
+    audit_state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     recalled_at: datetime | None = Field(
         default=None, description="撤回时间（仅撤回后非空）"
     )
@@ -163,15 +178,16 @@ class DmAuditItem(SQLModel, AutoStrMixin):
     session_key: str = Field(description="会话键：小mid_大mid")
     message: str = Field(default="", description="正文摘要（内容分片未就绪时兜底）")
     msg_type: DmMsgTypeEnum = DmMsgTypeEnum.TEXT
-    audit_state: DmAuditStateEnum = DmAuditStateEnum.NORMAL
+    audit_state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     msg_ts: int = Field(default=0, description="消息毫秒时间戳")
     content_ready: bool = Field(default=False, description="内容是否已异步落库到分片")
     created_at: datetime | None = None
     source: AuditSourceInfo | None = Field(
         default=None, description="内容来源，管理端可点击直达该会话上下文"
     )
-    sender: CommentUserBrief | None = Field(
-        default=None, description="发送者信息，装配时直连 pptr 只读取回"
+    # 管理端审核视角：使用**私有**简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色）
+    sender: UserBriefOut | None = Field(
+        default=None, description="发送者信息（管理端：含私有字段），装配时直连 pptr 只读取回"
     )
 
 
@@ -210,7 +226,7 @@ class DmAuditListResp(SQLModel):
     total: int = 0
     page_num: int = 1
     page_size: int = 20
-    states: list[DmAuditStateEnum] = Field(
+    states: list[ResourceAuditStatusEnum] = Field(
         default_factory=list, description="本次实际生效的状态过滤（非 root 恒为待审核）"
     )
     can_view_all_states: bool = Field(

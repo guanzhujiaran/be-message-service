@@ -22,7 +22,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from bili_common.models import ResponseCode
 from app.core.config import settings
 from app.models.db import TMoment, TMomentTopic
-from app.models.enums import MomentTopicAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.services.common.daily_limit import count_created_today
 from app.services.moment.edgerank import TOPIC_SQUARE_PROFILE, compute_topic_score
 from app.models.schemas.moment import (
@@ -41,6 +41,7 @@ from app.models.schemas.moment import (
     MomentTopicSquareResp,
 )
 from app.core.sharding import generate_topic_id
+from app.models.schemas.user_brief import UserBriefOut
 from app.services.user.follow import FollowService
 from app.services.user.account import PptrUser
 
@@ -48,8 +49,8 @@ from app.services.user.account import PptrUser
 _POI_PAGE_SIZE = 20
 
 
-def _brief_to_at_item(b, *, remark: str | None = None) -> MomentAtUserItem:
-    """把 pptr 用户简档（CommentUserBrief）映射到 @ 用户项。"""
+def _brief_to_at_item(b: UserBriefOut, *, remark: str | None = None) -> MomentAtUserItem:
+    """把**公开**用户简档映射到 @ 用户项（@ 面板只展示昵称 / 头像）。"""
     return MomentAtUserItem(
         mid=b.mid,
         uname=b.uname,
@@ -159,7 +160,7 @@ class MomentTopicService:
 
         # 2.19.0：广场/热搜仅展示审核通过的话题
         stmt = select(TMomentTopic).where(
-            col(TMomentTopic.auditStatus) == MomentTopicAuditStatusEnum.NORMAL
+            col(TMomentTopic.auditStatus) == ResourceAuditStatusEnum.NORMAL
         )
         if hot_only:
             stmt = stmt.where(col(TMomentTopic.isHot) == 1)
@@ -251,7 +252,7 @@ class MomentTopicService:
         if topic is None:
             return None
         # 2.19.0：话题详情仅展示审核通过的话题（auditing/rejected 对所有人不可见）
-        if topic.auditStatus is not MomentTopicAuditStatusEnum.NORMAL:
+        if topic.auditStatus is not ResourceAuditStatusEnum.NORMAL:
             return None
 
         topic_item = {
@@ -323,7 +324,7 @@ class MomentTopicService:
             topicCover=req.topicCover,
             topicDesc=req.topicDesc,
             creatorMid=mid,
-            auditStatus=MomentTopicAuditStatusEnum.AUDITING,
+            auditStatus=ResourceAuditStatusEnum.AUDITING,
             pubTime=None,
         )
         session.add(topic)

@@ -19,7 +19,7 @@ from app.models.db import TMoment, TResourceDislike, TResourceFavorite, TResourc
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.models.schemas.interaction import InteractionResource
@@ -61,8 +61,8 @@ class DynamicBiz(BaseBiz):
         """动态存在且未软删、且 auditStatus 非 REJECTED/HIDDEN（被驳回 / 管理员下架视为不存在）。"""
         dyn = await self._get_moment()
         return dyn is not None and dyn.deletedAt is None and dyn.auditStatus not in (
-            MomentAuditStatusEnum.REJECTED,
-            MomentAuditStatusEnum.HIDDEN,
+            ResourceAuditStatusEnum.REJECTED,
+            ResourceAuditStatusEnum.HIDDEN,
         )
 
     async def _load_meta(self) -> tuple[str | None, str | None]:
@@ -81,7 +81,7 @@ class DynamicBiz(BaseBiz):
         dyn = await self._get_moment()
         if dyn is None:
             return None
-        return dyn.auditStatus == MomentAuditStatusEnum.NORMAL
+        return dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
 
     @classmethod
     async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
@@ -104,8 +104,8 @@ class DynamicBiz(BaseBiz):
         for bid in biz_ids:
             dyn = moment_map.get(bid)
             exists = dyn is not None and dyn.deletedAt is None and dyn.auditStatus not in (
-                MomentAuditStatusEnum.REJECTED,
-                MomentAuditStatusEnum.HIDDEN,
+                ResourceAuditStatusEnum.REJECTED,
+                ResourceAuditStatusEnum.HIDDEN,
             )
             title = cover = None
             author_mid = None
@@ -114,7 +114,7 @@ class DynamicBiz(BaseBiz):
                 title = dyn.contentText
                 cover = _first_pic(dyn.contentJson)
                 author_mid = int(dyn.mid)
-                interactable = dyn.auditStatus == MomentAuditStatusEnum.NORMAL
+                interactable = dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
             out[bid] = InteractionResource(
                 bizType=InteractionBizTypeEnum.DYNAMIC,
                 bizId=bid,
@@ -389,7 +389,7 @@ class DynamicBiz(BaseBiz):
             raise ValueError("动态不存在")
         from_status = dyn.auditStatus
         now = datetime.now()
-        dyn.auditStatus = MomentAuditStatusEnum.NORMAL
+        dyn.auditStatus = ResourceAuditStatusEnum.NORMAL
         dyn.pubTime = now
         dyn.updated_at = now
         await _sync_resource_feed(
@@ -403,7 +403,7 @@ class DynamicBiz(BaseBiz):
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
                 biz_id=self.biz_id,
                 operator_mid=self.actor_mid,
-                to_status=MomentAuditStatusEnum.NORMAL,
+                to_status=ResourceAuditStatusEnum.NORMAL,
                 action=MomentAuditLogActionEnum.APPROVE,
                 from_status=from_status,
                 remark=remark,
@@ -432,9 +432,9 @@ class DynamicBiz(BaseBiz):
         if dyn is None:
             raise ValueError("动态不存在")
         from_status = dyn.auditStatus
-        before_normal = from_status == MomentAuditStatusEnum.NORMAL
+        before_normal = from_status == ResourceAuditStatusEnum.NORMAL
         now = datetime.now()
-        dyn.auditStatus = MomentAuditStatusEnum.REJECTED
+        dyn.auditStatus = ResourceAuditStatusEnum.REJECTED
         dyn.auditRejectReason = reject_reason
         dyn.updated_at = now
         await _sync_resource_feed(self.session, self.biz_id, audit_status="rejected")
@@ -450,7 +450,7 @@ class DynamicBiz(BaseBiz):
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
                 biz_id=self.biz_id,
                 operator_mid=self.actor_mid,
-                to_status=MomentAuditStatusEnum.REJECTED,
+                to_status=ResourceAuditStatusEnum.REJECTED,
                 action=MomentAuditLogActionEnum.REJECT,
                 from_status=from_status,
                 reject_reason=reject_reason,
@@ -496,8 +496,8 @@ class DynamicBiz(BaseBiz):
         dyn = await self._get_moment()
         if dyn is None or dyn.deletedAt is not None:
             return
-        if dyn.auditStatus is not MomentAuditStatusEnum.HIDDEN:
-            dyn.auditStatus = MomentAuditStatusEnum.HIDDEN
+        if dyn.auditStatus is not ResourceAuditStatusEnum.HIDDEN:
+            dyn.auditStatus = ResourceAuditStatusEnum.HIDDEN
         feed = (
             await self.session.exec(
                 select(TResourceFeed).where(
@@ -507,7 +507,7 @@ class DynamicBiz(BaseBiz):
             )
         ).one_or_none()
         if feed is not None:
-            feed.auditStatus = MomentAuditStatusEnum.HIDDEN.value
+            feed.auditStatus = ResourceAuditStatusEnum.HIDDEN
         await self.session.commit()
         if dyn.mid:
             await self._notify_hide(operator_mid, dyn)

@@ -31,7 +31,7 @@ from app.models.enums import (
     CommentActionEnum,
     CommentAttrBit,
     CommentSortEnum,
-    CommentStateEnum,
+    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
 )
 from app.models.schemas import (
@@ -39,8 +39,8 @@ from app.models.schemas import (
     CommentItem,
     CommentListResp,
     CommentSubListResp,
-    CommentUserBrief,
     )
+from app.models.schemas.user_brief import UserBriefOut
 from app.services.comment import VISIBLE_STATES, CommentService
 from app.services.user.account import CommentAdminUser
 
@@ -98,7 +98,7 @@ class CommentReadService:
                 await session.exec(
                     select(CommentIndex).where(
                         col(CommentIndex.rpid) == focus_rpid,
-                        col(CommentIndex.state).in_(VISIBLE_STATES),
+                        col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
                     )
                 )
             ).one_or_none()
@@ -110,7 +110,7 @@ class CommentReadService:
             col(CommentIndex.oid) == oid,
             col(CommentIndex.type) == type_,
             col(CommentIndex.root) == 0,
-            col(CommentIndex.state).in_(VISIBLE_STATES),
+            col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
         )
         if top_rpid:
             stmt = stmt.where(col(CommentIndex.rpid) != top_rpid)
@@ -141,7 +141,7 @@ class CommentReadService:
                         col(CommentIndex.oid) == oid,
                         col(CommentIndex.type) == type_,
                         col(CommentIndex.root) == 0,
-                        col(CommentIndex.state) == CommentStateEnum.AUDITING,
+                        col(CommentIndex.auditStatus) == ResourceAuditStatusEnum.AUDITING,
                         col(CommentIndex.mid) == viewer_mid,
                     ).order_by(col(CommentIndex.rpid).desc())
                 )
@@ -153,7 +153,7 @@ class CommentReadService:
                 await session.exec(
                     select(CommentIndex).where(
                         col(CommentIndex.rpid) == top_rpid,
-                        col(CommentIndex.state).in_(VISIBLE_STATES),
+                        col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
                     )
                 )
             ).one_or_none()
@@ -164,7 +164,7 @@ class CommentReadService:
                 await session.exec(
                     select(CommentIndex).where(
                         col(CommentIndex.rpid) == focus_root,
-                        col(CommentIndex.state).in_(VISIBLE_STATES),
+                        col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
                     )
                 )
             ).one_or_none()
@@ -174,7 +174,7 @@ class CommentReadService:
                     await session.exec(
                         select(CommentIndex).where(
                             col(CommentIndex.root) == focus_root,
-                            col(CommentIndex.state).in_(VISIBLE_STATES),
+                            col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
                         ).order_by(col(CommentIndex.rpid))
                     )
                 ).all()
@@ -249,7 +249,7 @@ class CommentReadService:
                 select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
             )
         ).one_or_none()
-        if row is None or row.state not in VISIBLE_STATES:
+        if row is None or row.auditStatus not in VISIBLE_STATES:
             return None
         items = await CommentReadService.assemble_items(
             session, [row], viewer_mid=viewer_mid
@@ -297,7 +297,7 @@ class CommentReadService:
             await session.exec(
                 select(CommentIndex).where(
                     col(CommentIndex.root).in_(root_ids),
-                    col(CommentIndex.state).in_(VISIBLE_STATES),
+                    col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
                 )
             )
         ).all()
@@ -312,7 +312,7 @@ class CommentReadService:
                 await session.exec(
                     select(CommentIndex).where(
                         col(CommentIndex.root).in_(root_ids),
-                        col(CommentIndex.state) == CommentStateEnum.AUDITING,
+                        col(CommentIndex.auditStatus) == ResourceAuditStatusEnum.AUDITING,
                         col(CommentIndex.mid) == viewer_mid,
                     )
                 )
@@ -349,7 +349,7 @@ class CommentReadService:
                 select(CommentIndex).where(col(CommentIndex.rpid) == root)
             )
         ).one_or_none()
-        if root_row is None or root_row.state not in VISIBLE_STATES:
+        if root_row is None or root_row.auditStatus not in VISIBLE_STATES:
             return CommentSubListResp(
                 items=[],
                 root=str(root),
@@ -364,7 +364,7 @@ class CommentReadService:
                 col(CommentIndex.root) == root,
                 col(CommentIndex.oid) == oid,
                 col(CommentIndex.type) == type_,
-                col(CommentIndex.state).in_(VISIBLE_STATES),
+                col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
             )
             .order_by(col(CommentIndex.rpid))
         )
@@ -380,7 +380,7 @@ class CommentReadService:
                     select(CommentIndex)
                     .where(
                         col(CommentIndex.root) == root,
-                        col(CommentIndex.state) == CommentStateEnum.AUDITING,
+                        col(CommentIndex.auditStatus) == ResourceAuditStatusEnum.AUDITING,
                         col(CommentIndex.mid) == viewer_mid,
                     )
                     .order_by(col(CommentIndex.rpid))
@@ -465,7 +465,7 @@ class CommentReadService:
         row: CommentIndex,
         *,
         content: CommentContent | None,
-        profiles: dict[int, CommentUserBrief],
+        profiles: dict[int, UserBriefOut],
         action: CommentActionEnum,
     ) -> CommentItem:
         """把「索引行 + 正文行 + 用户快照」拼成一条视图模型。"""
@@ -502,6 +502,7 @@ class CommentReadService:
             oid=str(row.oid),
             type=row.type,
             mid=row.mid,
+            # 评论对他人可见：member 的私域字段由序列化期按访问者身份自动剥离
             member=profiles.get(row.mid),
             root=str(row.root),
             parent=str(row.parent),
@@ -519,7 +520,7 @@ class CommentReadService:
             hate_count=row.hate_count,
             rcount=row.rcount,
             action=action,
-            state=row.state,
+            state=row.auditStatus,
             is_top=bool(row.attr & CommentAttrBit.TOP.value),
             is_essence=bool(row.attr & CommentAttrBit.ESSENCE.value),
             is_up_liked=bool(row.attr & CommentAttrBit.UP_LIKED.value),
@@ -534,4 +535,4 @@ class CommentReadService:
         )
 
 
-__all__ = ["CommentReadService", "CommentStateEnum"]
+__all__ = ["CommentReadService", "ResourceAuditStatusEnum"]

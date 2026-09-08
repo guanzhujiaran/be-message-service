@@ -30,7 +30,7 @@ from app.models.db import (
     TUserFavoriteSetting,
 )
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import FolderCoverAuditStatusEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.services.user.avatar_check import verify_avatar_url
 from app.services.user.folder_cover_audit import FolderCoverAuditService
 from app.services.moment.interaction import (
@@ -120,11 +120,22 @@ class FavoriteFolderAction:
             if not ok:
                 raise ValueError(reason)
         folder_id = await generate_moment_id()
+        final_name = name.strip() or "未命名收藏夹"
+        # 内容审核：收藏夹名称 / 描述（命中违规即拒绝，作者即本人，无跨人通知）
+        from app.services.audit import audit_text
+
+        name_res = audit_text(final_name, check_link=False)
+        if name_res.rejected:
+            raise ValueError(f"收藏夹名称未通过审核：{name_res.reason}")
+        if description:
+            desc_res = audit_text(description)
+            if desc_res.rejected:
+                raise ValueError(f"收藏夹描述未通过审核：{desc_res.reason}")
         session.add(
             TFavoriteFolder(
                 folder_id=folder_id,
                 mid=self.actor_mid,
-                name=name.strip() or "未命名收藏夹",
+                name=final_name,
                 description=description,
                 is_default=0,
             )
@@ -169,9 +180,20 @@ class FavoriteFolderAction:
         ).first()
         if row is None:
             raise ValueError("收藏夹不存在")
+        # 内容审核：更新的名称 / 描述（命中违规即拒绝）
+        from app.services.audit import audit_text
+
         if name is not None:
-            row.name = name.strip() or "未命名收藏夹"
+            final_name = name.strip() or "未命名收藏夹"
+            name_res = audit_text(final_name, check_link=False)
+            if name_res.rejected:
+                raise ValueError(f"收藏夹名称未通过审核：{name_res.reason}")
+            row.name = final_name
         if description is not None:
+            if description:
+                desc_res = audit_text(description)
+                if desc_res.rejected:
+                    raise ValueError(f"收藏夹描述未通过审核：{desc_res.reason}")
             row.description = description or None
         cover_audit_status: str | None = None
         if cover_url:
@@ -285,7 +307,7 @@ class FavoriteFolderAction:
                     select(TFolderCoverAudit.folderId).where(
                         col(TFolderCoverAudit.mid) == self.actor_mid,
                         col(TFolderCoverAudit.auditStatus)
-                        == FolderCoverAuditStatusEnum.PENDING,
+                        == ResourceAuditStatusEnum.AUDITING,
                         col(TFolderCoverAudit.folderId).in_(folder_ids),
                     )
                 )
@@ -338,7 +360,7 @@ class FavoriteFolderAction:
             await session.exec(
                 select(TResourceFavorite.bizType, TResourceFavorite.bizId)
                 .where(*where)
-                .order_by(col(TResourceFavorite.createdAt).desc())
+                .order_by(col(TResourceFavorite.created_at).desc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )
@@ -446,7 +468,7 @@ class FavoriteFolderAction:
                     col(TResourceFavorite.mid) == target_mid,
                     col(TResourceFavorite.folderId) == folder_id,
                 )
-                .order_by(col(TResourceFavorite.createdAt).desc())
+                .order_by(col(TResourceFavorite.created_at).desc())
                 .offset((page - 1) * page_size)
                 .limit(page_size)
             )

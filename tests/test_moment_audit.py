@@ -26,7 +26,7 @@ from app.models.db import EventMessage, TMoment, TInteractionStat, TResourceFeed
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
-    MomentAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.services.interaction_actions import get_biz
@@ -144,7 +144,7 @@ async def _seed_moment(
     mid: int,
     *,
     dyn_type: MomentTypeEnum = MomentTypeEnum.WORD,
-    audit_status: MomentAuditStatusEnum = MomentAuditStatusEnum.AUDITING,
+    audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.AUDITING,
     repost_src_dyn_id: int | None = None,
     content: str | None = None,
     with_stat: bool = True,
@@ -160,7 +160,7 @@ async def _seed_moment(
         contentJson=[{"type": "WORDS", "text": content}],
         repostSrcDynId=repost_src_dyn_id,
         auditStatus=audit_status,
-        pubTime=now if audit_status is MomentAuditStatusEnum.NORMAL else None,
+        pubTime=now if audit_status is ResourceAuditStatusEnum.NORMAL else None,
         created_at=now,
         updated_at=now,
     )
@@ -176,7 +176,7 @@ async def _seed_moment(
             bizType=InteractionBizTypeEnum.DYNAMIC,
             bizId=did,
             mid=mid,
-            pubTime=(now if audit_status is MomentAuditStatusEnum.NORMAL else None),
+            pubTime=(now if audit_status is ResourceAuditStatusEnum.NORMAL else None),
             auditStatus=audit_status.name.lower(),
             tags=[],
         )
@@ -217,10 +217,10 @@ async def _get_repost_count(session, src_id: int) -> int:
 async def test_pending_list_only_auditing():
     async with new_session() as s:
         m_audit = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         m_normal = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.NORMAL
+            s, A_MID, audit_status=ResourceAuditStatusEnum.NORMAL
         )
 
         resp = await MomentAuditService.pending_list(s, page_num=1, page_size=20)
@@ -237,29 +237,29 @@ async def test_pending_list_only_auditing():
 async def test_approve_sets_normal_and_pubtime():
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve(remark="ok")
-        assert item.auditStatus == MomentAuditStatusEnum.NORMAL.value
+        assert item.auditStatus == ResourceAuditStatusEnum.NORMAL.name
         assert item.pubTime is not None
 
         dyn = (
             await s.exec(select(TMoment).where(TMoment.dynId == did))
         ).one_or_none()
-        assert dyn.auditStatus is MomentAuditStatusEnum.NORMAL
+        assert dyn.auditStatus is ResourceAuditStatusEnum.NORMAL
         assert dyn.pubTime is not None
         assert dyn.auditRejectReason is None
 
 
 async def test_approve_forward_increments_src_repost_count():
     async with new_session() as s:
-        src = await _seed_moment(s, A_MID2, audit_status=MomentAuditStatusEnum.NORMAL)
+        src = await _seed_moment(s, A_MID2, audit_status=ResourceAuditStatusEnum.NORMAL)
         await _set_src_repost_count(s, src, 5)
         fwd = await _seed_moment(
             s,
             A_MID,
             dyn_type=MomentTypeEnum.FORWARD,
-            audit_status=MomentAuditStatusEnum.AUDITING,
+            audit_status=ResourceAuditStatusEnum.AUDITING,
             repost_src_dyn_id=src,
         )
 
@@ -270,7 +270,7 @@ async def test_approve_forward_increments_src_repost_count():
 async def test_approve_does_not_fire_reject_event():
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve()
 
@@ -293,24 +293,24 @@ async def test_approve_does_not_fire_reject_event():
 async def test_reject_sets_rejected_and_reason():
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
             reject_reason="违规内容", remark="r"
         )
-        assert item.auditStatus == MomentAuditStatusEnum.REJECTED.value
+        assert item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
 
         dyn = (
             await s.exec(select(TMoment).where(TMoment.dynId == did))
         ).one_or_none()
-        assert dyn.auditStatus is MomentAuditStatusEnum.REJECTED
+        assert dyn.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert dyn.auditRejectReason == "违规内容"
 
 
 async def test_reject_fires_audit_reject_event_to_author():
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
             reject_reason="违规内容"
@@ -333,13 +333,13 @@ async def test_reject_fires_audit_reject_event_to_author():
 async def test_reject_forward_normal_decrements_src_repost_count():
     async with new_session() as s:
         # before=normal 的 FORWARD，驳回应触发 -1
-        src = await _seed_moment(s, A_MID2, audit_status=MomentAuditStatusEnum.NORMAL)
+        src = await _seed_moment(s, A_MID2, audit_status=ResourceAuditStatusEnum.NORMAL)
         await _set_src_repost_count(s, src, 5)
         fwd = await _seed_moment(
             s,
             A_MID,
             dyn_type=MomentTypeEnum.FORWARD,
-            audit_status=MomentAuditStatusEnum.NORMAL,
+            audit_status=ResourceAuditStatusEnum.NORMAL,
             repost_src_dyn_id=src,
         )
 
@@ -352,13 +352,13 @@ async def test_reject_forward_normal_decrements_src_repost_count():
 async def test_reject_auditing_forward_no_decrement():
     async with new_session() as s:
         # before=auditing 的 FORWARD，驳回不应触发源动态 -1
-        src = await _seed_moment(s, A_MID2, audit_status=MomentAuditStatusEnum.NORMAL)
+        src = await _seed_moment(s, A_MID2, audit_status=ResourceAuditStatusEnum.NORMAL)
         await _set_src_repost_count(s, src, 5)
         fwd = await _seed_moment(
             s,
             A_MID,
             dyn_type=MomentTypeEnum.FORWARD,
-            audit_status=MomentAuditStatusEnum.AUDITING,
+            audit_status=ResourceAuditStatusEnum.AUDITING,
             repost_src_dyn_id=src,
         )
 
@@ -375,23 +375,23 @@ async def test_pending_list_filters_by_status():
     """2.30.0：pending_list 支持按 audit_status 筛选，各状态互不串扰。"""
     async with new_session() as s:
         m_audit = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         m_normal = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.NORMAL
+            s, A_MID, audit_status=ResourceAuditStatusEnum.NORMAL
         )
         m_rejected = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.REJECTED
+            s, A_MID, audit_status=ResourceAuditStatusEnum.REJECTED
         )
 
         audit_resp = await MomentAuditService.pending_list(
-            s, audit_status=MomentAuditStatusEnum.AUDITING
+            s, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         normal_resp = await MomentAuditService.pending_list(
-            s, audit_status=MomentAuditStatusEnum.NORMAL
+            s, audit_status=ResourceAuditStatusEnum.NORMAL
         )
         rejected_resp = await MomentAuditService.pending_list(
-            s, audit_status=MomentAuditStatusEnum.REJECTED
+            s, audit_status=ResourceAuditStatusEnum.REJECTED
         )
 
         audit_ids = {it.dynId for it in audit_resp.items}
@@ -408,24 +408,24 @@ async def test_reject_normal_word_moment_reverts():
     并立即从 normal 列表消失、进入 rejected 列表。"""
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.NORMAL
+            s, A_MID, audit_status=ResourceAuditStatusEnum.NORMAL
         )
         item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
             reject_reason="误过审，撤回"
         )
-        assert item.auditStatus == MomentAuditStatusEnum.REJECTED.value
+        assert item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
 
         dyn = (
             await s.exec(select(TMoment).where(TMoment.dynId == did))
         ).one_or_none()
-        assert dyn.auditStatus is MomentAuditStatusEnum.REJECTED
+        assert dyn.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert dyn.auditRejectReason == "误过审，撤回"
 
         normal_ids = {
             it.dynId
             for it in (
                 await MomentAuditService.pending_list(
-                    s, audit_status=MomentAuditStatusEnum.NORMAL
+                    s, audit_status=ResourceAuditStatusEnum.NORMAL
                 )
             ).items
         }
@@ -433,7 +433,7 @@ async def test_reject_normal_word_moment_reverts():
             it.dynId
             for it in (
                 await MomentAuditService.pending_list(
-                    s, audit_status=MomentAuditStatusEnum.REJECTED
+                    s, audit_status=ResourceAuditStatusEnum.REJECTED
                 )
             ).items
         }
@@ -447,7 +447,7 @@ async def test_reject_normal_word_moment_reverts():
 async def test_log_list_records_transition():
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve()
 
@@ -463,7 +463,7 @@ async def test_log_list_records_transition():
 async def test_detail_returns_snapshot_and_logs():
     async with new_session() as s:
         did = await _seed_moment(
-            s, A_MID, audit_status=MomentAuditStatusEnum.AUDITING
+            s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
             reject_reason="违规"
@@ -471,7 +471,7 @@ async def test_detail_returns_snapshot_and_logs():
 
         detail = await MomentAuditService.detail(s, did)
         assert detail.item is not None
-        assert detail.item.auditStatus == MomentAuditStatusEnum.REJECTED.value
+        assert detail.item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
         assert len(detail.logs) >= 1
         assert detail.logs[0].actionType == MomentAuditLogActionEnum.REJECT.value
 

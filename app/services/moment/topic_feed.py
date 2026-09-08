@@ -39,10 +39,9 @@ from app.models.db import (
 from bili_common.models import InteractionBizTypeEnum
 from bili_common.models.report import ReportAuditStatusEnum
 from app.models.enums import (
-    MomentAuditStatusEnum,
-    MomentTopicAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.moment import MomentTopicFeedResp
 from app.services.moment.edgerank import TOPIC_FEED_PROFILE
@@ -113,7 +112,7 @@ async def _recall_topic_feed_rows(
             .where(
                 col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
                 col(TResourceFeed.bizId).in_(topic_dyn_ids),
-                col(TResourceFeed.auditStatus) == "normal",
+                col(TResourceFeed.auditStatus) == ResourceAuditStatusEnum.NORMAL,
                 col(TResourceFeed.deletedAt).is_(None),
                 col(TResourceFeed.pubTime).isnot(None),
                 col(TResourceFeed.visibleScope) == MomentVisibleScopeEnum.PUBLIC,
@@ -162,7 +161,7 @@ class TopicFeedService:
             )
         ).one_or_none()
         # 话题 Feed 仅对审核通过的话题开放；不存在/非 normal 返回空流
-        if topic is None or topic.auditStatus is not MomentTopicAuditStatusEnum.NORMAL:
+        if topic is None or topic.auditStatus is not ResourceAuditStatusEnum.NORMAL:
             return MomentTopicFeedResp(topicId=topic_id, topicName="", items=[])
         topic_name = topic.topicName
 
@@ -180,7 +179,7 @@ class TopicFeedService:
             )
             stmt = (
                 select(TMoment)
-                .where(col(TMoment.auditStatus) == MomentAuditStatusEnum.NORMAL)
+                .where(col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL)
                 .where(col(TMoment.deletedAt).is_(None))
                 .where(col(TMoment.pubTime).isnot(None))
                 .where(col(TMoment.visibleScope) == MomentVisibleScopeEnum.PUBLIC)

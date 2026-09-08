@@ -34,8 +34,8 @@ from app.models.db import (
 )
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    MomentAuditStatusEnum,
-    MomentTopicAuditStatusEnum,
+    ResourceAuditStatusEnum,
+    ResourceAuditStatusEnum,
     MomentTypeEnum,
 )
 from app.services.moment.edgerank import (
@@ -323,7 +323,7 @@ async def _seed_moment(
         dynType=MomentTypeEnum.WORD,
         contentText="edgerank seed",
         contentJson=[{"type": "WORDS", "text": "edgerank seed"}],
-        auditStatus=MomentAuditStatusEnum.NORMAL,
+        auditStatus=ResourceAuditStatusEnum.NORMAL,
         pubTime=now,
         created_at=now,
         updated_at=now,
@@ -347,7 +347,7 @@ async def _seed_moment(
             bizId=did,
             mid=mid,
             pubTime=now,
-            auditStatus="normal",
+            auditStatus=ResourceAuditStatusEnum.NORMAL,
             tags=[],
         )
     )
@@ -374,7 +374,7 @@ def _seed_topic(
             sortWeight=sort_weight,
             dynCount=dyn_count,
             viewCount=view_count,
-            auditStatus=MomentTopicAuditStatusEnum.NORMAL,
+            auditStatus=ResourceAuditStatusEnum.NORMAL,
             pubTime=now,
             creatorMid=0,
             created_at=now,
