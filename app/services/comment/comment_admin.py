@@ -17,6 +17,8 @@ from sqlalchemy import func
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.schemas.audit import AuditStatisticsResp
+from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
 from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
@@ -41,6 +43,19 @@ DEFAULT_HIDDEN_REASON = "评论内容违反社区规范"
 
 
 class CommentAdminService:
+
+    @staticmethod
+    async def statistics(session: AsyncSession) -> AuditStatisticsResp:
+        """评论审核统计：按评论区类型 × auditStatus 二维聚合 CommentIndex。"""
+        rows = (
+            await session.exec(
+                select(CommentIndex.type, CommentIndex.auditStatus, func.count())
+                .select_from(CommentIndex)
+                .group_by(CommentIndex.type, CommentIndex.auditStatus)
+            )
+        ).all()
+        return agg_rows_to_resp([(type_key(t), status_key(s), c) for t, s, c in rows])
+
     """评论管理端操作。"""
 
     # ==================== 审核 ====================
@@ -335,6 +350,7 @@ class CommentAdminService:
     async def list_audit_queue(
         session: AsyncSession,
         states: list[ResourceAuditStatusEnum] | None = None,
+        biz_type: InteractionBizTypeEnum | None = None,
         page_num: int = 1,
         page_size: int = 20,
     ) -> tuple[list[CommentAuditItem], int]:
@@ -342,14 +358,19 @@ class CommentAdminService:
 
         `states` 由接口层根据调用者身份决定（root 可传任意状态，
         普通管理员被强制收敛为 `auditing`），此处不做鉴权。
+        `biz_type`（评论区资源类型：DYNAMIC/LOTTERY/…）与各 admin list 接口
+        统一参数名：有资源子类型维度的域均用该参数筛选。
         """
         states = states or [ResourceAuditStatusEnum.AUDITING, ResourceAuditStatusEnum.REJECTED]
+        conditions = [col(CommentIndex.auditStatus).in_(states)]
+        if biz_type is not None:
+            conditions.append(col(CommentIndex.type) == biz_type)
         total = int(
             (
                 await session.exec(
                     select(func.count())
                     .select_from(CommentIndex)
-                    .where(col(CommentIndex.auditStatus).in_(states))
+                    .where(*conditions)
                 )
             ).one()
             or 0
@@ -357,7 +378,7 @@ class CommentAdminService:
         rows = (
             await session.exec(
                 select(CommentIndex)
-                .where(col(CommentIndex.auditStatus).in_(states))
+                .where(*conditions)
                 .order_by(col(CommentIndex.rpid).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)

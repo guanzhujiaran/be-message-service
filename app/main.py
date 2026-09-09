@@ -29,6 +29,7 @@ from fastapi import FastAPI, Request, Response
 from faststream.rabbit import RabbitBroker
 from loguru import logger
 
+from app.api.audit import router as audit_router
 from app.api.avatar_audit import router as avatar_audit_router
 from app.api.ban import router as ban_router
 from app.api.comment import router as comment_router
@@ -276,6 +277,7 @@ app.include_router(comment_admin_router)
 app.include_router(moment_router)
 app.include_router(moment_feed_router)
 app.include_router(moment_audit_router)
+app.include_router(audit_router)
 app.include_router(moment_topic_audit_router)
 app.include_router(favorite_router)
 app.include_router(notify_router)

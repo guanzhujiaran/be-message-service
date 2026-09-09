@@ -25,9 +25,11 @@ from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
+from app.models.schemas.audit import AuditStatisticsResp
+from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
 from app.models.schemas.moment import (
     MomentAuditDetailResp,
     MomentAuditItem,
@@ -223,6 +225,7 @@ class MomentAuditService:
         session: AsyncSession,
         *,
         audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.AUDITING,
+        biz_type: MomentTypeEnum | None = None,
         page_num: int = 1,
         page_size: int = 20,
     ) -> MomentAuditListResp:
@@ -230,16 +233,20 @@ class MomentAuditService:
 
         2.30.0 起支持按状态筛选：auditing（待审核）/ normal（已过审，可执行「驳回」撤回）/
         rejected（已驳回，可执行「通过」恢复）/ hidden（已下架）。
+        `biz_type`（动态子类型 WORD/FORWARD/…）与各 admin list 接口统一：
+        有资源子类型维度的域均用该参数筛选（举报 / 评论同此风格）。
         """
         page_num = max(1, page_num)
         page_size = min(max(1, page_size), 50)
 
+        conditions = [col(TMoment.auditStatus) == audit_status]
+        if biz_type is not None:
+            conditions.append(col(TMoment.dynType) == biz_type)
+
         total = int(
             (
                 await session.exec(
-                    select(func.count())
-                    .select_from(TMoment)
-                    .where(col(TMoment.auditStatus) == audit_status)
+                    select(func.count()).select_from(TMoment).where(*conditions)
                 )
             ).one()
             or 0
@@ -247,7 +254,7 @@ class MomentAuditService:
         rows = (
             await session.exec(
                 select(TMoment)
-                .where(col(TMoment.auditStatus) == audit_status)
+                .where(*conditions)
                 .order_by(col(TMoment.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -264,10 +271,10 @@ class MomentAuditService:
     # ==================== 审核总统计（Phase M）====================
 
     @staticmethod
-    async def statistics(session: AsyncSession) -> dict:
+    async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """动态审核总统计：按 dynType × auditStatus 二维聚合 TMoment。
 
-        一次 GROUP BY 完成，禁止循环发 COUNT；返回结构化统计供管理后台概览。
+        一次 GROUP BY 完成，禁止循环发 COUNT；返回类型化统计供管理后台概览。
         """
         rows = (
             await session.exec(
@@ -277,46 +284,16 @@ class MomentAuditService:
             )
         ).all()
 
-        by_type: dict[str, dict[str, int]] = {}
-        by_status: dict[str, int] = {}
-        total = 0
-        for dyn_type, audit_status, cnt in rows:
-            tname = (
-                dyn_type.name
-                if isinstance(dyn_type, MomentTypeEnum)
-                else str(dyn_type)
-            )
-            # 统计桶 / byStatus 的键用枚举成员名小写（auditing/normal/rejected/hidden），
-            # 与 MomentAuditStatisticsResp 契约一致；`.value` 是 int（1-4），会导致前端取不到计数
-            sname = (
-                audit_status.name.lower()
-                if isinstance(audit_status, ResourceAuditStatusEnum)
-                else str(audit_status).lower()
-            )
-            bucket = by_type.setdefault(
-                tname,
-                {"auditing": 0, "normal": 0, "rejected": 0, "hidden": 0, "total": 0},
-            )
-            bucket[sname] = bucket.get(sname, 0) + cnt
-            bucket["total"] += cnt
-            by_status[sname] = by_status.get(sname, 0) + cnt
-            total += cnt
-
-        return {
-            "byType": [
-                {
-                    "dynType": tname,
-                    "auditing": b["auditing"],
-                    "normal": b["normal"],
-                    "rejected": b["rejected"],
-                    "hidden": b["hidden"],
-                    "total": b["total"],
-                }
-                for tname, b in by_type.items()
-            ],
-            "byStatus": by_status,
-            "total": total,
-        }
+        return agg_rows_to_resp(
+            [
+                (
+                    type_key(dyn_type),
+                    status_key(audit_status),
+                    cnt,
+                )
+                for dyn_type, audit_status, cnt in rows
+            ]
+        )
 
     # ==================== 审核记录流水（P6-T4）====================
 

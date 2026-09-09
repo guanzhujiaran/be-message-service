@@ -16,6 +16,9 @@ from sqlalchemy import func
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.schemas.audit import AuditStatisticsResp
+from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from sqlalchemy import distinct, func
 from app.models.db import DmMessageIndex
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas import (
@@ -32,6 +35,22 @@ from app.utils.notify_markup import markup_inline_link
 
 
 class DmAdminService:
+
+    @staticmethod
+    async def statistics(session: AsyncSession) -> AuditStatisticsResp:
+        """私信审核统计：按 auditStatus 聚合 DmMessageIndex（写扩散双行按 msgkey 去重）。"""
+        rows = (
+            await session.exec(
+                select(
+                    DmMessageIndex.auditStatus,
+                    func.count(distinct(col(DmMessageIndex.msgkey))),
+                )
+                .select_from(DmMessageIndex)
+                .group_by(DmMessageIndex.auditStatus)
+            )
+        ).all()
+        return agg_rows_to_resp([(None, status_key(s), c) for s, c in rows])
+
     """私信管理端操作。"""
 
     # ==================== 审核 ====================
@@ -379,10 +398,11 @@ class DmAdminService:
             (await session.exec(select(func.count()).select_from(subq))).one() or 0
         )
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # 今日新增：按 msgkey 去重（写扩散双行会重复计数），与 total_dm 口径一致
         today_new = int(
             (
                 await session.exec(
-                    select(func.count())
+                    select(func.count(distinct(col(DmMessageIndex.msgkey))))
                     .select_from(DmMessageIndex)
                     .where(col(DmMessageIndex.created_at) >= today_start)
                 )

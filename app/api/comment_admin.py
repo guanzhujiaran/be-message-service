@@ -13,11 +13,15 @@ Phase 5.3 的管理能力：
 恢复则把被下架 / 驳回的评论重新置 `normal`。
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 
+from bili_common.models import InteractionBizTypeEnum
 from app.core.database import SessionDep
 from app.dependencies import MsgAdminUser, RootUser
 from app.models import StandardResponse
+from app.models.str_int import StrInt
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas import (
     CommentAuditItem,
@@ -124,9 +128,15 @@ async def bulk_audit_comment(
 async def audit_queue(
     session: SessionDep,
     user: MsgAdminUser,
-    state: list[str] | None = Query(
+    state: Annotated[
+        list[StrInt] | None,
+        Query(
+            description="按状态过滤（状态数值：1=normal / 2=auditing / 3=rejected / 4=hidden / 5=deleted，可多选；仅 root 可用）",
+        ),
+    ] = None,
+    bizType: InteractionBizTypeEnum | None = Query(
         default=None,
-        description="按状态过滤，如 normal / auditing / rejected / hidden / deleted，可多选；仅 root 可用",
+        description="按评论区资源类型筛选（DYNAMIC/LOTTERY/…），缺省不过滤——各 admin list 接口统一参数名",
     ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
@@ -143,9 +153,9 @@ async def audit_queue(
     if user.is_root:
         if state:
             try:
-                states = [ResourceAuditStatusEnum(s) for s in state]
-            except ValueError:
-                return StandardResponse(code=400, msg="state 取值非法")
+                states = [ResourceAuditStatusEnum(int(x)) for x in state]
+            except (ValueError, KeyError):
+                return StandardResponse(code=400, msg="state 取值非法（仅接受状态数值）")
         else:
             states = _ROOT_DEFAULT_STATES
     else:
@@ -157,7 +167,7 @@ async def audit_queue(
         states = _LIMITED_STATES
 
     items, total = await CommentAdminService.list_audit_queue(
-        session, states=states, page_num=page_num, page_size=page_size
+        session, states=states, biz_type=bizType, page_num=page_num, page_size=page_size
     )
     # 评论正文（内容明文）对审核队列开放：非 root 仅能查看 auditing（待审核）内容，
     # 已审核内容（normal/rejected/hidden）只有 root 可见（由上方 states 限制保证）。

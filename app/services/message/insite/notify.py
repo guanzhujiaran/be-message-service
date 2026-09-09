@@ -326,12 +326,18 @@ class NotifyService:
         page_num: int = 1,
         page_size: int = 20,
         status: NotifyStatusEnum | None = None,
+        target_type: "NotifyTargetTypeEnum | None" = None,
     ) -> tuple[list[NotifyAdminItem], int]:
         stmt = select(NotifyMessage)
         count_stmt = select(func.count()).select_from(NotifyMessage)
         if status is not None:
             stmt = stmt.where(NotifyMessage.status == status)
             count_stmt = count_stmt.where(NotifyMessage.status == status)
+        if target_type is not None:
+            # 区分全局通知（ALL/ROLE/LEVEL/VIP）与定向用户通知（CUSTOM）时，前端传
+            # target_type 精确筛选；CUSTOM 即「单独的用户通知」。
+            stmt = stmt.where(NotifyMessage.target_type == target_type)
+            count_stmt = count_stmt.where(NotifyMessage.target_type == target_type)
         total = int((await session.exec(count_stmt)).one() or 0)
         stmt = (
             stmt.order_by(NotifyMessage.id.desc())  # type: ignore[union-attr]

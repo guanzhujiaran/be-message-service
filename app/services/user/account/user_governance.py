@@ -17,20 +17,19 @@ from app.models.db.ban_tbl import UserBan
 from app.models.enums import BanDurationTypeEnum, BanServiceEnum, BanStatusEnum
 from app.models.schemas.ban import BanItem, BanServiceStatus, BanStatusResp
 from app.services.user.account.base import PptrUser, _service_like
-from bili_common.deps.permissions import UserPermission
+from bili_common.deps.permissions import BizPermOp
+from bili_common.models.interaction import InteractionBizTypeEnum
 
 
 class UserGovernanceUser(PptrUser):
     """用户治理角色：封禁 / 解封（评论、私信、跨服务）+ 封禁记录查看。"""
 
-    ROLE_PERMISSIONS = frozenset(
-        {
-            UserPermission.COMMENT_BAN,
-            UserPermission.DM_BAN,
-            UserPermission.USER_BAN,
-            UserPermission.USER_BAN_VIEW,
-        }
-    )
+    # 用户治理：评论 / 私信 / 用户域的处置位（x=1；封禁记录查看 = 用户域查看位）
+    ROLE_BIZ_PERMS = {
+        InteractionBizTypeEnum.COMMENT: int(BizPermOp.BAN),
+        InteractionBizTypeEnum.DM: int(BizPermOp.BAN),
+        InteractionBizTypeEnum.USER: int(BizPermOp.BAN | BizPermOp.VIEW),
+    }
 
     # ==================== 封禁 / 解封 ====================
 

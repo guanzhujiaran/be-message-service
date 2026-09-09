@@ -32,7 +32,8 @@ from bili_common.models import (
     PptrUserSearchItem,
     PptrUserVipInfo,
 )
-from bili_common.deps.permissions import UserPermission
+from bili_common.deps.permissions import BizPermOp
+from bili_common.models.interaction import InteractionBizTypeEnum
 from loguru import logger
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -276,32 +277,32 @@ class PptrUser:
     不预取完整用户信息。权限以「集合」表达，支持运行时叠加多个权限。
     """
 
-    # 角色预设权限：基础用户为空（仅能操作自己的数据）
-    ROLE_PERMISSIONS: frozenset[UserPermission] = frozenset()
+    # 角色预设权限（per-biz 位掩码权限字）：基础用户为空（仅能操作自己的数据）
+    ROLE_BIZ_PERMS: dict[InteractionBizTypeEnum, int] = {}
 
     def __init__(
         self,
         *,
         mid: int,
-        permissions: Iterable[UserPermission] | None = None,
+        biz_perms: dict[InteractionBizTypeEnum, int] | None = None,
     ) -> None:
         self.mid = int(mid)
         # 账号状态：行存在且未被软删/注销（注销为物理删除，故不存在即视为停用）。
         # 构造期不做 DB 校验，状态以 `exists_active` / `load` 的返回为准；
         # 这里给一个乐观默认值，供轻量判定使用。
         self.is_active = True
-        # 权限 = 角色预设 ∪ 显式赋予（一个账号可叠加多个权限）
-        self.permissions: set[UserPermission] = set(self.ROLE_PERMISSIONS)
-        if permissions:
-            self.permissions.update(permissions)
+        # 权限 = 角色预设 ∪ 显式赋予（per-biz 权限字按位或合并）
+        self.biz_perms: dict[InteractionBizTypeEnum, int] = dict(self.ROLE_BIZ_PERMS)
+        if biz_perms:
+            for biz, mask in biz_perms.items():
+                self.biz_perms[biz] = self.biz_perms.get(biz, 0) | mask
 
-    # -------------------------- 权限 --------------------------
+    # -------------------------- 权限（Linux 按位检查） --------------------------
 
-    def has_permission(self, perm: UserPermission) -> bool:
-        return perm in self.permissions
-
-    def has_any_permission(self, *perms: UserPermission) -> bool:
-        return any(self.has_permission(p) for p in perms)
+    def has_biz_perm(
+        self, biz: InteractionBizTypeEnum, op: "BizPermOp | int"
+    ) -> bool:
+        return (int(self.biz_perms.get(biz, 0)) & int(op)) != 0
 
     @property
     def is_deactivated(self) -> bool:

@@ -4,7 +4,7 @@
 禁止其继续使用对应服务（评论 / 私信）。封禁数据自包含于本服务
 （`msg_user_ban`），不回写 pptr。
 
-权限分层（与 `bili_common.deps.permissions.UserPermission` 对齐）：
+权限分层（`bili_common.deps.permissions.BizPermOp` 位掩码，按资源域）：
 - `comment:ban`   —— 封禁 / 解封用户在评论服务（写入操作）；
 - `dm:ban`        —— 封禁 / 解封用户在私信服务（写入操作）；
 - `user:ban-view` —— 查看封禁记录与状态（只读，跨服务）。
@@ -21,7 +21,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import SQLModel
 
 from app.core.database import SessionDep
-from app.dependencies import CurrentUser, UserPermission, require_permission
+from app.dependencies import (
+    BizPermOp,
+    CurrentUser,
+    InteractionBizTypeEnum,
+    require_biz_perm,
+)
 from app.models import StandardResponse
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
 from app.models.str_int import StrInt
@@ -45,24 +50,24 @@ class _UnbanRes(SQLModel):
     lifted_count: int = 0
 
 
-# 服务维度 → 所需权限 的映射，用于封禁 / 解封时按服务逐项鉴权
-_SERVICE_BAN_PERM: dict[str, UserPermission] = {
-    "comment": UserPermission.COMMENT_BAN,
-    "dm": UserPermission.DM_BAN,
+# 服务维度 → 资源域 的映射，用于封禁 / 解封时按服务逐项鉴权（需要各域 BAN 位）
+_SERVICE_BAN_BIZ: dict[str, InteractionBizTypeEnum] = {
+    "comment": InteractionBizTypeEnum.COMMENT,
+    "dm": InteractionBizTypeEnum.DM,
 }
 
 
 def _check_ban_permissions(user: AuthInfo, services: list[str] | None) -> str | None:
-    """校验用户对每个目标服务都拥有对应封禁权限。
+    """校验用户对每个目标服务对应的资源域都持有处置位（BAN）。
 
     返回缺失权限的服务名（首个），全部满足则返回 None。
     `services` 为 None / 空时由调用方另行处理（解封全服务场景需拥有全部权限）。
     """
     for svc in services or []:
-        perm = _SERVICE_BAN_PERM.get(svc)
-        if perm is None:
+        biz = _SERVICE_BAN_BIZ.get(svc)
+        if biz is None:
             continue
-        if not user.has_permission(perm.value):
+        if not user.has_biz_perm(biz, BizPermOp.BAN):
             return svc
     return None
 
@@ -77,7 +82,7 @@ async def ban_users(
 
     按服务维度（comment / dm）封禁，给出理由与封禁时长
     （temporary + duration_days 限时 / permanent 永久）。
-    按服务逐项鉴权：请求含 comment 需 comment:ban、含 dm 需 dm:ban。
+    按服务逐项鉴权：请求含 comment 需 comment 域 BAN 位、含 dm 需 dm 域 BAN 位。
     """
     if not req.mids:
         return StandardResponse(code=400, msg="mids 不能为空")
@@ -136,12 +141,12 @@ async def unban_users(
 )
 async def list_bans(
     session: SessionDep,
-    user: Annotated[AuthInfo, Depends(require_permission(UserPermission.USER_BAN_VIEW))],
+    user: Annotated[AuthInfo, Depends(require_biz_perm(InteractionBizTypeEnum.USER, BizPermOp.VIEW))],
     status: BanStatusEnum | None = Query(default=None, description="过滤状态：active / lifted"),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[BanListResp]:
-    """分页查看封禁记录（root 或拥有 `user:ban-view` 权限的管理员）。"""
+    """分页查看封禁记录（root 或持有用户域查看位的管理员）。"""
     items, total = await UserGovernanceUser(mid=user.mid).list_bans(
         session, status=status, page_num=page_num, page_size=page_size
     )
@@ -159,7 +164,7 @@ async def list_bans(
 )
 async def ban_status(
     session: SessionDep,
-    user: Annotated[AuthInfo, Depends(require_permission(UserPermission.USER_BAN_VIEW))],
+    user: Annotated[AuthInfo, Depends(require_biz_perm(InteractionBizTypeEnum.USER, BizPermOp.VIEW))],
     mid: Annotated[
         StrInt,
         Query(..., description="待查询用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),

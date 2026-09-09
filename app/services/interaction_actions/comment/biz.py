@@ -16,6 +16,7 @@ from app.models.db.comment_tbl import CommentContent, CommentIndex, CommentRepor
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.interaction import InteractionResource
+from app.services.interaction_actions.base import InteractionAclScopeEnum
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
 from app.services.interaction_actions.common import ops
 
@@ -163,6 +164,50 @@ class CommentBiz(BaseBiz):
         if row is None:
             raise ValueError("评论不存在")
         return int(row.mid)
+
+    # ==================== 审核（统一 bizType+bizId 入口，bizId = rpid）====================
+    # 通知由 CommentAdminService.set_state 统一承载（驳回 / 下架发系统通知，通过按 D6 不发），
+    # 此处只做「资源方法化」：路由层经 get_biz(COMMENT, rpid).audit_*() 调用。
+
+    @biz_action(acl=[InteractionAclScopeEnum.AUDITOR_ONLY], require_resource=False)
+    async def audit_approve(self, remark: str | None = None, **kwargs):
+        """审核通过：评论状态 → NORMAL（非 NORMAL 翻转时补发互动通知由服务层处理）。"""
+        from app.services.comment.comment_admin import CommentAdminService
+
+        ok = await CommentAdminService.set_state(
+            self.session,
+            int(self.biz_id),
+            ResourceAuditStatusEnum.NORMAL,
+            note=remark,
+            operator_mid=int(self.actor_mid or 0),
+        )
+        if not ok:
+            raise ValueError("评论不存在")
+        return {
+            "rpid": str(self.biz_id),
+            "auditStatus": ResourceAuditStatusEnum.NORMAL,
+        }
+
+    @biz_action(acl=[InteractionAclScopeEnum.AUDITOR_ONLY], require_resource=False)
+    async def audit_reject(
+        self, reject_reason: str | None = None, remark: str | None = None, **kwargs
+    ):
+        """审核驳回：评论状态 → REJECTED，并由服务层向作者发驳回通知（附原因）。"""
+        from app.services.comment.comment_admin import CommentAdminService
+
+        ok = await CommentAdminService.set_state(
+            self.session,
+            int(self.biz_id),
+            ResourceAuditStatusEnum.REJECTED,
+            note=reject_reason or remark,
+            operator_mid=int(self.actor_mid or 0),
+        )
+        if not ok:
+            raise ValueError("评论不存在")
+        return {
+            "rpid": str(self.biz_id),
+            "auditStatus": ResourceAuditStatusEnum.REJECTED,
+        }
 
     async def hide(self, *, operator_mid: int = 0, **kwargs) -> None:
         """评论下架：`CommentIndex.auditStatus` 置 hidden。"""

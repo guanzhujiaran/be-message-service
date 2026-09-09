@@ -21,7 +21,7 @@ from bili_common.deps.auth import (
     get_auth_info_from_header,
 )
 from bili_common.deps.auth import (
-    require_permission as _require_permission,
+    require_biz_perm as _require_biz_perm,
 )
 from bili_common.deps.auth import (
     require_root as _require_root,
@@ -143,4 +143,4 @@ AdminUser = Annotated[AuthInfo, Depends(get_admin_user)]
 RootUser = AdminUser
 
 require_root = _require_root
-require_permission = _require_permission
+require_biz_perm = _require_biz_perm

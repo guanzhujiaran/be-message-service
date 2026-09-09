@@ -12,11 +12,14 @@ Phase 5.x 私信审核能力：
 `DmSessionObject.fetch_messages` 已过滤该状态，聊天窗对用户不可见。
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 
 from app.core.database import SessionDep
 from app.dependencies import MsgAdminUser, RootUser
 from app.models import StandardResponse
+from app.models.str_int import StrInt
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas import (
     DmAuditItem,
@@ -45,7 +48,9 @@ _ROOT_DEFAULT_STATES = list(ResourceAuditStatusEnum)
 _LIMITED_STATES = [ResourceAuditStatusEnum.AUDITING]
 
 
-@router.post("/audit", response_model=StandardResponse[DmAuditItem], summary="私信人工审核")
+@router.post(
+    "/audit", response_model=StandardResponse[DmAuditItem], summary="私信人工审核"
+)
 async def audit_dm(
     session: SessionDep,
     user: RootUser,
@@ -116,14 +121,18 @@ async def bulk_audit_dm(
     )
 
 
-@router.get("/audit", response_model=StandardResponse[DmAuditListResp], summary="私信审核队列")
+@router.get(
+    "/audit", response_model=StandardResponse[DmAuditListResp], summary="私信审核队列"
+)
 async def audit_queue(
     session: SessionDep,
     user: MsgAdminUser,
-    state: list[str] | None = Query(
-        default=None,
-        description="按状态过滤，如 normal / auditing / rejected / hidden，可多选；仅 root 可用",
-    ),
+    state: Annotated[
+        list[StrInt] | None,
+        Query(
+            description="按状态过滤（状态数值：1=normal / 2=auditing / 3=rejected / 4=hidden / 5=deleted，可多选；仅 root 可用）",
+        ),
+    ] = None,
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[DmAuditListResp]:
@@ -138,9 +147,9 @@ async def audit_queue(
     if user.is_root:
         if state:
             try:
-                states = [ResourceAuditStatusEnum(s) for s in state]
-            except ValueError:
-                return StandardResponse(code=400, msg="state 取值非法")
+                states = [ResourceAuditStatusEnum(int(x)) for x in state]
+            except (ValueError, KeyError):
+                return StandardResponse(code=400, msg="state 取值非法（仅接受状态数值）")
         else:
             states = _ROOT_DEFAULT_STATES
     else:

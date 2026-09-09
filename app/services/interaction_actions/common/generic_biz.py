@@ -224,6 +224,13 @@ class GenericResourceBiz(BaseBiz):
             raise InteractionActionError("审核调用失败，请稍后重试")
         if not result.success:
             raise InteractionActionError(result.message or "审核失败")
+        # 弱依赖：审核结果通知作者（驳回必达；通过同样提醒，便于作者感知发布结果）
+        await self._notify_audit_result(
+            author_mid=await self.resolve_accused(),
+            passed=decision == "approved",
+            reject_reason=None if decision == "approved" else note,
+            remark=note,
+        )
 
     @biz_action(acl=[])
     async def audit_approve(self, remark: str | None = None, **kwargs):

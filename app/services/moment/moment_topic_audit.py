@@ -15,6 +15,8 @@ from loguru import logger
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.schemas.audit import AuditStatisticsResp
+from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
 from app.models.db import TMomentTopic
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
@@ -71,16 +73,30 @@ def _new_session():
 
 
 class MomentTopicAuditService:
+
+    @staticmethod
+    async def statistics(session: AsyncSession) -> AuditStatisticsResp:
+        """话题审核统计：按 auditStatus 聚合 TMomentTopic（无子类型，byType 为空）。"""
+        rows = (
+            await session.exec(
+                select(TMomentTopic.auditStatus, func.count())
+                .select_from(TMomentTopic)
+                .group_by(TMomentTopic.auditStatus)
+            )
+        ).all()
+        return agg_rows_to_resp([(None, status_key(s), c) for s, c in rows])
+
     """话题审核服务（静态方法集合，无状态）。"""
 
     @staticmethod
     async def pending_list(
         session: AsyncSession,
         *,
+        audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.AUDITING,
         page_num: int = 1,
         page_size: int = 20,
     ) -> MomentTopicAuditListResp:
-        """管理端话题待审核列表：auditStatus=auditing，按创建时间倒序分页。"""
+        """管理端话题审核列表：按 auditStatus 筛选（默认待审核），创建时间倒序分页。"""
         page_num = max(1, page_num)
         page_size = min(max(1, page_size), 50)
 
@@ -89,7 +105,7 @@ class MomentTopicAuditService:
                 await session.exec(
                     select(func.count())
                     .select_from(TMomentTopic)
-                    .where(col(TMomentTopic.auditStatus) == ResourceAuditStatusEnum.AUDITING)
+                    .where(col(TMomentTopic.auditStatus) == audit_status)
                 )
             ).one()
             or 0
@@ -97,7 +113,7 @@ class MomentTopicAuditService:
         rows = (
             await session.exec(
                 select(TMomentTopic)
-                .where(col(TMomentTopic.auditStatus) == ResourceAuditStatusEnum.AUDITING)
+                .where(col(TMomentTopic.auditStatus) == audit_status)
                 .order_by(col(TMomentTopic.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)

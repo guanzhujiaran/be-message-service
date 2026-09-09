@@ -2,7 +2,7 @@
 
 授权数据自包含在 be-message-service，与 RPA 权限体系解耦：
 - 仅 root 管理员可授权 / 撤销其他用户的消息管理端权限；
-- `permissions` 为细粒度权限列表（与 `bili_common.deps.permissions.UserPermission` 同一套词表），
+- `biz_perms` 为各资源域权限字（per-biz 位掩码，见 `bili_common.deps.permissions.BizPermOp`），
   root 专属权限（查看内容明文 / 设置过审没过审）不可写入本表（落库前 sanitize）。
 """
 
@@ -27,11 +27,12 @@ class MessageAdmin(TimestampMixin, table=True):
     mid: int = Field(sa_type=BIGINT, index=True, description="被授予权限的用户 mid")
     # 授权者 mid（应为 root）
     granted_by: int = Field(sa_type=BIGINT, description="授权者 mid（root）")
-    # 细粒度权限列表，root 专属权限不可授予
-    permissions: list[str] = Field(
-        default_factory=list,
+    # 管理端权限（Linux 风格 per-biz 位掩码）：键=资源域文本（dynamic/dm/…），
+    # 值=权限字 0~7（VIEW=4 / AUDIT=2 / BAN=1，见 bili_common.deps.permissions.BizPermOp）
+    biz_perms: dict[str, int] = Field(
+        default_factory=dict,
         sa_column=Column(JSON),
-        description="细粒度权限列表（comment:view-queue / dm:view-queue 等，root 专属权限不可授予）",
+        description="各资源域权限字（如 {'dm': 7, 'comment': 4}；0~7，7=rwx 全权）",
     )
     note: str | None = Field(default=None, max_length=512, description="备注")
 

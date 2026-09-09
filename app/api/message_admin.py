@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin"])
 
 class GrantAdminReq(BaseModel):
     mid: StrInt = Query(..., description="被授予权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
-    permissions: list[str] = []
+    # 管理端权限（per-biz 位掩码）：键=资源域文本（dynamic/dm/…），值=权限字 0~7
+    biz_perms: dict[str, int] = {}
     note: str | None = None
 
 
@@ -33,7 +34,7 @@ class RevokeAdminReq(BaseModel):
 class AdminItem(BaseModel):
     mid: int
     granted_by: int
-    permissions: list[str]
+    biz_perms: dict[str, int]
     note: str | None
     created_at: datetime | None = None
 
@@ -44,19 +45,19 @@ async def grant_admin(
     user: RootUser,
     req: GrantAdminReq,
 ) -> StandardResponse[AdminItem]:
-    """授予 / 更新某用户的消息管理端权限。
+    """授予 / 更新某用户的消息管理端权限（per-biz 位掩码权限字，仅 root 调用）。
 
-    仅 root 可调用；root 专属权限（查看内容明文 / 设置过审没过审）会被自动剔除，
-    不会落入 `msg_admin` 表。
+    biz_perms 键为资源域文本（dynamic/comment/…），值为权限字 0~7（rwx 位掩码）；
+    落库前经 normalize_biz_perms 清洗（非法键丢弃、值截断到 3 位）。
     """
     admin = await MessageAdminService.grant(
-        session, user.mid, req.mid, req.permissions, req.note
+        session, user.mid, req.mid, req.biz_perms, req.note
     )
     return StandardResponse(
         data=AdminItem(
             mid=admin.mid,
             granted_by=admin.granted_by,
-            permissions=admin.permissions,
+            biz_perms=admin.biz_perms,
             note=admin.note,
             created_at=admin.created_at,
         )
@@ -91,7 +92,7 @@ async def list_admins(
                 AdminItem(
                     mid=a.mid,
                     granted_by=a.granted_by,
-                    permissions=a.permissions,
+                    biz_perms=a.biz_perms,
                     note=a.note,
                     created_at=a.created_at,
                 )
@@ -113,13 +114,13 @@ async def my_status(
     if user.is_root:
         return StandardResponse(
             data=AdminStatusResponse(
-                is_root=True, is_admin=True, permissions=["*"], mid=user.mid
+                is_root=True, is_admin=True, biz_perms={"*": 7}, mid=user.mid
             )
         )
     is_admin, perms = await MessageAdminService.get_status(session, user.mid)
     return StandardResponse(
         data=AdminStatusResponse(
-            is_root=False, is_admin=is_admin, permissions=perms, mid=user.mid
+            is_root=False, is_admin=is_admin, biz_perms=perms, mid=user.mid
         )
     )
 

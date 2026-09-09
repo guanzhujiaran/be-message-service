@@ -13,6 +13,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser, RootUser
 from app.models import StandardResponse
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.avatar_audit import (
     AvatarAuditApproveReq,
     AvatarAuditListResp,
@@ -45,11 +46,15 @@ async def avatar_audit_mine(
 async def avatar_audit_list(
     session: SessionDep,
     user: RootUser,
+    auditStatus: ResourceAuditStatusEnum = Query(
+        default=ResourceAuditStatusEnum.AUDITING,
+        description="审核状态筛选：auditing（默认）/normal/rejected/hidden",
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[AvatarAuditListResp]:
     data = await AvatarAuditService.pending_list(
-        session, page_num=page_num, page_size=page_size
+        session, audit_status=auditStatus, page_num=page_num, page_size=page_size
     )
     return StandardResponse(data=data)
 

@@ -394,6 +394,46 @@ class BaseBiz(ABC):
             )
         ).one_or_none()
 
+    async def _notify_audit_result(
+        self,
+        *,
+        author_mid: int | None,
+        passed: bool,
+        reject_reason: str | None = None,
+        remark: str | None = None,
+    ) -> None:
+        """审核结果通知作者（弱依赖，失败不阻塞）。
+
+        与 `_notify_report_result`（通知举报人）成对：审核驳回**必须**通知作者，
+        审核通过由各资源按策略决定是否调用（动态默认不通知）。
+        """
+        if not author_mid:
+            return
+        from app.models.schemas import EventReportReq
+        from app.services.message.insite.events import report_event_weakly
+
+        event_type = (
+            InteractionActionTypeEnum.AUDIT_APPROVE
+            if passed
+            else InteractionActionTypeEnum.AUDIT_REJECT
+        )
+        content = (
+            reject_reason
+            or remark
+            or ("你提交的内容已通过审核" if passed else "你提交的内容未通过审核")
+        )
+        await report_event_weakly(
+            EventReportReq(
+                mid=int(author_mid),
+                event_type=event_type,
+                source_type=self.biz_type,
+                source_id=str(self.biz_id),
+                actor_mid=self.actor_mid,
+                content=content,
+                biz_id=str(self.biz_id),
+            )
+        )
+
     async def _notify_report_result(self, rec, admin_mid: int, *, resolved: bool) -> None:
         """举报审核结果通知举报人（弱依赖，失败不阻塞）。"""
         from app.models.schemas import EventReportReq

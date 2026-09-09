@@ -17,7 +17,7 @@ from app.core.database import SessionDep
 from app.dependencies import RootUser
 from app.models import StandardResponse
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import ResourceAuditStatusEnum
+from app.models.enums import MomentTypeEnum, ResourceAuditStatusEnum
 from app.models.str_int import StrInt
 from app.models.schemas.moment import (
     MomentAuditActionReq,
@@ -27,8 +27,28 @@ from app.models.schemas.moment import (
     MomentAuditRejectReq,
     MomentAuditStatisticsResp,
 )
+from app.models.schemas.audit import AuditStatisticsResp
 from app.services.interaction_actions import get_biz
 from app.services.moment.moment_audit import MomentAuditService
+from app.services.moment.moment_topic_audit import MomentTopicAuditService
+from app.services.comment.comment_admin import CommentAdminService
+from app.services.message.dm.dm_admin import DmAdminService
+from app.services.user.avatar_audit import AvatarAuditService
+from app.services.user.folder_cover_audit import FolderCoverAuditService
+from app.services.admin.report import ReportService
+
+# 各业务域统计入口：各域 Biz / Service 类的静态方法（计划书 §5.13）。
+# 键直接复用 bili_common 收口的统一业务资源类型枚举（TOPIC/DM/AVATAR/FOLDER_COVER/REPORT
+# 为审核统计域补充成员，见 bili_common.models.interaction.InteractionBizTypeEnum）。
+_STAT_HANDLERS = {
+    InteractionBizTypeEnum.DYNAMIC: MomentAuditService.statistics,
+    InteractionBizTypeEnum.TOPIC: MomentTopicAuditService.statistics,
+    InteractionBizTypeEnum.COMMENT: CommentAdminService.statistics,
+    InteractionBizTypeEnum.DM: DmAdminService.statistics,
+    InteractionBizTypeEnum.AVATAR: AvatarAuditService.statistics,
+    InteractionBizTypeEnum.FOLDER_COVER: FolderCoverAuditService.statistics,
+    InteractionBizTypeEnum.REPORT: ReportService.statistics,
+}
 
 router = APIRouter(prefix="/api/v1/community/audit", tags=["moment-audit"])
 
@@ -45,12 +65,17 @@ async def audit_list(
         default=ResourceAuditStatusEnum.AUDITING,
         description="审核状态筛选：auditing（默认，待审核）/normal（已过审）/rejected（已驳回）/hidden（已下架）",
     ),
+    bizType: MomentTypeEnum | None = Query(
+        default=None,
+        description="按资源子类型筛选（动态类型：WORD/FORWARD/…），缺省不过滤——各 admin list 接口统一参数名",
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[MomentAuditListResp]:
     data = await MomentAuditService.pending_list(
         session,
         audit_status=auditStatus,
+        biz_type=bizType,
         page_num=page_num,
         page_size=page_size,
     )
@@ -59,15 +84,25 @@ async def audit_list(
 
 @router.get(
     "/statistics",
-    response_model=StandardResponse[MomentAuditStatisticsResp],
-    summary="动态审核总统计（按类型 + 按状态）",
+    response_model=StandardResponse[AuditStatisticsResp],
+    response_model_exclude_none=True,
+    summary="审核总统计（按 bizType 业务域：dynamic/topic/comment/dm/avatar/folder_cover/report）",
 )
 async def audit_statistics(
     session: SessionDep,
     user: RootUser,
-) -> StandardResponse[MomentAuditStatisticsResp]:
-    data = await MomentAuditService.statistics(session)
-    return StandardResponse(data=MomentAuditStatisticsResp(**data))
+    bizType: InteractionBizTypeEnum = Query(
+        default=InteractionBizTypeEnum.DYNAMIC,
+        description="统计业务域（InteractionBizTypeEnum 值：1=dynamic … 13=report），缺省 dynamic（向后兼容）",
+    ),
+) -> StandardResponse[AuditStatisticsResp]:
+    handler = _STAT_HANDLERS.get(bizType)
+    if handler is None:
+        return StandardResponse(
+            code=400, msg=f"业务类型 {bizType.to_text()} 暂不支持审核统计"
+        )
+    data = await handler(session)
+    return StandardResponse(data=data)
 
 
 @router.get(

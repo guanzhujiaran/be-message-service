@@ -19,6 +19,8 @@ from loguru import logger
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.schemas.audit import AuditStatisticsResp
+from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
 from app.models.db import TUserAvatarAudit
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas.avatar_audit import (
@@ -48,6 +50,19 @@ def _to_item(row: TUserAvatarAudit, brief) -> AvatarAuditItem:
 
 
 class AvatarAuditService:
+
+    @staticmethod
+    async def statistics(session: AsyncSession) -> AuditStatisticsResp:
+        """头像审核统计：按 auditStatus 聚合 TUserAvatarAudit（无子类型，byType 为空）。"""
+        rows = (
+            await session.exec(
+                select(TUserAvatarAudit.auditStatus, func.count())
+                .select_from(TUserAvatarAudit)
+                .group_by(TUserAvatarAudit.auditStatus)
+            )
+        ).all()
+        return agg_rows_to_resp([(None, status_key(s), c) for s, c in rows])
+
     """头像更换审核服务（静态方法集合，无状态）。"""
 
     # ==================== 用户侧：提交更换 ====================
@@ -137,10 +152,11 @@ class AvatarAuditService:
     async def pending_list(
         session: AsyncSession,
         *,
+        audit_status: ResourceAuditStatusEnum = ResourceAuditStatusEnum.AUDITING,
         page_num: int = 1,
         page_size: int = 20,
     ) -> AvatarAuditListResp:
-        """管理员待审核列表：auditStatus=pending，按创建时间倒序分页。"""
+        """管理端头像审核列表：按 auditStatus 筛选（默认待审核），创建时间倒序分页。"""
         page_num = max(1, page_num)
         page_size = min(max(1, page_size), 50)
 
@@ -149,7 +165,7 @@ class AvatarAuditService:
                 await session.exec(
                     select(func.count())
                     .select_from(TUserAvatarAudit)
-                    .where(TUserAvatarAudit.auditStatus == ResourceAuditStatusEnum.AUDITING)
+                    .where(TUserAvatarAudit.auditStatus == audit_status)
                 )
             ).one()
             or 0
@@ -157,7 +173,7 @@ class AvatarAuditService:
         rows = (
             await session.exec(
                 select(TUserAvatarAudit)
-                .where(TUserAvatarAudit.auditStatus == ResourceAuditStatusEnum.AUDITING)
+                .where(TUserAvatarAudit.auditStatus == audit_status)
                 .order_by(TUserAvatarAudit.created_at.desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)

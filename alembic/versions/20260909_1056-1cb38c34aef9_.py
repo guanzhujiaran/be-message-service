@@ -1,8 +1,8 @@
-"""rebuild audit unified full
+"""empty message
 
-Revision ID: fcf7bd3563de
+Revision ID: 1cb38c34aef9
 Revises: 
-Create Date: 2026-09-05 23:11:41.041966
+Create Date: 2026-09-09 10:56:07.819826
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'fcf7bd3563de'
+revision: str = '1cb38c34aef9'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -41,7 +41,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('viewerKey', sqlmodel.sql.sqltypes.AutoString(length=96), nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('feedScene', sqlmodel.sql.sqltypes.AutoString(length=32), nullable=False),
     sa.Column('impressionCount', sa.Integer(), nullable=False),
@@ -74,7 +74,7 @@ def upgrade() -> None:
     op.create_table('TInteractionStat',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), autoincrement=False, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), autoincrement=False, nullable=False),
     sa.Column('bizId', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('likeCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
     sa.Column('favoriteCount', sa.BIGINT(), server_default=sa.text('0'), nullable=False),
@@ -92,7 +92,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('viewCount', sa.Integer(), nullable=False),
@@ -109,7 +109,7 @@ def upgrade() -> None:
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('dynType', sa.Enum('FORWARD', 'WORD', name='momenttypeenum'), nullable=False),
     sa.Column('bizRid', sa.BIGINT(), nullable=True),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=True),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=True),
     sa.Column('contentText', sa.Text(), nullable=True),
     sa.Column('contentJson', sa.JSON(), nullable=False),
     sa.Column('repostSrcDynId', sa.BIGINT(), nullable=True),
@@ -170,7 +170,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('operatorRole', sa.Enum('AUTHOR', 'ADMIN', name='momentauditlogoperatorroleenum'), nullable=False),
@@ -192,7 +192,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.PrimaryKeyConstraint('pk', name='TResourceDislike_pkey'),
@@ -206,7 +206,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('folderId', sa.BIGINT(), nullable=False),
@@ -223,7 +223,7 @@ def upgrade() -> None:
     op.create_table('TResourceFeed',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), autoincrement=False, nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), autoincrement=False, nullable=False),
     sa.Column('bizId', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=True),
     sa.Column('pubTime', sa.DateTime(), nullable=True),
@@ -241,7 +241,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('pk', sa.BIGINT(), autoincrement=True, nullable=False),
-    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('bizType', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('bizId', sa.BIGINT(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('likeType', sa.Integer(), nullable=False),
@@ -341,7 +341,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('granted_by', sa.BIGINT(), nullable=False),
-    sa.Column('permissions', sa.JSON(), nullable=True),
+    sa.Column('biz_perms', sa.JSON(), nullable=True),
     sa.Column('note', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('mid', name='uq_msg_admin_mid')
@@ -368,7 +368,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('rpid', sa.BIGINT(), nullable=False),
     sa.Column('oid', sa.BIGINT(), nullable=False),
-    sa.Column('type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('from_mid', sa.BIGINT(), nullable=False),
     sa.Column('at_mid', sa.BIGINT(), nullable=False),
     sa.Column('notified', sa.Boolean(), nullable=False),
@@ -401,7 +401,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('rpid', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('oid', sa.BIGINT(), nullable=False),
-    sa.Column('type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('root', sa.BIGINT(), nullable=False),
     sa.Column('parent', sa.BIGINT(), nullable=False),
@@ -454,7 +454,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('oid', sa.BIGINT(), nullable=False),
-    sa.Column('type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('up_mid', sa.BIGINT(), nullable=False),
     sa.Column('root_count', sa.Integer(), nullable=False),
     sa.Column('all_count', sa.Integer(), nullable=False),
@@ -525,7 +525,7 @@ def upgrade() -> None:
     sa.Column('owner_mid', sa.BIGINT(), nullable=False),
     sa.Column('talker_mid', sa.BIGINT(), nullable=False),
     sa.Column('session_key', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
-    sa.Column('session_type', sa.Enum('SINGLE', name='dmsessiontypeenum'), nullable=False),
+    sa.Column('session_type', sa.Enum('SINGLE', 'STRANGER', name='dmsessiontypeenum'), nullable=False),
     sa.Column('talker_name', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('talker_avatar', sqlmodel.sql.sqltypes.AutoString(length=512), nullable=True),
     sa.Column('last_msgkey', sa.BIGINT(), nullable=True),
@@ -556,7 +556,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
     sa.Column('event_type', sa.Enum('LIKE', 'REPLY', 'AT', 'AUDIT_REJECT', 'HIDE', 'REPORT_REJECT', 'REPORT_RESOLVED', 'DISLIKE', 'FAVORITE', 'SHARE', 'REPOST', 'VIEW', 'REPORT', 'AUDIT_APPROVE', name='interactionactiontypeenum'), nullable=False),
-    sa.Column('source_type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', name='interactionbiztypeenum'), nullable=False),
+    sa.Column('source_type', sa.Enum('DYNAMIC', 'LOTTERY', 'RPA_ACTION', 'RPA_WORKFLOW', 'RPA_BROWSER', 'RPA_PLUGIN', 'COMMENT', 'USER', 'TOPIC', 'DM', 'AVATAR', 'FOLDER_COVER', 'REPORT', name='interactionbiztypeenum'), nullable=False),
     sa.Column('source_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('biz_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('actor_mid', sa.BIGINT(), nullable=False),

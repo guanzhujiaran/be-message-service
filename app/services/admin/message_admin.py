@@ -2,10 +2,10 @@
 
 授权数据自包含在 be-message-service 的 `msg_admin` 表内，与 RPA 权限体系解耦：
 - 仅 root 管理员可授权 / 撤销其他用户的消息管理端权限；
-- root 专属权限（查看内容明文 / 设置过审没过审）不可授予他人（落库前 sanitize）。
+- 权限为 per-biz 位掩码权限字（`biz_perms`，值 0~7）；内容明文 root 专属，不占权限位。
 """
 
-from bili_common.deps.permissions import sanitize_permissions
+from bili_common.deps.permissions import normalize_biz_perms
 from sqlmodel import func, select
 
 from app.core.database import SessionDep
@@ -18,25 +18,25 @@ class MessageAdminService:
         session: SessionDep,
         operator_mid: int,
         mid: int,
-        permissions: list[str],
+        biz_perms: dict[str, int] | None = None,
         note: str | None = None,
     ) -> MessageAdmin:
         """授予 / 更新某用户的消息管理端权限（仅 root 调用）。"""
-        # 清洗权限：剔除 root 专属权限，确保非 root 管理员永远拿不到敏感权限
-        safe_permissions = sanitize_permissions(permissions)
+        # 清洗权限：非法域丢弃、权限字截断到 0~7
+        safe_perms = normalize_biz_perms(biz_perms)
         existing = (
             await session.exec(select(MessageAdmin).where(MessageAdmin.mid == mid))
         ).first()
         if existing is not None:
             existing.granted_by = operator_mid
-            existing.permissions = safe_permissions
+            existing.biz_perms = safe_perms
             existing.note = note
             admin = existing
         else:
             admin = MessageAdmin(
                 mid=mid,
                 granted_by=operator_mid,
-                permissions=safe_permissions,
+                biz_perms=safe_perms,
                 note=note,
             )
             session.add(admin)
@@ -77,14 +77,14 @@ class MessageAdminService:
     @staticmethod
     async def get_status(
         session: SessionDep, mid: int
-    ) -> tuple[bool, list[str]]:
-        """返回某用户是否为消息管理端管理员及其权限列表。"""
+    ) -> tuple[bool, dict[str, int]]:
+        """返回某用户是否为消息管理端管理员及其各域权限字。"""
         admin = (
             await session.exec(select(MessageAdmin).where(MessageAdmin.mid == mid))
         ).first()
         if admin is None:
             return False, []
-        return True, admin.permissions or []
+        return True, admin.biz_perms or {}
 
 
 __all__ = ["MessageAdminService"]

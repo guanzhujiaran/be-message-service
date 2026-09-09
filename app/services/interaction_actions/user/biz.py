@@ -14,8 +14,10 @@ from sqlmodel import col, select
 from app.core.database import new_pptr_session
 from app.models.db.report_tbl import TUserReport
 from bili_common.models import InteractionBizTypeEnum
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.pptr_db import PptrUserInfo
 from app.models.schemas.interaction import InteractionResource
+from app.services.interaction_actions.base import InteractionAclScopeEnum
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
 
 __all__ = ["UserBiz"]
@@ -99,6 +101,57 @@ class UserBiz(BaseBiz):
         if not await self._exists():
             raise ValueError("用户不存在")
         return int(self.biz_id)
+
+    # ==================== 审核（头像审核，bizId = mid）====================
+    # 头像审核记录按 pk 定位，这里以 mid 反查该用户「待审核」的最新一条申请，
+    # 再委托 AvatarAuditService（通过 / 驳回均已内置系统通知）。
+
+    async def _pending_avatar_pk(self) -> int | None:
+        from app.models.db.avatar_audit_tbl import TUserAvatarAudit
+
+        row = (
+            await self.session.exec(
+                select(TUserAvatarAudit)
+                .where(
+                    col(TUserAvatarAudit.mid) == int(self.biz_id),
+                    col(TUserAvatarAudit.auditStatus)
+                    == ResourceAuditStatusEnum.AUDITING,
+                )
+                .order_by(col(TUserAvatarAudit.pk).desc())
+                .limit(1)
+            )
+        ).one_or_none()
+        return int(row.pk) if row is not None else None
+
+    @biz_action(acl=[InteractionAclScopeEnum.AUDITOR_ONLY], require_resource=False)
+    async def audit_approve(self, remark: str | None = None, **kwargs):
+        """头像审核通过：写入公开头像 + 通知用户（由 AvatarAuditService 承载）。"""
+        from app.services.user.avatar_audit import AvatarAuditService
+
+        pk = await self._pending_avatar_pk()
+        if pk is None:
+            raise ValueError("该用户没有待审核的头像申请")
+        return await AvatarAuditService.approve(
+            self.session, pk, operator_mid=int(self.actor_mid or 0), remark=remark
+        )
+
+    @biz_action(acl=[InteractionAclScopeEnum.AUDITOR_ONLY], require_resource=False)
+    async def audit_reject(
+        self, reject_reason: str | None = None, remark: str | None = None, **kwargs
+    ):
+        """头像审核驳回：保留原头像 + 通知用户并附驳回原因。"""
+        from app.services.user.avatar_audit import AvatarAuditService
+
+        pk = await self._pending_avatar_pk()
+        if pk is None:
+            raise ValueError("该用户没有待审核的头像申请")
+        return await AvatarAuditService.reject(
+            self.session,
+            pk,
+            operator_mid=int(self.actor_mid or 0),
+            reason=reject_reason or remark or "",
+            remark=remark,
+        )
 
     async def hide(self, **kwargs) -> None:
         """用户维度处置（禁言 / 封禁）**预留**，当前不执行任何动作。

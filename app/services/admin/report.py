@@ -21,6 +21,9 @@ from datetime import datetime
 from loguru import logger
 from sqlmodel import col, func, select
 
+from app.models.schemas.audit import AuditStatisticsResp
+from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas import (
@@ -163,6 +166,35 @@ def _model_for(biz_type) -> type:
 
 
 class ReportService:
+
+    @staticmethod
+    async def statistics(session: AsyncSession) -> AuditStatisticsResp:
+        """举报审核统计：跨**全部**举报表聚合（与 `admin/list` 无 biz_type 时的
+        跨表口径一致，避免统计 total 与列表 total 不一致）。
+
+        - auditStatus：1=pending / 2=resolved / 3=rejected；
+        - byType 按来源 bizType（InteractionBizTypeEnum 成员名）分组；
+        - 各表一次 GROUP BY 后内存归并（举报表总数固定且少）。
+        """
+        agg_rows: list[tuple[str, str, int]] = []
+        for model in _distinct_models():
+            sub_rows = (
+                await session.exec(
+                    select(model.bizType, model.auditStatus, func.count())
+                    .select_from(model)
+                    .group_by(model.bizType, model.auditStatus)
+                )
+            ).all()
+            agg_rows.extend(
+                (
+                    type_key(InteractionBizTypeEnum(int(bt))),
+                    status_key(ReportAuditStatusEnum(s)),
+                    c,
+                )
+                for bt, s, c in sub_rows
+            )
+        return agg_rows_to_resp(agg_rows)
+
     """统一举报服务（**协调器**：编排通用流程，资源差异全部下沉到各 BaseBiz 子类）。"""
 
     # ==================== 统一举报入口 ====================

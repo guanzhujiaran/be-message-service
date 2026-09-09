@@ -20,7 +20,7 @@ from fastapi import APIRouter, Query
 from app.core.database import SessionDep
 from app.dependencies import AdminUser, RequiredUser
 from app.models import StandardResponse
-from app.models.enums import NotifyStatusEnum
+from app.models.enums import NotifyStatusEnum, NotifyTargetTypeEnum
 from app.models.str_int import StrInt
 from app.models.schemas import (
     BiliSystemNotifyResp,
@@ -202,9 +202,17 @@ async def admin_list_notify(
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status: NotifyStatusEnum | None = Query(default=None, description="按状态筛选"),
+    target_type: NotifyTargetTypeEnum | None = Query(
+        default=None,
+        description="按目标类型筛选：1=全员（全局）/ 2=角色 / 3=等级 / 4=大会员 / 5=指定用户",
+    ),
 ) -> StandardResponse[NotifyAdminListResp]:
     items, total = await NotifyService.admin_list(
-        session, page_num=page_num, page_size=page_size, status=status
+        session,
+        page_num=page_num,
+        page_size=page_size,
+        status=status,
+        target_type=target_type,
     )
     return StandardResponse(
         data=NotifyAdminListResp(
