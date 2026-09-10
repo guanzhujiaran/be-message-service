@@ -50,6 +50,7 @@ from app.api.notify import router as notify_router
 from app.api.pptr_user_gateway import router as pptr_user_gateway_router
 from app.api.external_push import router as push_router
 from app.api.report import router as report_router
+from app.api.rpa_tag import router as rpa_tag_router
 from app.api.setting import router as setting_router
 from app.api.user import router as user_router
 from app.core.broker import broker
@@ -291,6 +292,7 @@ app.include_router(setting_router)
 app.include_router(user_router)
 app.include_router(push_router)
 app.include_router(report_router)
+app.include_router(rpa_tag_router)
 app.include_router(pptr_user_gateway_router)
 app.include_router(avatar_audit_router)
 app.include_router(folder_cover_audit_router)

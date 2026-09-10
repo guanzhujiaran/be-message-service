@@ -1,29 +1,15 @@
 """数据库表模型公共基类与列类型工具。"""
 
-from datetime import datetime
-
 from sqlalchemy import BIGINT
 from sqlmodel import Field, SQLModel
 from sqlalchemy import Enum as SAEnum
 
+from bili_common.models.db import BaseTimestamp
 from bili_common.models.interaction import InteractionBizTypeEnum
 
-
-class TimestampMixin(SQLModel):
-    """统一的创建 / 更新时间字段。"""
-
-    created_at: datetime = Field(
-        default_factory=datetime.now,
-        nullable=False,
-        index=True,
-        description="创建时间",
-    )
-    updated_at: datetime = Field(
-        default_factory=datetime.now,
-        nullable=False,
-        sa_column_kwargs={"onupdate": datetime.now},
-        description="更新时间",
-    )
+# 统一创建/更新时间基类：见 bili_common.models.db.BaseTimestamp
+# （created_at index=True + updated_at onupdate），避免各项目重复定义。
+TimestampMixin = BaseTimestamp
 
 
 class ResourceBase(SQLModel):

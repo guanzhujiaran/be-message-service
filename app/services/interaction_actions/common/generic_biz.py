@@ -207,6 +207,7 @@ class GenericResourceBiz(BaseBiz):
             InteractionBizTypeEnum.RPA_ACTION,
             InteractionBizTypeEnum.RPA_WORKFLOW,
             InteractionBizTypeEnum.RPA_PLUGIN,
+            InteractionBizTypeEnum.RPA_TAG,
         ):
             raise self._unsupported(
                 InteractionActionTypeEnum.AUDIT_APPROVE

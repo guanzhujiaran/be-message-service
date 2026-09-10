@@ -13,10 +13,20 @@ from bili_common.models.response import StandardResponse
 from bili_common.rpc.base import rpa_rpc_routing_key_for
 from bili_common.rpc.client import RpcClient
 from bili_common.rpc.rpa import (
+    AttachTagParams,
+    AttachTagResult,
+    CreateTagParams,
+    CreateTagResult,
+    DetachTagParams,
+    DetachTagResult,
     GetResourceDetailParams,
     GetResourceDetailResult,
     HideResourceParams,
     HideResourceResult,
+    ListTagsByTargetParams,
+    ListTagsByTargetResult,
+    ListTagsParams,
+    ListTagsResult,
     RpaRpcMethodName,
     ReviewResourceParams,
     ReviewResourceResult,
@@ -159,6 +169,155 @@ class RpaRpcClient:
             logger.warning(f"[RpaRpcClient] review_resource 业务失败: {resp.msg}")
             return None
         return ReviewResourceResult.model_validate(resp.data)
+
+
+    async def create_tag(
+        self, *, name: str, color: str, created_mid: int
+    ) -> CreateTagResult | None:
+        """创建资源标签（create_tag，weak dep）。RPC 失败返回 None。"""
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.CREATE_TAG)
+        payload = CreateTagParams(
+            name=name, color=color, createdMid=created_mid
+        ).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 create_tag")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning("[RpaRpcClient] create_tag 超时")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] create_tag 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] create_tag 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] create_tag 业务失败: {resp.msg}")
+            return None
+        return CreateTagResult.model_validate(resp.data)
+
+    async def attach_tag(
+        self, *, tag_id: int, target_type: str, target_id: str, created_mid: int
+    ) -> AttachTagResult | None:
+        """为资源关联标签（attach_tag，weak dep）。RPC 失败返回 None。"""
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.ATTACH_TAG)
+        payload = AttachTagParams(
+            tagId=tag_id,
+            targetType=target_type,
+            targetId=target_id,
+            createdMid=created_mid,
+        ).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 attach_tag")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning("[RpaRpcClient] attach_tag 超时")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] attach_tag 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] attach_tag 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] attach_tag 业务失败: {resp.msg}")
+            return None
+        return AttachTagResult.model_validate(resp.data)
+
+    async def detach_tag(
+        self, *, tag_id: int, target_type: str, target_id: str
+    ) -> DetachTagResult | None:
+        """移除资源上的标签（detach_tag，weak dep）。RPC 失败返回 None。"""
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.DETACH_TAG)
+        payload = DetachTagParams(
+            tagId=tag_id, targetType=target_type, targetId=target_id
+        ).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 detach_tag")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning("[RpaRpcClient] detach_tag 超时")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] detach_tag 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] detach_tag 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] detach_tag 业务失败: {resp.msg}")
+            return None
+        return DetachTagResult.model_validate(resp.data)
+
+    async def list_tags(
+        self, *, audit_status: str | None = None, page: int = 1, per_page: int = 20
+    ) -> ListTagsResult | None:
+        """列出标签（list_tags，weak dep）。RPC 失败返回 None。"""
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.LIST_TAGS)
+        payload = ListTagsParams(
+            auditStatus=audit_status, page=page, perPage=per_page
+        ).model_dump(exclude_none=True)
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 list_tags")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning("[RpaRpcClient] list_tags 超时")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] list_tags 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] list_tags 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] list_tags 业务失败: {resp.msg}")
+            return None
+        return ListTagsResult.model_validate(resp.data)
+
+    async def list_tags_by_target(
+        self, *, target_type: str, target_id: str
+    ) -> ListTagsByTargetResult | None:
+        """查询某资源关联的标签（list_tags_by_target，weak dep）。RPC 失败返回 None。"""
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.LIST_TAGS_BY_TARGET)
+        payload = ListTagsByTargetParams(
+            targetType=target_type, targetId=target_id
+        ).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 list_tags_by_target")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning("[RpaRpcClient] list_tags_by_target 超时")
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] list_tags_by_target 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[RpaRpcClient] list_tags_by_target 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            logger.warning(f"[RpaRpcClient] list_tags_by_target 业务失败: {resp.msg}")
+            return None
+        return ListTagsByTargetResult.model_validate(resp.data)
 
 
 # 全局单例

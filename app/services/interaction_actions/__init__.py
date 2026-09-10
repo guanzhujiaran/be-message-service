@@ -46,6 +46,7 @@ from app.services.interaction_actions.resources import (  # noqa: F401
     RpaActionBiz,
     RpaBrowserBiz,
     RpaPluginBiz,
+    RpaTagBiz,
     RpaWorkflowBiz,
     UserBiz,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "RpaActionBiz",
     "RpaBrowserBiz",
     "RpaPluginBiz",
+    "RpaTagBiz",
     "RpaWorkflowBiz",
     "UserBiz",
 ]
