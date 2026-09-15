@@ -28,9 +28,11 @@ from app.services.audit.link_checker import LinkCheckResult, check_links, extrac
 from app.services.audit.mask import mask_hits_by_category, mask_text, mask_word
 from app.services.audit.notify import DEFAULT_REJECT_TITLE, send_audit_notice
 from app.services.audit.word_filter import (
+    WHITELIST_FILE,
     WORDS_DIR,
     WordFilter,
     WordLevel,
+    load_whitelist,
     word_filter,
 )
 
@@ -51,4 +53,6 @@ __all__ = [
     "WordFilter",
     "WordLevel",
     "WORDS_DIR",
+    "load_whitelist",
+    "WHITELIST_FILE",
 ]

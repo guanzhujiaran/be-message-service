@@ -19,6 +19,7 @@ from app.services.audit.engine import (
     audit_text,
 )
 from app.services.audit.word_filter import WordLevel, word_filter
+from app.services.message.insite.notify import NotifyService
 
 # 词库目录 / 分类目录名（与模块常量一致，测试内字符串避免包遮蔽）
 _CAT_DIRNAME = "categories"
@@ -185,3 +186,73 @@ def test_reject_reason_contains_masked_words():
     assert result.rejected
     assert "诈*" in result.reason
     assert "诈骗" not in result.reason
+
+
+# ---------------- 误杀防护（词库切分 / 白名单 / 单字词） ----------------
+
+def test_phrase_with_space_not_split_into_common_fragments(words_dir):
+    """回归：带空格的短语（「燃烧弹 制作」）不得切出「制作」等通用碎片词误杀。
+
+    同时保留短语本身与其「去空白紧凑形式」的匹配能力。
+    """
+    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text("燃烧弹 制作\n", encoding="utf-8")
+    (words_dir / _LEVELS_FILENAME).write_text('{"涉枪涉爆类": "high"}', encoding="utf-8")
+    word_filter.load(force=True)
+
+    assert audit_text("感谢@某某 制作").passed  # 通用碎片词不再单独命中
+    assert audit_text("燃烧弹 制作").rejected  # 完整短语仍命中
+    assert audit_text("燃烧弹制作").rejected  # 紧凑写法同样命中
+
+    word_filter.load(force=True)  # 恢复
+
+
+def test_whitelist_exempts_common_word(words_dir):
+    """白名单词只在「整词相等」时豁免，长词仍正常命中。"""
+    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text("制作\n炸药配方与制作\n", encoding="utf-8")
+    (words_dir / _LEVELS_FILENAME).write_text('{"涉枪涉爆类": "high"}', encoding="utf-8")
+    (words_dir / "whitelist.txt").write_text("制作\n", encoding="utf-8")
+    word_filter.load(force=True)
+
+    assert audit_text("感谢@某某 制作").passed
+    assert audit_text("炸药配方与制作").rejected
+
+    word_filter.load(force=True)
+
+
+def test_single_char_word_ignored(words_dir):
+    """单字词无判别力（「枪」会误杀「水枪大战」），不参与匹配。"""
+    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text("枪\n手枪\n", encoding="utf-8")
+    (words_dir / _LEVELS_FILENAME).write_text('{"涉枪涉爆类": "high"}', encoding="utf-8")
+    word_filter.load(force=True)
+
+    assert audit_text("水枪大战").passed
+    assert audit_text("手枪").rejected
+
+    word_filter.load(force=True)
+
+
+# ---------------- 通知文案脱敏 ----------------
+
+async def test_notice_excerpt_masked(monkeypatch):
+    """回归：通知里的原文摘录必须先打码，不得把完整敏感词原样下发给作者。"""
+    from app.services.audit.notify import send_audit_notice
+
+    captured: dict[str, object] = {}
+
+    async def _fake_send(**kwargs):  # 替换真实的站内信发送，只断言文案
+        captured.update(kwargs)
+
+    monkeypatch.setattr(NotifyService, "send_to_user", _fake_send, raising=True)
+
+    result = audit_text("这是一个诈骗网站")
+    assert result.rejected
+    assert result.all_hit_words == ["诈骗"]
+
+    await send_audit_notice(
+        1, result, subject_label="动态", content_excerpt="这是一个诈骗网站，欢迎来看"
+    )
+
+    body = str(captured["content"])
+    assert "诈*" in body  # 摘录里的敏感词已打码
+    assert "诈骗" not in body  # 不得出现完整敏感词
+    assert "这是一个诈*网站" in body

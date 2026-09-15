@@ -9,6 +9,14 @@
 3. **DFA Trie 多模式匹配**：扫一遍文本命中全部词，复杂度 O(文本长度 × 字符)，
    比逐词子串扫描稳，可平滑扩展到上千词。
 4. **弱依赖边界**：词库加载失败 → 降级为空词库（宁可放行，不误杀），并可热加载重建。
+5. **防误杀三道闸**（词库是外部导入的，掺杂通用词会大面积误杀）：
+   - 分隔符**按文件类型区分**（对齐上游 sensitive-stop-words 官方格式）：
+     逗号分隔文件（`色情类.txt` / `政治类.txt`）按 `,` 切分，其余文件一行一词；
+     **不把 `|` `／` `、` 当分隔符**（它们不是词库分隔符，误切会产出「出售」「专卖」
+     等通用碎片词），也**不按空白切分**（`燃烧弹 制作` 不再切出「制作」），
+     带空格短语额外补一条去空白的紧凑形式；
+   - 长度 < `MIN_WORD_LEN`（单字，如「枪」「卖」）的词不参与匹配；
+   - `whitelist.txt` 里的通用词整词相等时豁免（长词照常命中）。
 
 本模块抽自 `services/comment/comment_audit.py` 的 DFA 实现，全系统复用。
 """
@@ -30,6 +38,13 @@ WORDS_DIR = os.environ.get("SENSITIVE_WORDS_DIR") or os.path.join(
 _HIGH_FILE = "high.txt"
 _MEDIUM_FILE = "medium.txt"
 _LOW_FILE = "low.txt"
+
+#: 误杀豁免词（白名单）：一行一词，与词表同格式。
+#: 词库里残留的通用词（如「制作」「方法」「电话」）单独命中不具判别力，
+#: 放进白名单后**整词相等**才豁免（长词仍按其本身规则生效）。
+WHITELIST_FILE = "whitelist.txt"
+#: 参与匹配的最小词长（单字词几乎无判别力，「卖」「枪」等会大面积误杀，直接丢弃）
+MIN_WORD_LEN = 2
 
 #: 分类词库目录：每个 `.txt` 为一个**词库自带分类**（分类名 = 文件名去扩展名）。
 #: 采用 sensitive-stop-words 等词库时，直接按仓库自带分类把词放进对应文件即可，
@@ -65,6 +80,7 @@ def categories_dir() -> str:
 #: 词库根目录里「非文本敏感词分类」的保留名（域名规则 / 映射配置 / 停止词不作文本敏感词）
 _RESERVED_FILENAMES = {
     LEVELS_FILE,  # levels.json
+    WHITELIST_FILE,  # 误杀豁免词，非敏感词
     "domains_blacklist.txt",
     "domains_whitelist.txt",
     "网址.txt",  # 域名黑名单数据（交由 link_checker 处理，不作文本敏感词）
@@ -75,22 +91,58 @@ _RESERVED_FILENAMES = {
 }
 
 
-def _split_line(line: str) -> list[str]:
-    """清洗一行词（兼容 sensitive-stop-words 的多分隔 / 尾逗号格式）。
+#: 上游词库中「逗号分隔」的文件（其余文件均为「一行一词」）。
+#: 见 https://github.com/fwwdn/sensitive-stop-words —— 官方仅 色情类 / 政治类 用逗号分隔。
+_COMMA_DELIMITED_FILES = frozenset({"色情类.txt", "政治类.txt"})
 
-    支持：`词` / `词,` / `词1,词2` / `词1、词2` / `词1|词2` / 空格分隔。
-    返回去空白、去空后保留的词列表。
+
+def _is_comma_delimited(path: str) -> bool:
+    """该词表文件是否按逗号分隔（只认文件名，与所在目录无关）。"""
+    return os.path.basename(path) in _COMMA_DELIMITED_FILES
+
+
+def _split_line(line: str, *, comma_delimited: bool = False) -> list[str]:
+    """清洗一行词（分隔符按文件类型区分，对齐 sensitive-stop-words 官方格式）。
+
+    上游词库只区分两种格式（见 README「词库概览」）：
+    - **逗号分隔**（`色情类.txt` / `政治类.txt`）：一行可含多词，按 `,` 切分；
+    - **一行一词**（`广告.txt` / `涉枪涉爆违法信息关键词.txt` / `stopword.dic` 等）：
+      整行即一个词。
+
+    **不把 `|` `／` `、` 当分隔符**：它们并非词库分隔符，误切会产出「出售」「专卖」
+    等通用碎片词（如 `猎枪出售/枪` → `猎枪出售`+`枪`、`气枪/出售/专卖网` → 含「出售」）。
+    **也不按空白切分**：词库里大量条目是「燃烧弹 制作」「TNT 炸弹的制作」这类
+    带空格的短语，按空格切开会产出「制作」「方法」「电话」等通用碎片词，
+    单独命中即误杀（如「感谢某某 制作」被判涉枪涉爆高危）。
+    对带空格的短语额外补一条「去空白的紧凑形式」，兼顾 `原子弹制作方法` 的写法。
     """
-    parts = []
-    for chunk in re.split(r"[,，、|/|\s]+", line):
+    chunks = re.split(r"[,，]+", line) if comma_delimited else [line]
+    parts: list[str] = []
+    for chunk in chunks:
         w = chunk.strip()
         if not w:
             continue
         # 去除成对/零星引号等纯标点残余
         w = w.strip("\"'“”‘’·.")
-        if w:
-            parts.append(w)
+        if not w:
+            continue
+        parts.append(w)
+        compact = re.sub(r"\s+", "", w)
+        if compact != w and len(compact) >= MIN_WORD_LEN:
+            parts.append(compact)
     return parts
+
+
+def load_whitelist() -> set[str]:
+    """加载误杀豁免词（`whitelist.txt`），不存在 / 读取失败返回空集合。"""
+    return set(_load_words_from_path(os.path.join(_effective_words_dir(), WHITELIST_FILE)))
+
+
+def _usable_word(word: str, whitelist: set[str]) -> bool:
+    """词条是否参与匹配：过短（单字）或在白名单里的通用词一律丢弃。"""
+    if len(word) < MIN_WORD_LEN:
+        return False
+    return word not in whitelist
 
 
 def load_category_levels() -> dict[str, str]:
@@ -177,12 +229,14 @@ class Trie:
 
 
 def _load_words_from_path(path: str) -> list[str]:
-    """从指定路径加载词（忽略注释行；每行按分隔符清洗成多词）。
+    """从指定路径加载词（忽略注释行；分隔符按文件类型区分）。
 
-    兼容 sensitive-stop-words 的 `词,` / `词1,词2` / 纯词 等格式。
+    逗号分隔文件（`色情类.txt` / `政治类.txt`）按 `,` 切分，其余文件一行一词，
+    对齐 sensitive-stop-words 官方格式（见 `_split_line`）。
     """
     if not os.path.isfile(path):
         return []
+    comma_delimited = _is_comma_delimited(path)
     words: list[str] = []
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -190,7 +244,7 @@ def _load_words_from_path(path: str) -> list[str]:
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#"):
                     continue
-                words.extend(_split_line(stripped))
+                words.extend(_split_line(stripped, comma_delimited=comma_delimited))
     except Exception:  # noqa: BLE001
         return []
     return words
@@ -224,6 +278,7 @@ class WordFilter:
         """
         self._categories = {}
         levels = load_category_levels()
+        whitelist = load_whitelist()
         # 候选目录：categories/ 子目录（若存在） + 词库根目录
         dirs: list[str] = []
         sub = categories_dir()
@@ -250,7 +305,10 @@ class WordFilter:
                 seen_categories.add(category)
                 level = _level_from_name(levels.get(category, "medium"))
                 trie = Trie()
-                words = _load_words_from_path(os.path.join(d, filename))
+                words = [
+                    w for w in _load_words_from_path(os.path.join(d, filename))
+                    if _usable_word(w, whitelist)
+                ]
                 for w in words:
                     trie.add(w)
                 if words:
@@ -261,10 +319,12 @@ class WordFilter:
         with self._lock:
             if self._loaded and not force:
                 return
+            whitelist = load_whitelist()
             for level in WordLevel:
                 trie = Trie()
                 for w in load_words_from_file(_LEVEL_FILE[level]):
-                    trie.add(w)
+                    if _usable_word(w, whitelist):
+                        trie.add(w)
                 self._tries[level] = trie
             self._load_categories_locked()
             self._loaded = True
@@ -278,8 +338,10 @@ class WordFilter:
         """管理端动态刷新词库（热加载，无需重启）。
 
         传入某层为 None 时不改动该层（保留当前已加载内容）。
+        同样过滤单字词与白名单词，与管理端 / 文件词库口径一致。
         """
         with self._lock:
+            whitelist = load_whitelist()
             provided = {
                 WordLevel.HIGH: high,
                 WordLevel.MEDIUM: medium,
@@ -290,7 +352,8 @@ class WordFilter:
                     continue
                 trie = Trie()
                 for w in words:
-                    trie.add(w)
+                    if _usable_word(w, whitelist):
+                        trie.add(w)
                 self._tries[level] = trie
             self._loaded = True
 
@@ -352,6 +415,9 @@ __all__ = [
     "word_filter",
     "load_words_from_file",
     "load_category_levels",
+    "load_whitelist",
+    "WHITELIST_FILE",
+    "MIN_WORD_LEN",
     "categories_dir",
     "WORDS_DIR",
 ]

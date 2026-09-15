@@ -1,8 +1,12 @@
 """审核结果 → 站内系统通知（给作者）。
 
 当自动审核**未通过（REJECT）**（或进人工 AUDIT）时，给内容作者发一条站内系统通知，
-告知未通过 / 进入审核的原因。正文里的敏感词**已打码**（复用 engine.reason 的脱敏文本，
-不泄露完整敏感词）；命中词**原文不随通知下发**（原文仅供审核流水 / 数据库存储用）。
+告知未通过 / 进入审核的原因。通知里出现的敏感词**全部打码**：
+- 原因 `reason` 已是脱敏文本（复用 engine 的打码结果）；
+- 内容摘录 `content_excerpt` 为作者原文，展示前用 `mask_text` 把命中词打码，
+  避免通知里二次暴露完整敏感词。
+
+命中词**原文不随通知下发**（原文仅供审核流水 / 数据库存储用）。
 
 弱依赖：发通知失败不影响主流程（NotifyService.send_to_user 内部已捕获异常）。
 """
@@ -11,6 +15,7 @@ from __future__ import annotations
 
 from app.models.enums import NotifyLevelEnum
 from app.services.audit.engine import AuditResult
+from app.services.audit.mask import mask_text
 from app.services.message.insite.notify import NotifyService
 
 # 未通过审核时的统一标题前缀（各资源拼接，如「动态」/「评论」）
@@ -32,7 +37,8 @@ async def send_audit_notice(
         author_mid: 内容作者 mid（通知接收人）。
         result: 统一审核引擎的结果（decision / reason）。
         subject_label: 内容类型标签，如「动态」「评论」「话题」，用于标题与首句。
-        content_excerpt: 被审内容简短摘录（可选，会一并告知但本身不应含敏感词）。
+        content_excerpt: 被审内容简短摘录（可选，摘录取自作者原文，
+            展示前会把命中的敏感词打码）。
         jump_url: 站内跳转目标（前端路由串 / 外链，可选）。
         creator_mid: 通知发起方（0 = 系统）。
     """
@@ -40,6 +46,9 @@ async def send_audit_notice(
         # 自动通过无需通知
         return
 
+    # 摘录取自原文：先把命中词打码，避免通知里二次暴露完整敏感词
+    if content_excerpt:
+        content_excerpt = mask_text(content_excerpt, result.all_hit_words)
     reason = (result.reason or "").strip()
     if result.need_manual:
         title = f"{subject_label}进入人工审核"
@@ -54,7 +63,7 @@ async def send_audit_notice(
         if content_excerpt:
             lines.append(f"内容：{content_excerpt}")
         if reason:
-            lines.append(f"命中：{reason}")
+            lines.append(f"原因：{reason}")
 
     await NotifyService.send_to_user(
         mid=author_mid,

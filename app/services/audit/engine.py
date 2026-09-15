@@ -83,6 +83,20 @@ class AuditResult:
     def need_manual(self) -> bool:
         return self.decision == AuditDecision.AUDIT
 
+    @property
+    def all_hit_words(self) -> list[str]:
+        """全部命中词**原文**（跨层级去重）。
+
+        仅供对外展示前脱敏（`mask_text(excerpt, result.all_hit_words)`）使用，
+        不要直接下发给用户——对外文案一律走打码。
+        """
+        out: list[str] = []
+        for words in self.hit_words.values():
+            for w in words:
+                if w not in out:
+                    out.append(w)
+        return out
+
 
 def audit_text(
     text: str,
@@ -203,7 +217,7 @@ def _hits_reason(
     if hit_categories:
         parts = []
         for cat, words in hit_categories.items():
-            masked = "、".join(sorted({mask_word(w) for w in words}))
+            masked = "、".join(sorted({mask_word(w) for w in _compact_hits(words)}))
             parts.append(f"{cat}：{masked}")
         return "；".join(parts)
     # ② 无分类：按层级列出打码词
@@ -212,9 +226,23 @@ def _hits_reason(
     for level in (WordLevel.HIGH, WordLevel.MEDIUM, WordLevel.LOW):
         words = hit_words.get(level) or []
         if words:
-            masked = "、".join(sorted({mask_word(w) for w in words}))
+            masked = "、".join(sorted({mask_word(w) for w in _compact_hits(words)}))
             parts.append(f"{label[level]}词：{masked}")
     return "；".join(parts)
+
+
+def _compact_hits(words: list[str]) -> list[str]:
+    """展示前压缩命中词：被更长命中词包含的短词不再重复列出。
+
+    例如同时命中「炸药」「出售炸药」时只展示「出售炸药」，
+    避免理由里出现一串互相包含的碎片（落库仍保留全部命中词，不丢审计信息）。
+    """
+    kept: list[str] = []
+    for w in sorted(set(words), key=len, reverse=True):
+        if any(w != k and w in k for k in kept):
+            continue
+        kept.append(w)
+    return kept
 
 
 __all__ = [
