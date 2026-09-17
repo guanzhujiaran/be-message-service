@@ -83,7 +83,7 @@ class MessageAdminService:
             await session.exec(select(MessageAdmin).where(MessageAdmin.mid == mid))
         ).first()
         if admin is None:
-            return False, []
+            return False, {}
         return True, admin.biz_perms or {}
 
 
