@@ -6,10 +6,11 @@ from datetime import UTC, datetime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import NotifyLevelEnum, NotifyStatusEnum, NotifyTargetTypeEnum
-from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.base import auto_str
 
 
-class NotifyCreateReq(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyCreateReq(SQLModel):
     """管理员发布通知的请求体。"""
 
     title: str = Field(min_length=1, max_length=256, description="通知标题")
@@ -35,7 +36,8 @@ class NotifyCreateReq(SQLModel, AutoStrMixin):
     )
 
 
-class NotifyUpdateReq(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyUpdateReq(SQLModel):
     """管理员修改通知（仅草稿态可改内容）。"""
 
     title: str | None = Field(default=None, max_length=256)
@@ -49,7 +51,8 @@ class NotifyUpdateReq(SQLModel, AutoStrMixin):
     status: NotifyStatusEnum | None = Field(default=None)
 
 
-class NotifyItem(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyItem(SQLModel):
     """用户侧看到的一条系统通知。"""
 
     id: int
@@ -64,7 +67,8 @@ class NotifyItem(SQLModel, AutoStrMixin):
     dispatched: bool = False
 
 
-class NotifyAdminItem(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyAdminItem(SQLModel):
     """管理员侧看到的通知（含投放配置与状态）。"""
 
     id: int
@@ -82,7 +86,8 @@ class NotifyAdminItem(SQLModel, AutoStrMixin):
     created_at: datetime
 
 
-class NotifyPullResp(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyPullResp(SQLModel):
     """定时拉取通知的响应。
 
     `cursor` 为本次拉取后的新游标，客户端下次带上即可只拿增量；
@@ -95,7 +100,8 @@ class NotifyPullResp(SQLModel, AutoStrMixin):
     has_more: bool = Field(default=False, description="是否还有更多增量")
 
 
-class NotifyListResp(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyListResp(SQLModel):
     """用户侧分页查看历史通知。"""
 
     items: list[NotifyItem] = Field(default_factory=list)
@@ -104,7 +110,8 @@ class NotifyListResp(SQLModel, AutoStrMixin):
     page_size: int = 20
 
 
-class NotifyAdminListResp(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyAdminListResp(SQLModel):
     """管理员侧分页查看通知（含投放配置）。"""
 
     items: list[NotifyAdminItem] = Field(default_factory=list)
@@ -113,7 +120,8 @@ class NotifyAdminListResp(SQLModel, AutoStrMixin):
     page_size: int = 20
 
 
-class NotifyDeleteReq(SQLModel, AutoStrMixin):
+@auto_str
+class NotifyDeleteReq(SQLModel):
     """删除通知请求（仅管理员，逐用户软删）。"""
 
     notify_ids: list[int] | None = Field(default=None, description="要删除的通知id列表")
@@ -122,14 +130,16 @@ class NotifyDeleteReq(SQLModel, AutoStrMixin):
 # ==================== 模仿 B 站系统通知接口 ====================
 
 
-class SystemNotifySource(SQLModel, AutoStrMixin):
+@auto_str
+class SystemNotifySource(SQLModel):
     """B 站系统通知的 source 字段（官方账号头像 / 名称）。"""
 
     name: str = ""
     logo: str = ""
 
 
-class SystemNotifyItem(SQLModel, AutoStrMixin):
+@auto_str
+class SystemNotifyItem(SQLModel):
     """模仿 B 站 `/x/v2/feedsystem/system_notify/get` 的列表项。
 
     - `cursor`：发布时间（UTC）的纳秒时间戳，与 B 站一致。
@@ -175,13 +185,15 @@ class SystemNotifyItem(SQLModel, AutoStrMixin):
         )
 
 
-class SystemNotifyListResp(SQLModel, AutoStrMixin):
+@auto_str
+class SystemNotifyListResp(SQLModel):
     """B 站系统通知列表的 data 体。"""
 
     system_notify_list: list[SystemNotifyItem] = Field(default_factory=list)
 
 
-class BiliSystemNotifyResp(SQLModel, AutoStrMixin):
+@auto_str
+class BiliSystemNotifyResp(SQLModel):
     """模仿 B 站系统通知接口的完整响应包（含 code/msg/message/ttl 外壳）。"""
 
     code: int = 0

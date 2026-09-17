@@ -18,7 +18,7 @@ from sqlmodel import Field, SQLModel
 
 from app.models.biz_type import source_type_label
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
-from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.base import auto_str
 
 # business（= source_type）的文字名称不再在本模块维护：
 # 展示名统一由 `app.models.biz_type.source_type_label()` 供给——
@@ -41,7 +41,8 @@ class EventUserBrief(SQLModel):
     follow: bool = False
 
 
-class EventReportReq(SQLModel, AutoStrMixin):
+@auto_str
+class EventReportReq(SQLModel):
     """上报一条用户行为事件（由业务方 / 爬虫服务调用）。
 
     仅上报「定位所需的 id + 事件自身的正文」：
@@ -66,7 +67,8 @@ class EventReportReq(SQLModel, AutoStrMixin):
     )
 
 
-class EventReportResp(SQLModel, AutoStrMixin):
+@auto_str
+class EventReportResp(SQLModel):
     """上报结果。"""
 
     accepted: bool = True
@@ -74,7 +76,8 @@ class EventReportResp(SQLModel, AutoStrMixin):
     duplicated: bool = False
 
 
-class EventItem(SQLModel, AutoStrMixin):
+@auto_str
+class EventItem(SQLModel):
     """明细列表中的一条事件。
 
     `title` / `image` 读取时按 source_id 实时回捞原资源补全（见 Phase L2），不冗余存储；
@@ -99,7 +102,8 @@ class EventItem(SQLModel, AutoStrMixin):
     created_at: datetime
 
 
-class EventAggregateItem(SQLModel, AutoStrMixin):
+@auto_str
+class EventAggregateItem(SQLModel):
     """按 source_type + source_id 聚合后的一张卡片。
 
     例如「张三、李四等 12 人赞了你的动态」，
@@ -127,7 +131,8 @@ class EventAggregateItem(SQLModel, AutoStrMixin):
     latest_at: datetime | None = Field(default=None, description="分组内最新事件时间")
 
 
-class EventMsgfeedContent(SQLModel, AutoStrMixin):
+@auto_str
+class EventMsgfeedContent(SQLModel):
     """聚合条目中的内容实体（对齐 B 站 msgfeed 的 item）。
 
     评论层级关系（root_id / source_id / target_id）与正文（source_content /
@@ -188,7 +193,8 @@ class EventMsgfeedContent(SQLModel, AutoStrMixin):
         return source_type_label(st)
 
 
-class EventMsgfeedItem(SQLModel, AutoStrMixin):
+@auto_str
+class EventMsgfeedItem(SQLModel):
     """msgfeed 聚合列表中的一条（users + item）。"""
 
     id: int
@@ -198,7 +204,8 @@ class EventMsgfeedItem(SQLModel, AutoStrMixin):
     notice_state: int = 0
 
 
-class EventMsgfeedSection(SQLModel, AutoStrMixin):
+@auto_str
+class EventMsgfeedSection(SQLModel):
     """msgfeed 分段（latest / total）。"""
 
     cursor: "EventMsgfeedCursor"
@@ -213,7 +220,8 @@ class EventMsgfeedCursor(SQLModel):
     time: datetime | None = None
 
 
-class EventListResp(SQLModel, AutoStrMixin):
+@auto_str
+class EventListResp(SQLModel):
     """消息中心列表响应：latest 为最新一条，total 为完整分页。
 
     `total_count` / `unread_count` 用于**对账**——列表按「来源实体」聚合，单页只返回
@@ -234,7 +242,8 @@ class EventListResp(SQLModel, AutoStrMixin):
     )
 
 
-class EventAggregateResp(SQLModel, AutoStrMixin):
+@auto_str
+class EventAggregateResp(SQLModel):
     """聚合卡片列表响应。"""
 
     items: list[EventAggregateItem]
@@ -262,7 +271,8 @@ class EventReadReq(SQLModel):
     )
 
 
-class EventReadResp(SQLModel, AutoStrMixin):
+@auto_str
+class EventReadResp(SQLModel):
     """已读结果。"""
 
     affected: int = 0
@@ -291,7 +301,8 @@ class EventUnreadResp(SQLModel):
     total: int = Field(default=0, description="全站未读总数")
 
 
-class EventPushPayload(SQLModel, AutoStrMixin):
+@auto_str
+class EventPushPayload(SQLModel):
     """站内信推送载荷（与消息推送子系统对齐）。"""
 
     event_id: int

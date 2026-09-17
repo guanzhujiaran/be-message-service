@@ -12,7 +12,7 @@ from app.models.enums import (
     DmSessionTypeEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
-from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.base import auto_str
 from app.models.schemas.user_brief import UserBriefOut
 from app.models.str_int import StrInt
 
@@ -41,7 +41,8 @@ class DmSendResp(SQLModel):
     )
 
 
-class DmSessionItem(SQLModel, AutoStrMixin):
+@auto_str
+class DmSessionItem(SQLModel):
     """会话列表中的一个会话。"""
 
     talker_mid: int
@@ -85,7 +86,8 @@ class DmSessionListResp(SQLModel):
     )
 
 
-class DmMessageItem(SQLModel, AutoStrMixin):
+@auto_str
+class DmMessageItem(SQLModel):
     """聊天记录中的一条消息。"""
 
     msgkey: str
@@ -160,7 +162,8 @@ class DmTopReq(SQLModel):
     top: bool = Field(description="true=置顶（top_ts=now）；false=取消置顶（top_ts=0）")
 
 
-class DmTopResp(SQLModel, AutoStrMixin):
+@auto_str
+class DmTopResp(SQLModel):
     """置顶操作结果。"""
 
     talker_mid: int = Field(default=0, description="被置顶/取消的会话对方 mid")
@@ -169,7 +172,8 @@ class DmTopResp(SQLModel, AutoStrMixin):
     affected: int = Field(default=0, description="受影响会话行数（0=会话不存在或幂等无操作）")
 
 
-class DmAuditItem(SQLModel, AutoStrMixin):
+@auto_str
+class DmAuditItem(SQLModel):
     """私信审核队列中的一条消息。"""
 
     msgkey: str = Field(description="消息全局唯一键（字符串）")
@@ -234,7 +238,8 @@ class DmAuditListResp(SQLModel):
     )
 
 
-class DmSessionContextResp(SQLModel, AutoStrMixin):
+@auto_str
+class DmSessionContextResp(SQLModel):
     """私信会话上下文（管理端「内容来源」点击后查看前后消息）。"""
 
     session_key: str

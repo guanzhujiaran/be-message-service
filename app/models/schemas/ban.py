@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
-from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.base import auto_str
 from app.models.str_int import StrInt
 
 
@@ -43,7 +43,8 @@ class UnbanReq(SQLModel):
     )
 
 
-class BanItem(SQLModel, AutoStrMixin):
+@auto_str
+class BanItem(SQLModel):
     """单条封禁记录（列表 / 回显用）。"""
 
     id: int
@@ -68,7 +69,8 @@ class BanListResp(SQLModel):
     page_size: int = 20
 
 
-class BanStatusResp(SQLModel, AutoStrMixin):
+@auto_str
+class BanStatusResp(SQLModel):
     """某用户的封禁状态汇总（按服务维度）。"""
 
     mid: int
@@ -79,7 +81,8 @@ class BanStatusResp(SQLModel, AutoStrMixin):
     )
 
 
-class BanServiceStatus(SQLModel, AutoStrMixin):
+@auto_str
+class BanServiceStatus(SQLModel):
     """单个服务的封禁状态明细。"""
 
     banned: bool = Field(description="该服务是否当前生效中")

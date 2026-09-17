@@ -12,8 +12,9 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
-from app.models.schemas.base import AutoStrMixin
-class SpaceOfficial(SQLModel, AutoStrMixin):
+from app.models.schemas.base import auto_str
+@auto_str
+class SpaceOfficial(SQLModel):
     """官方认证信息（pptr 无数据源，固定返回空结构）。"""
 
     role: int = 0
@@ -22,7 +23,8 @@ class SpaceOfficial(SQLModel, AutoStrMixin):
     type: int = -1
 
 
-class SpaceVip(SQLModel, AutoStrMixin):
+@auto_str
+class SpaceVip(SQLModel):
     """大会员信息（映射 pptr TUserVip）。"""
 
     type: int = 0
@@ -30,13 +32,15 @@ class SpaceVip(SQLModel, AutoStrMixin):
     due_date: int = 0
 
 
-class SpaceVipLabel(SQLModel, AutoStrMixin):
+@auto_str
+class SpaceVipLabel(SQLModel):
     """大会员角标文案（pptr 无数据源，固定为空）。"""
 
     text: str = ""
 
 
-class SpaceVipWrap(SQLModel, AutoStrMixin):
+@auto_str
+class SpaceVipWrap(SQLModel):
     """大会员完整信息（对标 B 站 acc/info 的 vip 结构）。"""
 
     type: int = 0
@@ -45,7 +49,8 @@ class SpaceVipWrap(SQLModel, AutoStrMixin):
     label: SpaceVipLabel = Field(default_factory=SpaceVipLabel)
 
 
-class SpaceFollowStat(SQLModel, AutoStrMixin):
+@auto_str
+class SpaceFollowStat(SQLModel):
     """关注 / 粉丝 / 互关计数（2.32.0：内联自 `GET /api/v1/message/follow/stat`）。
 
     与 `FollowCountResp` 字段一致，但**不带** `mid`（外层 `SpaceInfoResp.mid` 已冗余），
@@ -57,7 +62,8 @@ class SpaceFollowStat(SQLModel, AutoStrMixin):
     mutual_count: int = Field(default=0, description="互相关注数")
 
 
-class SpaceUpStat(SQLModel, AutoStrMixin):
+@auto_str
+class SpaceUpStat(SQLModel):
     """空间动态统计（2.32.0：内联自 `GET /api/v1/community/upstat`）。
 
     与 `MomentUpStatResp` 统计字段一致，同样**不带** `mid`。
@@ -67,7 +73,8 @@ class SpaceUpStat(SQLModel, AutoStrMixin):
     like_count: int = Field(default=0, description="这些动态被点赞的总数")
 
 
-class SpaceInfoResp(SQLModel, AutoStrMixin):
+@auto_str
+class SpaceInfoResp(SQLModel):
     """用户空间完整资料（对标 B 站 `/x/space/wbi/acc/info` 的 data）。
 
     2.32.0：新增 `follow_stat` / `upstat` 两个**只读派生聚合字段**，把原本需要

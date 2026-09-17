@@ -12,8 +12,9 @@ from app.models.str_int import StrInt
 from app.models.schemas.interaction import InteractionResource
 
 
-from app.models.schemas.base import AutoStrMixin
-class ReportCreateReq(SQLModel, AutoStrMixin):
+from app.models.schemas.base import auto_str
+@auto_str
+class ReportCreateReq(SQLModel):
     """统一举报请求（评论 / 动态 / 用户空间 / RPA 资源）。"""
 
     bizType: InteractionBizTypeEnum = Field(description="举报来源类型（InteractionBizTypeEnum 值，即业务资源类型：dynamic/lottery/rpa_*/comment/user）")
@@ -23,7 +24,8 @@ class ReportCreateReq(SQLModel, AutoStrMixin):
     pics: list[str] | None = Field(default=None, description="证据图片 URL 列表（http(s)，最多 3 张）")
 
 
-class ReportItem(SQLModel, AutoStrMixin):
+@auto_str
+class ReportItem(SQLModel):
     """统一举报记录展示项。"""
 
     pk: int
@@ -54,7 +56,8 @@ class ReportItem(SQLModel, AutoStrMixin):
     )
 
 
-class ReportListResp(SQLModel, AutoStrMixin):
+@auto_str
+class ReportListResp(SQLModel):
     """统一举报管理端列表响应。"""
 
     items: list[ReportItem]
@@ -63,7 +66,8 @@ class ReportListResp(SQLModel, AutoStrMixin):
     pageSize: int
 
 
-class ReportReviewReq(SQLModel, AutoStrMixin):
+@auto_str
+class ReportReviewReq(SQLModel):
     """统一举报管理端审核请求。"""
 
     reportPk: int = Field(description="举报记录主键")

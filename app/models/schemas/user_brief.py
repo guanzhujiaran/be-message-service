@@ -24,11 +24,12 @@ from typing import Annotated
 
 from sqlmodel import SQLModel
 
-from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.base import auto_str
 from app.models.schemas.visibility import Private, VisibilityMixin
 
 
-class UserBriefOut(SQLModel, AutoStrMixin, VisibilityMixin):
+@auto_str
+class UserBriefOut(SQLModel, VisibilityMixin):
     """用户展示简档：他人可见字段 + 本人 / 管理员可见的私域字段。
 
     私域字段在他人视角下由序列化器自动剥离，装配层**不需要**（也不应该）

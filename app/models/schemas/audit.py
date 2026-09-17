@@ -18,8 +18,9 @@ from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import Field, SQLModel
 
 
-from app.models.schemas.base import AutoStrMixin
-class AuditSourceInfo(SQLModel, AutoStrMixin):
+from app.models.schemas.base import auto_str
+@auto_str
+class AuditSourceInfo(SQLModel):
     """审核项的内容来源（供管理端点击直达原始内容）。"""
 
     kind: str = Field(description="来源大类：comment 评论 / dm 私信")
@@ -40,7 +41,8 @@ class AuditSourceInfo(SQLModel, AutoStrMixin):
     )
 
 
-class AuditApproveReq(SQLModel, AutoStrMixin):
+@auto_str
+class AuditApproveReq(SQLModel):
     """通用审核通过请求（计划书 §5.13）：按 `bizType` + `bizId` 定位资源。"""
 
     bizType: InteractionBizTypeEnum = Field(
@@ -50,7 +52,8 @@ class AuditApproveReq(SQLModel, AutoStrMixin):
     remark: str | None = Field(default=None, description="审核备注")
 
 
-class AuditRejectReq(SQLModel, AutoStrMixin):
+@auto_str
+class AuditRejectReq(SQLModel):
     """通用审核驳回请求（计划书 §5.13）：按 `bizType` + `bizId` 定位资源。"""
 
     bizType: InteractionBizTypeEnum = Field(
@@ -61,18 +64,20 @@ class AuditRejectReq(SQLModel, AutoStrMixin):
     remark: str | None = Field(default=None, description="审核备注")
 
 
-class AuditActionResp(SQLModel, AutoStrMixin):
+@auto_str
+class AuditActionResp(SQLModel):
     """通用审核动作响应：回显定位键，操作结果细节由各资源自行返回。"""
 
     bizType: InteractionBizTypeEnum
-    # bizIdStr 由 AutoStrMixin 自动派生（禁止重复声明）
+    # bizIdStr 由 @auto_str 自动派生（禁止重复声明）
     bizId: int
     data: dict[str, Any] | None = Field(
         default=None, description="资源类返回的审核结果（各资源形态不同）"
     )
 
 
-class AuditTypeCountRow(SQLModel, AutoStrMixin):
+@auto_str
+class AuditTypeCountRow(SQLModel):
     """byType 明细行：`type`/`total` 为公共列，状态列随域填充。
 
     各域只写自己的状态列（资源审核 auditing/normal/rejected/hidden，
@@ -91,7 +96,8 @@ class AuditTypeCountRow(SQLModel, AutoStrMixin):
     resolved: int | None = Field(default=None, description="已成立（举报域）")
 
 
-class AuditStatisticsResp(SQLModel, AutoStrMixin):
+@auto_str
+class AuditStatisticsResp(SQLModel):
     """通用审核统计响应（计划书 §5.13）：按业务域聚合的审核概览。
 
     - `byStatus` 键为各域状态名小写（与 AuditTypeCountRow 状态列同名）；

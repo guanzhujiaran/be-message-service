@@ -161,7 +161,9 @@ docker compose up -d be-message-service
 ```
 
 容器内端口 `18739`，由 `docker-compose.yml` 的 `MESSAGE_SERVICE_PORT` 映射，
-依赖 `rabbitmq` + `mysql`，带 `/health` healthcheck。
+依赖 `rabbitmq` + `mysql`。Docker 侧 healthcheck 已关闭（`docker-compose.yml` 中 `healthcheck.disable: true`），
+避免 30s 一次循环探活刷爆 uvicorn 访问日志；`/health` 端点本身保留，供人工巡检与
+`be-bilibili-crawler` 启动期依赖自检使用。
 
 ### 测试
 

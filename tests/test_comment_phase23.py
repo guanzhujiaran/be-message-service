@@ -145,10 +145,12 @@ async def _ensure_moment(session, oid: int, mid: int) -> None:
 
 
 async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) -> None:
-    """先审后发：把 `add` 发布的 auditing 评论显式审核通过为 NORMAL，并补齐计数。
+    """把 `add` 发布的评论置为 NORMAL，并在其处于审核态时补齐计数（**幂等**）。
 
-    `comment_pre_audit=True` 下发布即 `auditing`，auditing 不计入
-    `root_count/all_count`（见 comment.py「仅 NORMAL 才计入」），审核通过时补 +1。
+    只有评论当前为 AUDITING 才补 `root_count/all_count +1`：
+    - `comment_pre_audit=True` 下发布即 `auditing`，auditing 不计入
+      `root_count/all_count`（见 comment.py「仅 NORMAL 才计入」），审核通过时补 +1；
+    - 默认 `comment_pre_audit=False` 下发布即 NORMAL，`add` 内部已 +1，重复补会翻倍。
     不走 `CommentAdminService.set_state`：其内部会回写动态计数（经
     ``MomentStatService``），而测试 oid 为虚构值、无真实 `TMoment` 宿主行。
     """
@@ -157,6 +159,8 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
             select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
         )
     ).one()
+    if row.auditStatus is not ResourceAuditStatusEnum.AUDITING:
+        return
     row.auditStatus = ResourceAuditStatusEnum.NORMAL
     session.add(row)
     subject = (

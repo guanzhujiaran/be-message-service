@@ -5,8 +5,9 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
-from app.models.schemas.base import AutoStrMixin
-class MessageSettingResp(SQLModel, AutoStrMixin):
+from app.models.schemas.base import auto_str
+@auto_str
+class MessageSettingResp(SQLModel):
     """用户当前的消息设置。"""
 
     mid: int
@@ -21,7 +22,8 @@ class MessageSettingResp(SQLModel, AutoStrMixin):
     updated_at: datetime | None = None
 
 
-class MessageSettingUpdateReq(SQLModel, AutoStrMixin):
+@auto_str
+class MessageSettingUpdateReq(SQLModel):
     """更新消息设置：只传需要改的字段，未传字段保持原值。"""
 
     recv_like: bool | None = Field(default=None, description="是否接收点赞提醒")
@@ -38,7 +40,8 @@ class MessageSettingUpdateReq(SQLModel, AutoStrMixin):
     )
 
 
-class UserActivityResp(SQLModel, AutoStrMixin):
+@auto_str
+class UserActivityResp(SQLModel):
     """用户活跃度快照（当前是否在线，用于前端轮询节奏）。"""
 
     mid: int

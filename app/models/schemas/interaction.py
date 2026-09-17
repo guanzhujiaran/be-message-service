@@ -10,7 +10,7 @@ from bili_common.rpc.rpa import ResourceDetail
 
 
 from bili_common.models import InteractionBizTypeEnum
-from app.models.schemas.base import AutoStrMixin
+from app.models.schemas.base import auto_str
 class InteractionResource(SQLModel):
     """互动目标资源的**统一表示**（2.47.0；非 DB 表）。
 
@@ -36,7 +36,8 @@ class InteractionResource(SQLModel):
     )
 
 
-class InteractionStatusItem(SQLModel, AutoStrMixin):
+@auto_str
+class InteractionStatusItem(SQLModel):
     """某资源当前用户交互态（收藏 + 点赞 + 点踩 + 计数）。
 
     2.62.0（计划书 §5.20）：新增 ``isDislike``，供动态卡片渲染点踩态（匿名观众 ``mid=0`` 恒 false）。
@@ -58,7 +59,8 @@ class InteractionStatusItem(SQLModel, AutoStrMixin):
     detail: ResourceDetail | None = Field(default=None, description="资源详情（非动态资源经 RPC 获取，弱依赖可空；2.18.0）")
 
 
-class InteractionStatusResp(SQLModel, AutoStrMixin):
+@auto_str
+class InteractionStatusResp(SQLModel):
     """批量交互态查询响应。"""
 
     items: list[InteractionStatusItem] = Field(default_factory=list, description="各资源交互态")

@@ -291,11 +291,13 @@ class Settings(BaseSettings):
     # 一级评论下内嵌展示的楼中楼预览条数，超出需点击「查看更多」
     comment_sub_preview_count: int = 3
     # 评论发布模式：是否「先审后发」。
-    # - True（默认） ：所有原本会直接展示(NORMAL)的评论一律先进入审核态(AUDITING)，
-    #   对外不可见，需管理端审核通过后（置 NORMAL）才展示；命中高危词仍直接驳回。
-    # - False        ：命中高危词直接驳回(REJECTED)、命中疑似词进审核(AUDITING)，
-    #   其余评论直接对外展示(NORMAL)。
-    comment_pre_audit: bool = True
+    # - False（默认）：评论发布即对外展示(NORMAL)；仅命中高危词直接驳回(REJECTED)、
+    #   命中疑似词进审核(AUDITING)，与计划书 §5.1 评论审核口径一致
+    #   （「DFA 敏感词同步拦截：高危 REJECTED、疑似 AUDITING」）。
+    # - True         ：所有原本会直接展示(NORMAL)的评论一律先进入审核态(AUDITING)，
+    #   对外不可见（仅作者本人可见），需管理端审核通过后（置 NORMAL）才展示；
+    #   命中高危词仍直接驳回。
+    comment_pre_audit: bool = False
     # 评论举报阈值：单条评论累计有效举报数（按 rpid+report_mid 去重后）达到该值，
     # 评论 state 由 normal → auditing（进入审核，仅作者可见），交管理员复核。
     comment_report_threshold: int = 3

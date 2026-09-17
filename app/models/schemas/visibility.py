@@ -69,9 +69,10 @@ def private_fields(cls: type) -> tuple[tuple[str, Private], ...]:
 class VisibilityMixin:
     """给响应模型注入「按访问者裁剪私域字段」的序列化器。
 
-    用法::
+    用法（字符串版 ID 由 ``@auto_str`` 装饰器派生）::
 
-        class UserBriefOut(SQLModel, AutoStrMixin, VisibilityMixin):
+        @auto_str
+        class UserBriefOut(SQLModel, VisibilityMixin):
             mid: int
             email: Annotated[str | None, Private()] = None
 
@@ -100,6 +101,8 @@ class VisibilityMixin:
             if viewer.can_see(owner_mid, admin_only=marker.admin_only):
                 continue
             data.pop(name, None)
-            # AutoStrMixin 会为 ID 字段生成 ``*Str`` 镜像，一并剥离避免旁路泄漏
+            # @auto_str 会为 ID 字段生成字符串版镜像（默认 *Str，可配 _str），
+            # 两种后缀都剥离，避免裁剪后的私域字段从镜像旁路泄漏
             data.pop(f"{name}Str", None)
+            data.pop(f"{name}_str", None)
         return data

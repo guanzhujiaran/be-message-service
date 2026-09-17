@@ -10,8 +10,9 @@ from datetime import datetime
 from sqlmodel import Field, SQLModel
 
 
-from app.models.schemas.base import AutoStrMixin
-class FolderCoverAuditItem(SQLModel, AutoStrMixin):
+from app.models.schemas.base import auto_str
+@auto_str
+class FolderCoverAuditItem(SQLModel):
     """管理端待审核队列中的单条封面申请（含作者昵称，来自 pptr 回查）。"""
 
     pk: int = Field(description="审核记录主键")
@@ -24,7 +25,8 @@ class FolderCoverAuditItem(SQLModel, AutoStrMixin):
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
 
 
-class FolderCoverAuditListResp(SQLModel, AutoStrMixin):
+@auto_str
+class FolderCoverAuditListResp(SQLModel):
     """管理端待审核列表响应。"""
 
     items: list[FolderCoverAuditItem] = Field(default_factory=list)
@@ -33,14 +35,16 @@ class FolderCoverAuditListResp(SQLModel, AutoStrMixin):
     page_size: int = Field(default=20)
 
 
-class FolderCoverAuditApproveReq(SQLModel, AutoStrMixin):
+@auto_str
+class FolderCoverAuditApproveReq(SQLModel):
     """审核通过请求。"""
 
     pk: int = Field(description="审核记录主键")
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class FolderCoverAuditRejectReq(SQLModel, AutoStrMixin):
+@auto_str
+class FolderCoverAuditRejectReq(SQLModel):
     """审核驳回请求。"""
 
     pk: int = Field(description="审核记录主键")
@@ -48,7 +52,8 @@ class FolderCoverAuditRejectReq(SQLModel, AutoStrMixin):
     remark: str | None = Field(default=None, description="审核备注（选填）")
 
 
-class FolderCoverAuditMineResp(SQLModel, AutoStrMixin):
+@auto_str
+class FolderCoverAuditMineResp(SQLModel):
     """用户侧「某收藏夹封面审核状态」响应（无记录时接口返回 data=null）。"""
 
     pk: int = Field(description="审核记录主键")

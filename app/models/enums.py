@@ -2,7 +2,7 @@
 
 所有业务枚举统一使用标准库 `enum.IntEnum` 整数枚举；落库经 `sqlalchemy.Enum(...)`
 映射为 **MySQL 原生 ENUM**，库里存**成员名**（如 `'LOTTERY'`），而非整数字面量
-（新增枚举值需要 DDL，这是原生 ENUM 的固有代价）。对外接口层（AutoStrMixin / pydantic）
+（新增枚举值需要 DDL，这是原生 ENUM 的固有代价）。对外接口层（@auto_str / pydantic）
 序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
 from enum import Enum
