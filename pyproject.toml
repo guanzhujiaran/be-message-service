@@ -28,7 +28,8 @@ dependencies = [
     # ===== 定时任务（非活跃用户批量推送 / 定时通知发布）=====
     "apscheduler>=3.10.4",
     "sqlacodegen>=4.0.4",
-    "psycopg2>=2.9.12",
+    # psycopg2-binary 自带 libpq（manylinux wheel），免去构建期源码编译所需的 gcc / libpq-dev
+    "psycopg2-binary>=2.9.12",
     # ===== JWT + Casdoor（用户网关下沉 be-message）=====
     "pyjwt>=2.8.0",
     "httpx>=0.27.0",
