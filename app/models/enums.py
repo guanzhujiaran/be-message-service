@@ -307,6 +307,9 @@ class FrontendRouteEnum(str, Enum):
 
     # 抽奖卡片详情（RouteName.LOTTERY_CARD_DETAIL）→ /app/lot-data/card-detail
     LOTTERY_CARD_DETAIL = "抽奖卡片详情"
+    # 第三方抽奖动态详情（RouteName.OTHERS_LOT_DYN_DETAIL）→ /app/lot-data/others-dyn-detail?dynId=
+    # 2.61.0：第三方抽奖动态没有 lottery_id，不能复用抽奖卡片详情页（那按 lottery_id 拉详情）
+    OTHERS_LOT_DYN_DETAIL = "第三方抽奖动态详情"
     # 动态详情 → /app/moment/detail/:momentId
     MOMENT_DETAIL = "MOMENT_DETAIL"
     # 私信审核（管理端）→ /app/admin/message-dm

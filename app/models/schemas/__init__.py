@@ -139,6 +139,13 @@ from app.models.schemas.setting import (
     MessageSettingUpdateReq,
     UserActivityResp,
 )
+from app.models.schemas.sys_config import (
+    CommentRateLimitConfig,
+    CommentRateRule,
+    SysConfigItem,
+    SysConfigListResp,
+    SysConfigUpdateReq,
+)
 from app.models.schemas.space import (
     SpaceFollowStat,
     SpaceInfoResp,
@@ -286,6 +293,12 @@ __all__ = [
     # 消息设置
     "MessageSettingResp",
     "MessageSettingUpdateReq",
+    # 运行时系统配置（2.64.0）
+    "CommentRateLimitConfig",
+    "CommentRateRule",
+    "SysConfigItem",
+    "SysConfigListResp",
+    "SysConfigUpdateReq",
     "NotifyAdminItem",
     "NotifyAdminListResp",
     # 系统通知

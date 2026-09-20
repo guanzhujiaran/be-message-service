@@ -39,6 +39,7 @@ from app.models.db.resource_tbl import (
 from app.models.db.resource_feed_tbl import TResourceFeed
 from app.models.db.report_tbl import TUserReport
 from app.models.db.setting_tbl import UserActivity, UserMessageSetting
+from app.models.db.sys_config_tbl import SysConfig
 
 __all__ = [  # noqa: RUF022
     "CommentAction",
@@ -89,6 +90,8 @@ __all__ = [  # noqa: RUF022
     "TFolderCoverAudit",
     # 统一举报（2.14.0）
     "TUserReport",
+    # 运行时系统配置（2.64.0）
+    "SysConfig",
     "UserActivity",
     # 用户封禁（审核联动）
     "UserBan",

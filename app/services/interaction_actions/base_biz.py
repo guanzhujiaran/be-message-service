@@ -123,6 +123,28 @@ class BaseBiz(ABC):
         # 默认 None，未注入时各资源方法按「无客户端信息」处理（取代原动态属性 + getattr 兜底）
         self.client_ip: str | None = None
         self.user_agent: str | None = None
+        # 评论发布补充上下文（2.63.0）：评论正文要落 IP / 属地 / ISP，通知里要带昵称，
+        # 同样由接口层注入后经 `comment_ctx()` 透传给 `ops.do_comment`
+        self.client_ip_v4: str | None = None
+        self.client_ip_v6: str | None = None
+        self.ip_location: str | None = None
+        self.ip_isp: str | None = None
+        self.actor_uname: str | None = None
+
+    def comment_ctx(self) -> dict[str, Any]:
+        """评论发布所需的客户端上下文（供 `reply` / `at` 透传给 `ops.do_comment`）。
+
+        键名与 `ops.do_comment` / `CommentService.add` 的同名参数一一对应，可直接 `**` 展开；
+        未注入时为 None，评论服务按「无客户端信息」处理（与直连 `CommentService.add` 等价）。
+        """
+        return {
+            "uname": self.actor_uname,
+            "ip_v4": self.client_ip_v4,
+            "ip_v6": self.client_ip_v6,
+            "user_agent": self.user_agent,
+            "ip_location": self.ip_location,
+            "ip_isp": self.ip_isp,
+        }
 
     # ==================== 基本属性 ====================
 
@@ -187,6 +209,19 @@ class BaseBiz(ABC):
         把原 ``InteractionResourceValidator`` 注册式校验下沉为各资源类自身方法。
         """
         return True
+
+    async def check_exists_state(self) -> bool | None:
+        """资源存在性**三态**（2.63.0）：``True`` 存在 / ``False`` 明确不存在 / ``None`` 校验不可用。
+
+        与 :meth:`check_exists` 的差异：后者把「校验不可用」（如归属服务 RPC 失败）折叠为
+        ``False``，写路径据此**严格拒绝**（宁可拒写也不放脏数据）；但**弱依赖写副作用**
+        （浏览计数消费端）需要区分「脏消息」与「下游暂时不可用」——前者丢弃，后者照旧计数，
+        否则下游抖动会静默吞掉全部真实浏览。
+
+        默认实现直接复用 ``check_exists()``（本地可判定，无「不可用」态）；
+        跨服务校验的资源（lottery / others_lot_dyn）覆盖为真实三态。
+        """
+        return await self.check_exists()
 
     async def _load_meta(self) -> tuple[str | None, str | None]:
         """返回 ``(标题, 封面)``；默认 ``(None, None)``。资源覆盖以填充展示信息。"""

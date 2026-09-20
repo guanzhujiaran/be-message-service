@@ -74,6 +74,11 @@ def is_route_target(url: str | None) -> bool:
 _JUMP_ROUTE_MAP: dict[InteractionBizTypeEnum, tuple[FrontendRouteEnum, str]] = {
     InteractionBizTypeEnum.DYNAMIC: (FrontendRouteEnum.MOMENT_DETAIL, "momentId"),
     InteractionBizTypeEnum.LOTTERY: (FrontendRouteEnum.LOTTERY_CARD_DETAIL, "id"),
+    # 2.61.0：第三方抽奖动态没有 lottery_id，不能复用抽奖卡片详情页（那按 lottery_id 拉详情）
+    InteractionBizTypeEnum.OTHERS_LOT_DYN: (
+        FrontendRouteEnum.OTHERS_LOT_DYN_DETAIL,
+        "dynId",
+    ),
 }
 
 

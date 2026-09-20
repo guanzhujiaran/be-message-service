@@ -223,19 +223,40 @@ class CommentBiz(BaseBiz):
     # ==================== 评论类操作（reply / at）====================
 
     @biz_action()
-    async def reply(self, content: str, *, at_mids=None, pictures=None, emote_meta=None):
-        """回复本条评论（root=biz_id）。返回 CommentAddResp。"""
+    async def reply(
+        self, content: str, *, parent: int | None = None, at_mids=None,
+        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+    ):
+        """回复本条评论（root=本评论 rpid）。返回 CommentAddResp。
+
+        **评论区定位用「本评论所属的评论区」**（`CommentIndex.oid` + `CommentIndex.type`），
+        而不是本评论 rpid：`CommentService.add` 会按 `(oid, type)` 取 / 建 subject 并在
+        `_resolve_tree` 校验「根评论属于该评论区」，用 rpid 当 oid 会必然校验失败。
+        """
+        idx = await self._index()
+        if idx is None:
+            raise ValueError("评论不存在")
         return await ops.do_comment(
-            self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=self.biz_id, message=content, at_mids=at_mids,
-            pictures=pictures, emote_meta=emote_meta,
+            self.session, idx.type, idx.oid, self.actor_mid,
+            root=self.biz_id, parent=parent, message=content, at_mids=at_mids,
+            at_name_to_mid=at_name_to_mid, pictures=pictures,
+            emote_meta=emote_meta, up_mid=up_mid,
+            **self.comment_ctx(),
         )
 
     @biz_action()
-    async def at(self, mids, content: str, *, pictures=None, emote_meta=None):
-        """在本评论下 @ 提及用户（root=biz_id）。返回 CommentAddResp。"""
+    async def at(
+        self, mids, content: str, *, parent: int | None = None,
+        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+    ):
+        """在本评论下 @ 提及用户（root=本评论 rpid）。返回 CommentAddResp。"""
+        idx = await self._index()
+        if idx is None:
+            raise ValueError("评论不存在")
         return await ops.do_comment(
-            self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=self.biz_id, message=content, at_mids=list(mids),
-            pictures=pictures, emote_meta=emote_meta,
+            self.session, idx.type, idx.oid, self.actor_mid,
+            root=self.biz_id, parent=parent, message=content, at_mids=list(mids),
+            at_name_to_mid=at_name_to_mid, pictures=pictures,
+            emote_meta=emote_meta, up_mid=up_mid,
+            **self.comment_ctx(),
         )

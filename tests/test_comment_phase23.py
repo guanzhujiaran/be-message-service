@@ -388,15 +388,17 @@ async def test_admin_audit_plaintext_ip_stats() -> None:
 
 
 async def test_anti_spam_rate_limit() -> None:
-    """同用户同内容 10s 内第 4 次被拒（防刷）。"""
+    """同用户同内容达一级评论档上限即被拒（2.64.0：DB 窗口计数，阈值取自配置）。"""
     oid = _next_oid()
     content = "刷屏相同内容测试防刷"
+    # 一级评论（root 档）的首条「同内容」规则，阈值来自 settings 默认 / 运行时配置
+    max_count = settings.comment_rate_root_rules[0]["max_count"]
     try:
         async with new_session() as s:
-            for i in range(3):
+            for _ in range(max_count):
                 rp = await _add(s, _SPAM_MID, oid, message=content)
                 assert int(rp) > 0
-            # 第 4 次应被限流
+            # 超出上限一次应被限流
             with pytest.raises(ValueError):
                 await _add(s, _SPAM_MID, oid, message=content)
     finally:

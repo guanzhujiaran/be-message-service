@@ -17,11 +17,8 @@
 代价是极端并发下计数可能漂移，由 Phase 5 的对账定时任务兜底。
 """
 
-import asyncio
-import hashlib
 import re
-import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -46,6 +43,7 @@ from bili_common.models import (
     InteractionBizTypeEnum,
     ResponseCode,
 )
+from app.services.common import runtime_config
 from app.services.common.daily_limit import count_created_today
 from app.models.enums import (
     CommentAttrBit,
@@ -97,27 +95,80 @@ def normalize_at_mentions(message: str, at_name_to_mid: dict[str, int] | None) -
 # 列表中「对所有人可见」的状态集合
 VISIBLE_STATES: tuple[ResourceAuditStatusEnum, ...] = (ResourceAuditStatusEnum.NORMAL,)
 
-# ==================== 防刷（Phase 2.6）====================
-# 同用户、相同正文，10s 内最多 3 次。进程内近似实现（单实例够用）；
-# 多实例下各实例独立计数，可接受——极端刷评由 Phase 5 审核 / 对账兜底。
-_RATE_LIMIT_WINDOW = 10
-_RATE_LIMIT_MAX = 3
-_rate_lock = asyncio.Lock()
-_rate_history: dict[int, list[tuple[float, str]]] = {}
+# ==================== 防刷（Phase 2.6；2.63.0 增加「不同内容」总量规则；2.64.0 改 DB 窗口计数）====================
+# **计数源 = MySQL `msg_comment_index`**（不再是进程内滑动窗口）：多实例共用同一份计数，
+# 不存在「各实例独立计数」的旁路；软删行保留，故被删评论仍计入窗口（与每日上限同口径）。
+#
+# **口径一致性（强约束）**：限流只在 `CommentService.add` 这一处执行（它是一级评论 `reply`
+# 与楼中楼 `CommentBiz.reply` 的共同落点）——计数源、求值循环、错误文案都只有一套，
+# 差异仅在于**按 `root` 选一级 / 回复两档阈值**（一级评论是广场刷屏的主要目标，故更严；
+# 楼中楼连回多人属正常行为，故更宽松）。因此新增发布入口必须经 `CommentService.add` 收敛，
+# 禁止在路由层 / 资源类里各自实现限流，否则会出现两套计数源
+# （回归由 `tests/test_comment_rate_limit.py` 锁定）。
+#
+# 阈值来源（可热更新）：`msg_sys_config['comment_rate_limit']`，缺失 / 非法回落 settings 的
+# `comment_rate_root_rules` / `comment_rate_reply_rules`
+# （读取见 `app/services/common/runtime_config.py`：进程内 TTL 缓存 + DB 权威）。
+# 规则形如 `{window_seconds, max_count, same_content}`：
+#   - `same_content=True`：只统计窗口内**正文相同**的评论（防「重复同一句」刷屏）；
+#   - `same_content=False`：统计窗口内全部评论（防「换着内容连续刷屏」，比前者宽松）。
+# 空列表 = 关闭该档限流（与 `comment_daily_create_limit=0 表示不限制` 同义）。
 
 
-async def _check_rate_limit(mid: int, message: str) -> None:
-    """进程内防刷：同用户同内容 10s 内超过 3 次则拒绝。"""
-    key = hashlib.md5((message or "").encode("utf-8")).hexdigest()
-    now = time.time()
-    async with _rate_lock:
-        hist = _rate_history.setdefault(mid, [])
-        # 丢弃窗口外的旧记录
-        hist[:] = [(t, k) for (t, k) in hist if now - t < _RATE_LIMIT_WINDOW]
-        same_count = sum(1 for (t, k) in hist if k == key)
-        if same_count >= _RATE_LIMIT_MAX:
+async def _load_recent_comments(
+    session: AsyncSession, mid: int, *, since: datetime, is_root: bool
+) -> list[tuple[datetime, str]]:
+    """取该用户在 `since` 之后发布的评论（创建时间 + 正文），供内存按规则求值。
+
+    按**最长窗口**一次取回、短窗在内存里再筛，避免「每条规则各查一次库」；走
+    `idx_comment_user(mid, rpid)` + `created_at` 过滤，窗口内行数极少。
+    一级评论按 `root = 0`、楼中楼按 `root <> 0` 分流，与 `CommentIndex` 的树形口径一致
+    （已删除的评论行仍在，因此被删评论占用窗口额度，与每日上限一致）。
+    """
+    stmt = (
+        select(CommentIndex.created_at, CommentContent.message)
+        .select_from(CommentIndex)
+        .join(CommentContent, col(CommentContent.rpid) == col(CommentIndex.rpid))
+        .where(
+            col(CommentIndex.mid) == mid,
+            col(CommentIndex.created_at) >= since,
+            col(CommentIndex.root) == 0 if is_root else col(CommentIndex.root) != 0,
+        )
+    )
+    rows = (await session.exec(stmt)).all()
+    return [(row[0], row[1] or "") for row in rows]
+
+
+async def _check_rate_limit(
+    session: AsyncSession, mid: int, message: str, *, is_root: bool
+) -> None:
+    """评论防刷：按「一级 / 回复」两档阈值做多层窗口校验（DB 计数，跨实例一致）。
+
+    `message` 必须是**归一化后**（`@{mid}` 占位符）的正文，才能与落库文本正确比较。
+
+    Raises:
+        ValueError: 命中任一规则（对外统一文案，避免暴露具体阈值）。
+    """
+    config = await runtime_config.get_comment_rate_limit(session)
+    rules = config.root if is_root else config.reply
+    if not rules:
+        return
+
+    now = datetime.now()
+    longest = max(rule.window_seconds for rule in rules)
+    recent = await _load_recent_comments(
+        session, mid, since=now - timedelta(seconds=longest), is_root=is_root
+    )
+    text = (message or "").strip()
+    for rule in rules:
+        since = now - timedelta(seconds=rule.window_seconds)
+        count = sum(
+            1
+            for created_at, content in recent
+            if created_at >= since and (not rule.same_content or content == text)
+        )
+        if count >= rule.max_count:
             raise ValueError("操作过于频繁，请稍后再试")
-        hist.append((now, key))
 
 
 # ==================== 评论每日创建上限（2.58.0）====================
@@ -291,8 +342,6 @@ class CommentService:
         if oid <= 0:
             raise ValueError("oid 不合法")
 
-        # 防刷：同用户同内容 10s 内超过阈值直接拒绝（Phase 2.6）
-        await _check_rate_limit(mid, req.message)
         # 评论每日创建上限（2.58.0）：当天已创建达上限则拒绝（不落库，删除仍计次数）
         await _check_comment_daily_limit(session, mid)
 
@@ -312,6 +361,12 @@ class CommentService:
         at_mids = parse_at_mids(message, req.at_mids)
         if len(at_mids) > settings.comment_at_max:
             raise ValueError(f"单条评论最多 @ {settings.comment_at_max} 人")
+
+        # 防刷（2.64.0：DB 窗口计数 + 按 root 分档，阈值可管理端热更新）——放在正文归一化
+        # 之后，保证「同内容」比较的是与落库一致的文本（`@{mid}` 占位符，而非原始 @昵称）。
+        await _check_rate_limit(
+            session, mid, message, is_root=_to_int_id(req.root) == 0
+        )
 
         subject = await CommentService.get_or_create_subject(
             session, oid, req.type, up_mid=req.up_mid or 0

@@ -3,6 +3,9 @@
 对应 B 站评论系统架构中的 `reply-interface` 对外 REST 层，覆盖 Phase 1 的基础读写：
 
 - `POST /add`    发表评论（一级 / 楼中楼），登录态；同事务落索引 + 正文 + 计数。
+  2.63.0 起经资源类 `get_biz(...).reply()` 分发（一级 → 目标资源；楼中楼 → 根评论），
+  「类型是否支持评论」「资源是否存在 / 可互动」由资源类与 `@biz_action` 承担，
+  本路由不含类型白名单。
 - `POST /del`    删除评论（作者 / UP 主 / 管理员），登录态。
 - `GET  /main`   一级评论列表（含置顶），读冗余计数，4 次常量 SQL 组装。
 - `GET  /detail` 单条评论详情。
@@ -37,14 +40,26 @@ from app.models.schemas import (
     CommentTopResp,
     UserBriefOut,
     )
-from app.services.user.account import CommentAdminUser
 from app.services.comment import CommentService
 from app.services.comment.comment_action import CommentActionService
 from app.services.comment.comment_read import CommentReadService
 from app.services.comment.comment import CommentDailyCreateLimitError
+from app.services.interaction_actions import get_biz
+from app.services.user.account import CommentAdminUser
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/comment", tags=["comment"])
+
+
+def _to_positive_int(raw: str | int | None) -> int | None:
+    """字符串 ID → 正整数；空 / 非数字 / 非正一律返回 None（与评论服务的归一口径一致）。"""
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def resolve_ip_geo_pairs(
@@ -104,6 +119,13 @@ async def add_comment(
     通过 x-bili-* 头识别登录用户；作者展示信息（昵称等）由列表接口按需从 pptr
     Postgres 只读取回，本服务不再冗余用户快照。客户端真实 IP 从网关注入的头里提取，
     仅存原始地址。
+
+    **资源为主体（2.63.0，计划书 §5.9）**：统一经 `get_biz(...).reply()` 分发——
+    一级评论目标是资源本身（`dynamic` / `lottery` / `others_lot_dyn` / `rpa_*`…），
+    楼中楼目标是根评论（`CommentBiz`，其内部按评论所属评论区定位 `oid`/`type`）。
+    「该类型是否支持评论」由资源类表达能力决定（未实现 `reply` 的类型直接报错），
+    「资源是否存在 / 是否可互动」由 `@biz_action` 校验（写路径严格、不降级），
+    因此本路由**不需要也不允许**维护可评论类型白名单。
     """
     # 封禁校验：被封禁「评论」服务的用户禁止发表评论
     if await CommentAdminUser(mid=user.mid).is_banned(session, BanServiceEnum.COMMENT.value):
@@ -115,20 +137,42 @@ async def add_comment(
     )
     # 服务端按客户端 IP 解析属地 + ISP（GeoIP，失败静默降级为 None）
     ip_location, ip_isp = resolve_ip_geo_pairs(ip_v4, ip_v6)
+
+    # 参数归一：oid 必填；root / parent 为 rpid 字符串，"0" / 缺省 / 非法一律视为 0
+    oid = _to_positive_int(req.oid)
+    if oid is None:
+        return StandardResponse(code=400, msg="oid 不合法")
+    root = _to_positive_int(req.root) or 0
+    parent = _to_positive_int(req.parent) or 0
+
     try:
-        data = await CommentService.add(
+        biz = get_biz(
+            InteractionBizTypeEnum.COMMENT if root else req.type,
             session,
+            root or oid,
             user.mid,
-            req,
-            uname=user.uname,
-            ip_v4=ip_v4,
-            ip_v6=ip_v6,
-            user_agent=user_agent,
-            ip_location=ip_location,
-            ip_isp=ip_isp,
+        )
+        # 客户端上下文注入资源实例：评论正文要落 IP / 属地，回复与 @ 通知要带昵称
+        biz.actor_uname = user.uname
+        biz.client_ip_v4 = ip_v4
+        biz.client_ip_v6 = ip_v6
+        biz.user_agent = user_agent
+        biz.ip_location = ip_location
+        biz.ip_isp = ip_isp
+        data = await biz.reply(
+            req.message,
+            parent=parent,
+            at_mids=req.at_mids,
+            at_name_to_mid=req.at_name_to_mid,
+            pictures=req.pictures,
+            emote_meta=req.emote_meta,
+            up_mid=req.up_mid or 0,
         )
     except CommentDailyCreateLimitError as e:
         return StandardResponse(code=int(e.code), msg=str(e), data=None)
+    except NotImplementedError as e:
+        # 该资源类型未实现 reply（审核域 / 用户等不支持评论的目标）：400，不落到 500
+        return StandardResponse(code=400, msg=str(e))
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)

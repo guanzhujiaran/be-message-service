@@ -31,6 +31,26 @@ class LotteryBiz(GenericResourceBiz):
         except Exception:  # noqa: BLE001
             return False
 
+    async def check_exists_state(self) -> bool | None:
+        """三态存在性（2.63.0）：RPC 不可用返回 ``None``，与「明确不存在」区分开。
+
+        供浏览计数消费端使用：明确不存在 → 丢弃脏消息；不可用 → 按弱依赖继续计数。
+        """
+        from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
+
+        try:
+            bid = int(self.biz_id)
+        except (TypeError, ValueError):
+            return False
+        try:
+            client = await get_lottery_rpc_client()
+            existing = await client.get_existing_lottery_ids([bid])
+        except Exception:  # noqa: BLE001
+            return None
+        if existing is None:
+            return None
+        return bid in existing
+
     @classmethod
     async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
         """抽奖批量回捞：并行 ``get_resource_detail`` RPC，按 lotteryId 装配快照。"""

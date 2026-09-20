@@ -301,6 +301,25 @@ class Settings(BaseSettings):
     # 评论举报阈值：单条评论累计有效举报数（按 rpid+report_mid 去重后）达到该值，
     # 评论 state 由 normal → auditing（进入审核，仅作者可见），交管理员复核。
     comment_report_threshold: int = 3
+    # ---- 评论频率限制（2.64.0）----
+    # 两档阈值（一级评论 / 楼中楼回复），每条规则形如
+    #   {"window_seconds": 10, "max_count": 3, "same_content": true}
+    # 空列表 = 关闭该档限流。这里只是**代码默认值**：运行时以
+    # `msg_sys_config['comment_rate_limit']` 覆盖（管理端可热更新，见
+    # app/services/common/runtime_config.py），DB 无配置 / 值非法时回落本默认。
+    comment_rate_root_rules: list[dict] = [
+        {"window_seconds": 10, "max_count": 2, "same_content": True},
+        {"window_seconds": 10, "max_count": 3},
+        {"window_seconds": 60, "max_count": 15},
+    ]
+    comment_rate_reply_rules: list[dict] = [
+        {"window_seconds": 10, "max_count": 3, "same_content": True},
+        {"window_seconds": 10, "max_count": 6},
+        {"window_seconds": 60, "max_count": 30},
+    ]
+    # 运行时配置（msg_sys_config）的进程内缓存 TTL（秒）：管理端改配置后，
+    # 其余实例最迟在本窗口内生效；0 = 不缓存（每次读主库，仅调试用）。
+    sys_config_cache_ttl_seconds: int = 10
     # 统一举报（2.14.0）达阈值转审核：动态 / 用户空间举报累计有效举报数（按
     # (reportMid, bizType, bizId) 去重后）达到该值时，把被举报对象转 auditing 待复核。
     report_threshold: int = 3

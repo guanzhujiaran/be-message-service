@@ -9,6 +9,7 @@
 from app.services.interaction_actions.comment.biz import CommentBiz
 from app.services.interaction_actions.dynamic.biz import DynamicBiz
 from app.services.interaction_actions.lottery.biz import LotteryBiz
+from app.services.interaction_actions.others_lot_dyn.biz import OthersLotDynBiz
 from app.services.interaction_actions.rpa_action.biz import RpaActionBiz
 from app.services.interaction_actions.rpa_browser.biz import RpaBrowserBiz
 from app.services.interaction_actions.rpa_plugin.biz import RpaPluginBiz
@@ -20,6 +21,7 @@ __all__ = [
     "CommentBiz",
     "DynamicBiz",
     "LotteryBiz",
+    "OthersLotDynBiz",
     "RpaActionBiz",
     "RpaBrowserBiz",
     "RpaPluginBiz",

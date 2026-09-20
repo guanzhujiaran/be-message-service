@@ -37,6 +37,8 @@ _BIZ_TYPE_LABEL: dict[InteractionBizTypeEnum, str] = {
     InteractionBizTypeEnum.RPA_PLUGIN: "RPA插件",
     InteractionBizTypeEnum.COMMENT: "评论",
     InteractionBizTypeEnum.USER: "用户",
+    # 2.61.0：第三方抽奖动态（bizId = t_lotdyninfo.dynId，与「抽奖」是两个命名空间）
+    InteractionBizTypeEnum.OTHERS_LOT_DYN: "第三方抽奖",
 }
 
 #: 事件来源实体类型 ↔ biz_type（无对应关系的成员不入表，查询返回 ``None``）。
@@ -47,10 +49,14 @@ _SOURCE_TYPE_TO_BIZ_TYPE: dict[InteractionBizTypeEnum, InteractionBizTypeEnum] =
     InteractionBizTypeEnum.LOTTERY: InteractionBizTypeEnum.LOTTERY,
     InteractionBizTypeEnum.COMMENT: InteractionBizTypeEnum.COMMENT,
     InteractionBizTypeEnum.USER: InteractionBizTypeEnum.USER,
+    # 2.61.0：第三方抽奖动态可挂点赞 / 评论事件，来源类型即为自身
+    InteractionBizTypeEnum.OTHERS_LOT_DYN: InteractionBizTypeEnum.OTHERS_LOT_DYN,
 }
 _COMMENT_TYPE_TO_BIZ_TYPE: dict[InteractionBizTypeEnum, InteractionBizTypeEnum] = {
     InteractionBizTypeEnum.DYNAMIC: InteractionBizTypeEnum.DYNAMIC,
     InteractionBizTypeEnum.LOTTERY: InteractionBizTypeEnum.LOTTERY,
+    # 2.61.0：第三方抽奖动态有独立评论区（type = others_lot_dyn）
+    InteractionBizTypeEnum.OTHERS_LOT_DYN: InteractionBizTypeEnum.OTHERS_LOT_DYN,
 }
 
 

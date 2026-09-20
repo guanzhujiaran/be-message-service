@@ -44,6 +44,11 @@ def build_comment_source(
         url = build_route_target(
             FrontendRouteEnum.LOTTERY_CARD_DETAIL, {"id": oid, "rpid": rpid}
         )
+    elif type_ == InteractionBizTypeEnum.OTHERS_LOT_DYN:
+        # 2.61.0：第三方抽奖动态按 dynId 定位，不能走抽奖卡片详情页（那按 lottery_id 拉详情）
+        url = build_route_target(
+            FrontendRouteEnum.OTHERS_LOT_DYN_DETAIL, {"dynId": oid, "rpid": rpid}
+        )
     elif type_ == InteractionBizTypeEnum.DYNAMIC:
         external_url = f"https://t.bilibili.com/{oid}"
 

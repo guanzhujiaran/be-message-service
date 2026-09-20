@@ -5,7 +5,8 @@
 - :func:`resolve_target`：`bizType` + `bizId`
   → 唯一资源定位键 ``(biz_type, biz_id)``（计划书 C18 / C20 / C21；2.56.0 去除 dynId 别名）；
 - :class:`InteractionStatusService`：批量互动态装配（`query_status_items` /
-  `query_status_item`）与防乱调资源存在性校验（`verify_resources_exist`）。
+  `query_status_item`）与防乱调资源存在性校验（`verify_resources_exist`，
+  2.63.0 起仅服务于「投递浏览计数」这类有写副作用的准入判断，见计划书 §5.11）。
 
 路由层因此只保留「参数归一 → ``get_biz(...).动作()`` → 装配响应」三步，
 不再内联查询编排与按 `bizType` 的分支判断。
@@ -36,6 +37,19 @@ from bili_common.models import InteractionBizTypeEnum
 
 __all__ = ["InteractionStatusService", "resolve_target"]
 
+#: 需要经 RPA RPC 回捞资源详情的资源类型（2.63.0）。
+#: 仅 RPA 系列归属 RPA-Browser 服务；其余类型（dynamic 走本地、lottery / others_lot_dyn /
+#: comment / user 无该 RPC 数据源）逐个调用只会白跑 N 次 RPC 且必然返回空，故限定在此集合。
+_RPA_DETAIL_BIZ_TYPES: frozenset[InteractionBizTypeEnum] = frozenset(
+    {
+        InteractionBizTypeEnum.RPA_ACTION,
+        InteractionBizTypeEnum.RPA_WORKFLOW,
+        InteractionBizTypeEnum.RPA_BROWSER,
+        InteractionBizTypeEnum.RPA_PLUGIN,
+        InteractionBizTypeEnum.RPA_TAG,
+    }
+)
+
 
 def resolve_target(
     biz_type: InteractionBizTypeEnum,
@@ -62,16 +76,28 @@ class InteractionStatusService:
 
     2.60.0：装配方法接受 `mid=0` 表示匿名观众（路由层 `OptionalUser` 为 None 时传 0），
     用于 `/interaction/status[/{bizId}]` 开放匿名访问（计划书 §5.18）。
+
+    2.63.0（计划书 §5.11）：存在性校验只留给**有写副作用的路径**（单资源 status 的浏览
+    计数投递前准入），批量纯读接口不再校验；装配侧的详情 RPC 也仅对 RPA 系列发起。
     """
 
     @staticmethod
     async def verify_resources_exist(
         session: AsyncSession, biz_type: InteractionBizTypeEnum, ids: list[int]
     ) -> list[str] | None:
-        """批量校验资源存在性（2.23.1 防乱调）。
+        """批量校验资源存在性（2.23.1 防乱调；2.63.0 收窄用途）。
+
+        **2.63.0 口径（计划书 §5.11）**：本方法只服务于**有写副作用的路径**——
+        `GET /community/interaction/status/{bizId}` 投递浏览计数前的准入校验；
+        调用方拿到缺失结果时**不再返回 400**，而是降级为「不投递浏览 + 返回本地状态」。
+        纯读的批量 `GET /community/interaction/status` **不再调用本方法**（资源无互动态
+        即返回全 0，是正确语义，且避免下游 RPC 抖动放大成整页互动态缺失）。
 
         - dynamic：本地查 TMoment（deletedAt 非空 / 非 normal 视为不存在）；
-        - lottery：批量 RPC 校验（RPC 失败返回 None → 弱依赖降级放行，避免误伤正常用户）；
+        - lottery：批量 RPC 校验 `lotdata.lottery_id`（RPC 失败返回 None → 弱依赖降级放行，
+          避免误伤正常用户）；
+        - others_lot_dyn：批量 RPC 校验 `t_lotdyninfo.dynId`（与 lottery 两个独立命名空间，
+          2.61.0；同样弱依赖降级放行）；
         - 其余未注册类型：放行。
 
         Returns:
@@ -93,6 +119,13 @@ class InteractionStatusService:
 
             client = await get_lottery_rpc_client()
             existing = await client.get_existing_lottery_ids(ids)
+            if existing is None:
+                existing = set(ids)  # RPC 校验不可用：降级放行
+        elif biz_type == InteractionBizTypeEnum.OTHERS_LOT_DYN:
+            from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
+
+            client = await get_lottery_rpc_client()
+            existing = await client.get_existing_others_lot_dyn_ids(ids)
             if existing is None:
                 existing = set(ids)  # RPC 校验不可用：降级放行
         else:
@@ -127,12 +160,15 @@ class InteractionStatusService:
             like_counts.setdefault(_id, 0)
             fav_counts.setdefault(_id, 0)
         if not InteractionStatService.is_dynamic(biz_type):
-            # 评论数：lottery 走评论系统实时计数（rpa_* 无评论功能 → 恒 0）
-            if biz_type == InteractionBizTypeEnum.LOTTERY:
+            # 评论数：lottery / others_lot_dyn 走评论系统实时计数（rpa_* 无评论功能 → 恒 0）
+            if biz_type in (
+                InteractionBizTypeEnum.LOTTERY,
+                InteractionBizTypeEnum.OTHERS_LOT_DYN,
+            ):
                 subjects = (
                     await session.exec(
                         select(CommentSubject).where(
-                            col(CommentSubject.type) == InteractionBizTypeEnum.LOTTERY,
+                            col(CommentSubject.type) == biz_type,
                             col(CommentSubject.oid).in_(biz_ids),
                         )
                     )
@@ -189,9 +225,10 @@ class InteractionStatusService:
             ).all()
         )
 
-        # 非动态资源（RPA 等）详情经 RPC 从资源归属服务获取（弱依赖，失败 detail=None）
+        # RPA 系列资源详情经 RPC 从归属服务获取（弱依赖，失败 detail=None）；
+        # 2.63.0 起仅 RPA 系列发起——其余类型该 RPC 无数据源，原实现会每页白跑 N 次。
         details: dict[int, object] = {}
-        if not InteractionStatService.is_dynamic(biz_type):
+        if biz_type in _RPA_DETAIL_BIZ_TYPES:
             results = await asyncio.gather(
                 *[
                     rpa_rpc_client.get_resource_detail(biz_type.to_text(), _id)

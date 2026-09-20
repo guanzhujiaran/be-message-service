@@ -318,21 +318,31 @@ class DynamicBiz(BaseBiz):
     # ==================== 评论类操作（reply / at）====================
 
     @biz_action()
-    async def reply(self, content: str, *, at_mids=None, pictures=None, emote_meta=None, up_mid=0):
+    async def reply(
+        self, content: str, *, parent: int | None = None, at_mids=None,
+        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+    ):
         """在动态下发表评论（一级，root=0）。返回 CommentAddResp。"""
         return await ops.do_comment(
             self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=0, message=content, at_mids=at_mids,
-            pictures=pictures, emote_meta=emote_meta, up_mid=up_mid,
+            root=0, parent=parent, message=content, at_mids=at_mids,
+            at_name_to_mid=at_name_to_mid, pictures=pictures,
+            emote_meta=emote_meta, up_mid=up_mid,
+            **self.comment_ctx(),
         )
 
     @biz_action()
-    async def at(self, mids, content: str, *, pictures=None, emote_meta=None, up_mid=0):
+    async def at(
+        self, mids, content: str, *, parent: int | None = None,
+        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+    ):
         """在动态下 @ 提及用户（一级，root=0）。返回 CommentAddResp。"""
         return await ops.do_comment(
             self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=0, message=content, at_mids=list(mids),
-            pictures=pictures, emote_meta=emote_meta, up_mid=up_mid,
+            root=0, parent=parent, message=content, at_mids=list(mids),
+            at_name_to_mid=at_name_to_mid, pictures=pictures,
+            emote_meta=emote_meta, up_mid=up_mid,
+            **self.comment_ctx(),
         )
 
     # ==================== 通知（弱依赖）====================

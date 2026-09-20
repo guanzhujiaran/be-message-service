@@ -17,8 +17,9 @@
 - POST /dislike       点踩 / 取消点踩（幂等，BaseBiz.dislike）
 - POST /share         分享上报（shareCount +1，BaseBiz.share）
 - POST /report        举报资源（不改 auditStatus，BaseBiz.report）
-- GET  /interaction/status[/{biz_id}]  互动态查询（批量 / 单资源，兼作浏览统计触发点；
-  2.60.0 起匿名可读 OptionalUser，浏览统计仍仅登录用户）
+- GET  /interaction/status[/{biz_id}]  互动态查询（批量纯读；单资源兼作浏览统计触发点；
+  2.60.0 起匿名可读 OptionalUser，浏览统计仍仅登录用户；
+  2.63.0 起批量不做资源存在性校验、单资源校验降级为「不投浏览 + 照常返回」，见计划书 §5.11）
 （浏览计数无上报接口：由后端在详情接口 GET /detail/{id} 访问时自动累计）
 
 分层约定（2.56.0，计划书 §5.13 / C21）：参数归一 `resolve_target()`、存在性校验与互动态
@@ -373,6 +374,11 @@ async def interaction_status(
 
     匿名时 `user` 为 None → `viewer_mid=0`（非合法 mid），点赞 / 收藏态恒 false，
     计数与举报数照常返回。
+
+    **不做资源存在性校验（2.63.0，计划书 §5.11）**：本接口是纯读、不投递浏览 MQ、
+    不产生任何写入，资源没有互动态本就应返回 `isLike=false` / 计数 0，这是正确语义；
+    原「任一缺失 → 整批 400」会把归属服务（lottery / others_lot_dyn 走同步 RPC）的
+    可用性抖动放大成整页互动态缺失。校验只保留在有写副作用的单资源接口与写接口。
     """
     # bizIds 为逗号分隔的雪花 ID 字符串，含非数字片段时 int() 抛 ValueError：
     # 必须兜住并转 400 错误响应（业务码 400 = INVALID_PARAM），否则会穿透到全局
@@ -384,13 +390,6 @@ async def interaction_status(
     if not ids:
         return StandardResponse(code=400, msg="bizIds 不能为空")
     ids = ids[:50]
-
-    # 防乱调（2.23.1）：任一缺失 → 整体 400，不返回部分结果（列表接口不投递浏览 MQ）
-    missing = await InteractionStatusService.verify_resources_exist(
-        session, bizType, ids
-    )
-    if missing:
-        return StandardResponse(code=400, msg=f"资源不存在: {', '.join(missing)}")
 
     items = await InteractionStatusService.query_status_items(
         session, bizType, ids, user.mid if user else 0
@@ -417,6 +416,11 @@ async def interaction_status_detail(
     2.60.0（§5.18）：匿名可读，`user` 为 None 时 `viewer_mid=0`（点赞 / 收藏态恒 false）；
     浏览 MQ **仅登录用户投递**——匿名无 mid，`TInteractionViewLog`（uq bizType+bizId+mid）
     会把全部游客流量压成 mid=0 一行，计数失真且污染明细表，沿用「浏览统计仅登录用户」语义。
+
+    2.63.0（计划书 §5.11）：**资源存在性校验保留但降级**——浏览计数是写副作用，必须校验
+    才能防任意 bizId 在 `TInteractionStat` / `TInteractionViewLog` 造脏行；但「校验不通过 /
+    校验不可用（RPC 超时未连接）」时不再返回 400，而是**不投递浏览 + 照常返回本地状态**，
+    避免把归属服务的可用性问题伪装成业务错误、打挂详情页。
     """
     biz_type = bizType
     try:
@@ -424,18 +428,16 @@ async def interaction_status_detail(
     except ValueError:
         return StandardResponse(code=400, msg="bizId 不合法")
 
-    # 防乱调：资源不存在 → 400（不投递浏览）
+    # 防乱调：资源不存在 / 校验不可用 → 跳过浏览投递（弱依赖，不阻断状态读取）
     missing = await InteractionStatusService.verify_resources_exist(
         session, biz_type, [biz_id_int]
     )
-    if missing:
-        return StandardResponse(code=400, msg=f"资源不存在: {', '.join(missing)}")
 
     item = await InteractionStatusService.query_status_item(
         session, biz_type, biz_id_int, user.mid if user else 0
     )
-    if item is None:
-        return StandardResponse(code=400, msg="资源不存在")
+    if missing or item is None:
+        return StandardResponse(data=item)
 
     # 浏览统计触发点（detail 专用）：投递 MQ 异步去重累计，主链路不阻塞
     # 2.42.0：不再携带 refDate——消费端按 (bizType,bizId,mid) 每用户每资源一行，

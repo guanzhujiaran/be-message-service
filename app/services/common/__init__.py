@@ -2,6 +2,8 @@
 
 - `daily_limit`：内容发布「每日创建上限」的通用计数工具，由各 biz 自治接入
   （评论 / 动态 / 话题按需调用），并非每个资源都必须使用。
+- `runtime_config`：运行时可热更新配置的读取器（`msg_sys_config` + 进程内 TTL 缓存），
+  同样由各 biz 自治接入；写入走管理端接口，读取只需一个 session。
 """
 
 __all__: list[str] = []

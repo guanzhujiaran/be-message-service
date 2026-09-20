@@ -394,16 +394,27 @@ async def do_comment(
     actor_mid: int,
     *,
     root: int = 0,
+    parent: int | None = None,
     message: str,
     at_mids=None,
     at_name_to_mid=None,
     pictures=None,
     emote_meta=None,
     up_mid: int = 0,
+    uname: str | None = None,
+    ip_v4: str | None = None,
+    ip_v6: str | None = None,
+    user_agent: str | None = None,
+    ip_location: str | None = None,
+    ip_isp: str | None = None,
 ):
     """在本资源下发表评论（委托评论子系统；`reply` / `at` 资源方法统一复用）。
 
-    `root=0` 为一级评论（回复动态 / 通用资源）；`root=biz_id` 为回复某条评论。
+    - `oid` / `type` 由 `(biz_type, biz_id)` 决定，即**评论区定位**；
+    - `root=0` 为一级评论（评论目标资源本身）；`root=rpid` 为楼中楼，`parent` 为被回复的
+      具体评论（`0` / 等于 `root` = 直接回复根评论）；
+    - `uname` / `ip_*` / `user_agent` 为客户端上下文，由资源实例经 `BaseBiz.comment_ctx()`
+      注入（IP 属地落库、通知里显示昵称都需要），未注入时与直连 `CommentService.add` 等价。
     """
     from app.models.schemas import CommentAddReq
     from app.services.comment.comment import CommentService
@@ -412,11 +423,23 @@ async def do_comment(
         oid=str(biz_id),
         type=biz_type,
         root=str(root),
+        parent=str(parent or 0),
         message=message,
         at_mids=at_mids or [],
-        at_name_to_mid=at_name_to_mid,
-        pictures=pictures,
+        # 空值归一为模型默认（`at_name_to_mid` / `pictures` 不接受 None）
+        at_name_to_mid=at_name_to_mid or {},
+        pictures=pictures or [],
         emote_meta=emote_meta,
         up_mid=up_mid or 0,
     )
-    return await CommentService.add(session, actor_mid, req)
+    return await CommentService.add(
+        session,
+        actor_mid,
+        req,
+        uname=uname,
+        ip_v4=ip_v4,
+        ip_v6=ip_v6,
+        user_agent=user_agent,
+        ip_location=ip_location,
+        ip_isp=ip_isp,
+    )

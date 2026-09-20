@@ -52,6 +52,7 @@ from app.api.external_push import router as push_router
 from app.api.report import router as report_router
 from app.api.rpa_tag import router as rpa_tag_router
 from app.api.setting import router as setting_router
+from app.api.sys_config import router as sys_config_router
 from app.api.user import router as user_router
 from app.core.broker import broker
 from app.core.config import settings
@@ -289,6 +290,7 @@ app.include_router(message_admin_router)
 app.include_router(ban_router)
 app.include_router(follow_router)
 app.include_router(setting_router)
+app.include_router(sys_config_router)
 app.include_router(user_router)
 app.include_router(push_router)
 app.include_router(report_router)
