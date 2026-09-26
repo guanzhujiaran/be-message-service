@@ -1,8 +1,10 @@
+from bili_common.core.push_settings import PushNotifySettingsMixin
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models.push import PushChannelConfig
 
-class Settings(BaseSettings):
+
+class Settings(PushNotifySettingsMixin, BaseSettings):
     """message-service 运行时配置。
 
     推送渠道分两类：
@@ -14,10 +16,16 @@ class Settings(BaseSettings):
       MESSAGE_CONFIG='{"pushme_key":"Uxxx","push_plus_token":"yyy",
         "smtp_server":"smtp.x","smtp_ssl":"true","smtp_email":"a@b.c",
         "smtp_password":"pw","smtp_name":"告警"}'
+
+    推送渠道配置（message_config）、渠道默认端点（pushme_url / pushplus_url）、
+    RabbitMQ 连接串（rabbitmq_url）等共用项由 PushNotifySettingsMixin 提供
+    （字段单一来源，与 RPA-Browser / be-bilibili-crawler 一致），本类只覆盖本服务有
+    差异的默认值。
     """
 
     # ==================== RabbitMQ ====================
-    rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/?heartbeat=180"
+    # rabbitmq_url（含 heartbeat=180）由 PushNotifySettingsMixin 提供，默认即 docker-compose
+    # 内部服务名，可被环境变量 RABBITMQ_URL 覆盖。
     # FastStream（RabbitMQ 消费者 / 发布者）内部日志级别：DEBUG / INFO / WARNING / ERROR / CRITICAL，
     # 通过环境变量 FASTSTREAM_LOG_LEVEL 覆盖。仅影响 FastStream 框架自身的标准库日志，
     # 不影响本项目 loguru 业务日志。
@@ -387,12 +395,21 @@ class Settings(BaseSettings):
     casdoor_admin_application: str = "app-built-in"
 
     # ==================== 推送渠道 ====================
-    pushme_url: str = "https://push.i-i.me"
-    pushplus_url: str = "http://www.pushplus.plus/send"
-
+    # pushme_url / pushplus_url（渠道默认端点）由 PushNotifySettingsMixin 提供。
     # 全局渠道配置：单个 JSON 环境变量，与 fastapiapp / rpa-browser 共用同一份
-    # 类型为 pydantic PushChannelConfig，由 pydantic-settings 自动解析 JSON，无需 Json() 包装
+    # 类型为 pydantic PushChannelConfig，由 pydantic-settings 自动解析 JSON，无需 Json() 包装。
+    # 本服务默认关闭「一言」（推送内容由业务侧组装，不额外拼随机句子，见 push.py 的 send）
     message_config: PushChannelConfig = PushChannelConfig(hitokoto=False)
+
+    # ===== 推送聚合（首条直推 + 冷却期内合并，见 push_aggregator.py）=====
+    # 只作用于 payload 里带了 group 的推送（告警类）；group 为空的 per-user 业务推送
+    # 仍是 1:1 直推。分桶维度是「接收人（渠道凭据）× group」，不同密钥不会互相合并。
+    # 冷却期（秒）：同一桶在这个窗口内再次推送会被合并成一条摘要
+    push_aggregate_cooldown_seconds: float = 60.0
+    # 聚合摘要正文的字符数硬上限（超出按出现次数降序截断并提示省略条数）
+    push_aggregate_max_len: int = 1800
+    # 到期桶的扫描间隔（秒）：决定聚合摘要最多比冷却到期晚多久发出
+    push_aggregate_sweep_seconds: float = 2.0
 
     model_config = SettingsConfigDict(
         env_file=("app/.env",),

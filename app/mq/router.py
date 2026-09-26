@@ -22,6 +22,10 @@ lifespan 嵌套在 app lifespan 内部，靠 `_merge_lifespan_context` 保证顺
 from faststream.rabbit.fastapi import RabbitRouter
 
 from app.core.config import settings
+from app.services.message.external.push_aggregator import (
+    start_push_aggregator,
+    stop_push_aggregator,
+)
 from app.tasks import shutdown_scheduler, start_scheduler
 
 # RabbitRouter 内部会创建一个 RabbitBroker 实例并自行管理其生命周期
@@ -44,12 +48,16 @@ broker = router.broker
 @router.after_startup
 async def _start_scheduler_hook(_app) -> None:
     start_scheduler()
+    # 推送聚合的到期扫描循环（首条直推 + 冷却期内合并，见 push_aggregator.py）
+    await start_push_aggregator()
 
 
 # shutdown_scheduler 必须在 broker.stop() 之前：避免调度器仍尝试投递到已关闭的
 # 连接。on_broker_shutdown 钩子在 broker.stop() 之前触发。
+# 推送聚合同理要先 stop（内部会把冷却期内已聚合的摘要补发一次，避免随进程丢失）。
 @router.on_broker_shutdown
 async def _stop_scheduler_hook(_app) -> None:
+    await stop_push_aggregator()
     shutdown_scheduler()
 
 
