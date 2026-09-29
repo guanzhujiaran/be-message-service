@@ -64,6 +64,8 @@ from app.core.sharding import ensure_current_month_shards
 from app.mq import rpc_notify
 from app.mq import rpc_pptr_user
 from app.mq import rpc_external_push
+# IP 属地解析 RPC（message.geoip.rpc.*）：RPA 等按需查属地，mmdb 只留在本服务
+from app.mq import rpc_geoip
 from app.mq.consumers import comment, deactivate, dm, external_push
 from app.mq.router import router as mq_router
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
