@@ -20,6 +20,12 @@ ASN 组织名如「中国电信」）—— 调用方（RPA 观看者列表）�
 路由键前缀 `message.geoip.rpc.<method_name>`（见 GEOIP_RPC_ROUTING_KEY_PREFIX）。
 本模块只需被 main.py import 一次即可完成 RPC 注册（FastStream 全局 broker 单例）。
 
+⚠️ 注册必须用 `router.subscriber`（不能用 `broker.subscriber`）：本服务的 broker
+来自 FastAPI 集成的 `RabbitRouter`，其 FD 配置走 FastAPI 的 `get_dependent`，
+只有 `router.subscriber` 会挂上「FastAPI 兼容装饰器」先把消息体 decode 再注入 handler。
+用 `broker.subscriber` 时该装饰器缺失，handler 会直接收到原始 `RabbitMessage`
+（典型报错 `'RabbitMessage' object has no attribute 'xxx'`）。
+
 降级：`lookup` 对「空 IP / 内网 / 回环 / 库缺失 / 未命中」会用 `poi="未知"`、`isp=None` 兜底，
 这里统一转成**空串**再回包 —— 「未知」是展示文案，由调用方决定怎么显示。
 """
@@ -35,11 +41,12 @@ from bili_common.rpc.geoip import (
 )
 from bili_common.rpc.safe import rpc_safe
 
-from app.core.broker import broker, message_exchange
+from app.core.broker import message_exchange
+from app.mq.router import router
 from app.services.infrastructure.geo_ip import lookup
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         geoip_rpc_routing_key_for(GeoIpRpcMethodName.RESOLVE_IP_REGION),
         routing_key=geoip_rpc_routing_key_for(GeoIpRpcMethodName.RESOLVE_IP_REGION),

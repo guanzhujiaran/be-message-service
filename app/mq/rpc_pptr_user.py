@@ -6,6 +6,11 @@ be-gateway（Node.js）通过 amqplib 调本模块的 RPC 方法，完成用户�
 
 路由键前缀：`message.pptr.rpc.<method_name>`（见 bili_common PPTR_RPC_ROUTING_KEY_PREFIX）。
 本模块只需被 main.py import 一次即可完成 RPC 注册（FastStream 全局 broker 单例）。
+
+⚠️ 注册必须用 `router.subscriber`（不能用 `broker.subscriber`）：broker 来自 FastAPI
+集成的 `RabbitRouter`，其 FD 配置走 FastAPI 的 `get_dependent`，只有 `router.subscriber`
+会挂上「FastAPI 兼容装饰器」先 decode 消息体再注入 handler；用 `broker.subscriber`
+会导致 handler 收到原始 `RabbitMessage`（报错 `... object has no attribute 'xxx'`）。
 """
 
 from bili_common.models import (
@@ -43,7 +48,8 @@ from faststream.rabbit import RabbitQueue
 from bili_common.rpc.safe import rpc_safe
 from loguru import logger
 
-from app.core.broker import broker, message_exchange
+from app.core.broker import message_exchange
+from app.mq.router import router
 from app.services.message.insite.notify import NotifyService
 from app.services.user.account import PptrUser
 from app.services.user.account.base import _level_calc
@@ -94,7 +100,7 @@ def _profile_to_dto(info, detail, vip, level) -> PptrUserProfile:
     )
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.GET_USER_INFO),
         routing_key=pptr_routing_key_for(RpcMethodName.GET_USER_INFO),
@@ -118,7 +124,7 @@ async def rpc_get_user_info(params: PptrGetUserInfoParams) -> StandardResponse:
     return success_response(data=_profile_to_dto(info, detail, vip, level))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.GET_USER_CARD),
         routing_key=pptr_routing_key_for(RpcMethodName.GET_USER_CARD),
@@ -147,7 +153,7 @@ async def rpc_get_user_card(params: PptrGetUserCardParams) -> StandardResponse:
     )
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.CREATE_USER),
         routing_key=pptr_routing_key_for(RpcMethodName.CREATE_USER),
@@ -189,7 +195,7 @@ async def rpc_create_user(params: PptrCreateUserParams) -> StandardResponse:
     return success_response(data=PptrCreateUserResult(uid=uid, created=created))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.UPDATE_USER_INFO),
         routing_key=pptr_routing_key_for(RpcMethodName.UPDATE_USER_INFO),
@@ -208,7 +214,7 @@ async def rpc_update_user_info(params: PptrUpdateUserInfoParams) -> StandardResp
     return success_response(data=PptrUpdateUserInfoResult(uid=uid, updated=updated))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.GET_USER_LEVEL),
         routing_key=pptr_routing_key_for(RpcMethodName.GET_USER_LEVEL),
@@ -238,7 +244,7 @@ async def rpc_get_user_level(params: PptrGetUserLevelParams) -> StandardResponse
     )
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.SET_USER_LEVEL),
         routing_key=pptr_routing_key_for(RpcMethodName.SET_USER_LEVEL),
@@ -257,7 +263,7 @@ async def rpc_set_user_level(params: PptrSetUserLevelParams) -> StandardResponse
     return success_response(data=PptrSetResult(uid=params.uid, updated=ok))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.SET_USER_DETAIL),
         routing_key=pptr_routing_key_for(RpcMethodName.SET_USER_DETAIL),
@@ -279,7 +285,7 @@ async def rpc_set_user_detail(params: PptrSetUserDetailParams) -> StandardRespon
     return success_response(data=PptrSetResult(uid=params.uid, updated=ok))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.SET_USER_ROLE),
         routing_key=pptr_routing_key_for(RpcMethodName.SET_USER_ROLE),
@@ -294,7 +300,7 @@ async def rpc_set_user_role(params: PptrSetUserRoleParams) -> StandardResponse:
     return success_response(data=PptrSetResult(uid=params.uid, updated=ok))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.SEARCH_USERS),
         routing_key=pptr_routing_key_for(RpcMethodName.SEARCH_USERS),
@@ -313,7 +319,7 @@ async def rpc_search_users(params: UserSearchParams) -> StandardResponse:
     return success_response(data=PptrUserSearchResult(items=items, has_more=has_more))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.ADD_EXP),
         routing_key=pptr_routing_key_for(RpcMethodName.ADD_EXP),
@@ -328,7 +334,7 @@ async def rpc_add_exp(params: PptrAddExpParams) -> StandardResponse:
     return success_response(data=PptrAddExpResult(**result))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.ADD_DAILY_LOGIN_EXP),
         routing_key=pptr_routing_key_for(RpcMethodName.ADD_DAILY_LOGIN_EXP),
@@ -348,7 +354,7 @@ async def rpc_add_daily_login_exp(
     return success_response(data=PptrAddDailyLoginExpResult(**result))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.ADD_USERNAME_RECORD),
         routing_key=pptr_routing_key_for(RpcMethodName.ADD_USERNAME_RECORD),
@@ -369,7 +375,7 @@ async def rpc_add_username_record(
     )
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         pptr_routing_key_for(RpcMethodName.GET_USER_NAV),
         routing_key=pptr_routing_key_for(RpcMethodName.GET_USER_NAV),

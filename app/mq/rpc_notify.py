@@ -8,6 +8,11 @@
 路由键前缀：`message.notify.rpc.<method_name>`（见 NOTIFY_RPC_ROUTING_KEY_PREFIX）。
 本模块只需被 main.py import 一次即可完成 RPC 注册（FastStream 全局 broker 单例）。
 
+⚠️ 注册必须用 `router.subscriber`（不能用 `broker.subscriber`）：broker 来自 FastAPI
+集成的 `RabbitRouter`，其 FD 配置走 FastAPI 的 `get_dependent`，只有 `router.subscriber`
+会挂上「FastAPI 兼容装饰器」先 decode 消息体再注入 handler；用 `broker.subscriber`
+会导致 handler 收到原始 `RabbitMessage`（报错 `... object has no attribute 'xxx'`）。
+
 与管理端 HTTP `POST /api/v1/message/notify/admin/create` 并存且落到同一个
 执行体：HTTP 面向管理员浏览器侧，RPC 面向服务端系统。区别是 RPC 走
 `NotifyService.create_idempotent`（CUSTOM 单人场景按 `(target_value, title)`
@@ -31,13 +36,14 @@ from bili_common.models.notify_rpc import (
 )
 from bili_common.rpc.safe import rpc_safe
 
-from app.core.broker import broker, message_exchange
+from app.core.broker import message_exchange
 from app.core.database import new_session
+from app.mq.router import router
 from app.models.schemas import NotifyCreateReq
 from app.services.message.insite.notify import NotifyService
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         notify_rpc_routing_key_for(NotifyRpcMethodName.PUBLISH_NOTIFY),
         routing_key=notify_rpc_routing_key_for(NotifyRpcMethodName.PUBLISH_NOTIFY),

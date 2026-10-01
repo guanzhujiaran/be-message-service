@@ -67,6 +67,11 @@ bili-common = { path = "../bili-common", editable = true }
 asyncio_mode = "auto"
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    # 需要真实 RabbitMQ 的集成测试（broker 不可达时测试内自动 skip）：
+    #   RABBITMQ_URL='amqp://user:pwd@127.0.0.1:5672/?heartbeat=180' uv run pytest -m integration -v
+    "integration: 需要真实 RabbitMQ 的端到端 RPC 集成测试",
+]
 
 
 [dependency-groups]

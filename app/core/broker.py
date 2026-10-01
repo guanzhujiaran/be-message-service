@@ -18,6 +18,12 @@
   由 `/api/v1/message/push` 投递到 `message.push` 队列单独处理。
 - **私信内容落库**是写路径的关键链路，必须独立队列，避免与任何推送链路耦合。
 
+⚠️ 订阅端一律用 `@router.subscriber`（`app.mq.router.router`），**不要用 `@broker.subscriber`**：
+本 broker 由 FastAPI 集成的 `RabbitRouter` 创建，其 FD 配置走 FastAPI 的 `get_dependent`，
+只有 `router.subscriber` 会挂上「FastAPI 兼容装饰器」先把消息体 decode 再注入 handler；
+缺了它 handler 会收到原始 `RabbitMessage`（典型报错 `'RabbitMessage' object has no attribute 'xxx'`）。
+`broker` 仍可复用于 `publish` / 健康检查。
+
 历史 `message_queue` 的 routing_key 保持 `message.push`（原为 `message.#`），
 否则它会把新增的 dm 等消息一并吃掉。
 """

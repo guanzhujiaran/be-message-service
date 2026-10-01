@@ -8,6 +8,12 @@
 路由键前缀：`message.push.rpc.<method_name>`（见 PUSH_RPC_ROUTING_KEY_PREFIX）。
 本模块只需被 main.py import 一次即可完成 RPC 注册（FastStream 全局 broker 单例）。
 
+⚠️ 注册必须用 `router.subscriber`（不能用 `broker.subscriber`）：broker 来自 FastAPI
+集成的 `RabbitRouter`，其 FD 配置走 FastAPI 的 `get_dependent`，只有 `router.subscriber`
+会挂上「FastAPI 兼容装饰器」先 decode 消息体再注入 handler；用 `broker.subscriber`
+会导致 handler 收到原始 `RabbitMessage`（报错 `... object has no attribute 'xxx'`）。
+（handler 内部投递仍用 `broker.publish`，二者是同一个 broker 实例。）
+
 与 HTTP `/api/v1/message/push` 并存：HTTP 面向终端用户 / 浏览器侧，RPC 面向
 服务端系统，二者都落到同一套 PushMessageService 执行体。
 """
@@ -29,6 +35,7 @@ from bili_common.rpc.safe import rpc_safe
 
 from app.core.broker import broker, message_exchange, message_queue
 from app.core.broker import RK_PUSH
+from app.mq.router import router
 from app.models import PushMessagePayload
 from app.services.message.external.push import PushMessageService
 from app.services.message.external.push_helper import merge_config
@@ -42,7 +49,7 @@ def _with_label(title: str, user_label: str | None) -> str:
     return f"[{label}] {title}"
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         push_rpc_routing_key_for(PushRpcMethodName.PUSH_MESSAGE),
         routing_key=push_rpc_routing_key_for(PushRpcMethodName.PUSH_MESSAGE),
@@ -76,7 +83,7 @@ async def rpc_push_message(params: PushRpcSendParams) -> StandardResponse:
     return success_response(data=PushRpcSendResult(title=title, queued=True))
 
 
-@broker.subscriber(
+@router.subscriber(
     queue=RabbitQueue(
         push_rpc_routing_key_for(PushRpcMethodName.SEND_PUSH_NOW),
         routing_key=push_rpc_routing_key_for(PushRpcMethodName.SEND_PUSH_NOW),
