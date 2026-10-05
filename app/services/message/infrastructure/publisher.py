@@ -27,7 +27,11 @@ from app.core.broker import (
     user_deactivate_queue,
 )
 from app.models.push import PushMessagePayload
-from app.models.schemas import DmContentPayload, InteractionViewPayload, UserDeactivatePayload
+from app.models.schemas import (
+    DmContentPayload,
+    InteractionViewPayload,
+    UserDeactivatePayload,
+)
 
 
 async def _publish(payload, routing_key: str, queue) -> bool:

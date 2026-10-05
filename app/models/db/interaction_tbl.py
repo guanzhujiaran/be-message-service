@@ -12,7 +12,10 @@ from sqlalchemy import BIGINT, PrimaryKeyConstraint, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.models.db.base_tbl import TimestampMixin
-from bili_common.models.interaction_stat import InteractionStatBase, InteractionViewLogBase
+from bili_common.models.interaction_stat import (
+    InteractionStatBase,
+    InteractionViewLogBase,
+)
 
 
 class TInteractionStat(InteractionStatBase, TimestampMixin, table=True):
@@ -21,7 +24,10 @@ class TInteractionStat(InteractionStatBase, TimestampMixin, table=True):
     __tablename__ = "TInteractionStat"
     __table_args__ = (
         PrimaryKeyConstraint("bizType", "bizId", name="TInteractionStat_pkey"),
-        {"extend_existing": True, "comment": "通用交互计数：非动态资源(bizType,bizId)的收藏/点赞/浏览计数"},
+        {
+            "extend_existing": True,
+            "comment": "通用交互计数：非动态资源(bizType,bizId)的收藏/点赞/浏览计数",
+        },
     )
 
 
@@ -35,7 +41,10 @@ class TInteractionViewLog(InteractionViewLogBase, TimestampMixin, table=True):
         UniqueConstraint(
             "bizType", "bizId", "mid", name="TInteractionViewLog_bizType_bizId_mid_key"
         ),
-        {"extend_existing": True, "comment": "通用浏览去重表：每用户每资源一行，lastViewAt 判自然日窗口"},
+        {
+            "extend_existing": True,
+            "comment": "通用浏览去重表：每用户每资源一行，lastViewAt 判自然日窗口",
+        },
     )
 
 

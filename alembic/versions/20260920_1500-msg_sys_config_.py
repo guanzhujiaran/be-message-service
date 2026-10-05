@@ -14,6 +14,7 @@ Revises: 20260920_others_lot_dyn_enum
 Create Date: 2026-09-20 15:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa

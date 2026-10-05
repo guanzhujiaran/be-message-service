@@ -94,7 +94,9 @@ async def ban_users(
     missing = _check_ban_permissions(user, req.ban_services)
     if missing is not None:
         needed = _SERVICE_BAN_PERM[missing].value
-        return StandardResponse(code=403, msg=f"缺少封禁权限：{needed}（服务 {missing}）")
+        return StandardResponse(
+            code=403, msg=f"缺少封禁权限：{needed}（服务 {missing}）"
+        )
 
     count = await UserGovernanceUser(mid=user.mid).ban_users(
         session,
@@ -126,7 +128,9 @@ async def unban_users(
     missing = _check_ban_permissions(user, target_services)
     if missing is not None:
         needed = _SERVICE_BAN_PERM[missing].value
-        return StandardResponse(code=403, msg=f"缺少解封权限：{needed}（服务 {missing}）")
+        return StandardResponse(
+            code=403, msg=f"缺少解封权限：{needed}（服务 {missing}）"
+        )
 
     count = await UserGovernanceUser(mid=user.mid).unban_users(
         session, [int(m) for m in req.mids], req.ban_services
@@ -141,8 +145,12 @@ async def unban_users(
 )
 async def list_bans(
     session: SessionDep,
-    user: Annotated[AuthInfo, Depends(require_biz_perm(InteractionBizTypeEnum.USER, BizPermOp.VIEW))],
-    status: BanStatusEnum | None = Query(default=None, description="过滤状态：active / lifted"),
+    user: Annotated[
+        AuthInfo, Depends(require_biz_perm(InteractionBizTypeEnum.USER, BizPermOp.VIEW))
+    ],
+    status: BanStatusEnum | None = Query(
+        default=None, description="过滤状态：active / lifted"
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[BanListResp]:
@@ -164,7 +172,9 @@ async def list_bans(
 )
 async def ban_status(
     session: SessionDep,
-    user: Annotated[AuthInfo, Depends(require_biz_perm(InteractionBizTypeEnum.USER, BizPermOp.VIEW))],
+    user: Annotated[
+        AuthInfo, Depends(require_biz_perm(InteractionBizTypeEnum.USER, BizPermOp.VIEW))
+    ],
     mid: Annotated[
         StrInt,
         Query(..., description="待查询用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),

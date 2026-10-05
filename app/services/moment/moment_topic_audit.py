@@ -16,14 +16,18 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from app.models.db import TMomentTopic
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.moment import (
     MomentTopicAuditItem,
     MomentTopicAuditListResp,
-    )
+)
 from app.services.user.account import PptrUser
 
 
@@ -45,7 +49,9 @@ def _to_audit_item(topic: TMomentTopic, creator) -> MomentTopicAuditItem:
     )
 
 
-async def _notify_reject(operator_mid: int, topic: TMomentTopic, reject_reason: str) -> None:
+async def _notify_reject(
+    operator_mid: int, topic: TMomentTopic, reject_reason: str
+) -> None:
     """弱依赖：审核驳回事件通知创建者（AUDIT_REJECT）。
 
     独立会话投递：即便事件落库失败，也绝不回滚审核主事务。
@@ -73,7 +79,6 @@ def _new_session():
 
 
 class MomentTopicAuditService:
-
     @staticmethod
     async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """话题审核统计：按 auditStatus 聚合 TMomentTopic（无子类型，byType 为空）。"""
@@ -184,7 +189,9 @@ class MomentTopicAuditService:
         session.add(topic)
         await session.commit()
         await session.refresh(topic)
-        logger.info(f"管理员 {operator_mid} 审核驳回话题 topicId={topic_id}：{reject_reason}")
+        logger.info(
+            f"管理员 {operator_mid} 审核驳回话题 topicId={topic_id}：{reject_reason}"
+        )
         # 弱依赖：通知创建者（独立会话，失败不影响审核结果）
         await _notify_reject(operator_mid, topic, reject_reason)
         briefs = await PptrUser.get_many([topic.creatorMid]) if topic.creatorMid else {}

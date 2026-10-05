@@ -10,6 +10,8 @@ from sqlmodel import SQLModel, Field
 
 from typing import Optional
 
+from app.models.schemas.base import auto_str, SnowflakeInt
+
 
 class RpaTagCreateReq(SQLModel):
     """创建标签请求（登录用户）→ 进入待审核 `auditing`。"""
@@ -37,7 +39,10 @@ class RpaTagDetachReq(SQLModel):
 class RpaTagListReq(SQLModel):
     """列出标签请求。普通用户仅 `normal`；root 可传 `auditing` / `rejected` / `all`。"""
 
-    auditStatus: Optional[str] = Field(default=None, description="过滤状态；None→normal；root 可用 auditing/rejected/all")
+    auditStatus: Optional[str] = Field(
+        default=None,
+        description="过滤状态；None→normal；root 可用 auditing/rejected/all",
+    )
     page: int = Field(default=1, ge=1, description="页码")
     perPage: int = Field(default=20, ge=1, le=200, description="每页条数")
 
@@ -49,13 +54,16 @@ class RpaTagListByTargetReq(SQLModel):
     targetId: str = Field(description="目标资源 id（字符串）")
 
 
+@auto_str
 class RpaTagItemResp(SQLModel):
     """标签条目（供前端渲染）。pubTime / createdAt 序列化为 ISO 字符串或 None。"""
 
     id: int = Field(description="标签 id")
     name: str = Field(description="标签名称")
     color: str = Field(default="#409EFF", description="标签颜色")
-    createdBy: Optional[int] = Field(default=None, description="创建者 mid")
+    createdBy: Optional[SnowflakeInt] = Field(
+        default=None, description="创建者 mid（字符串版见 createdBy_str）"
+    )
     auditStatus: str = Field(description="审核状态：auditing / normal / rejected")
     pubTime: Optional[str] = Field(default=None, description="审核通过上架时间（ISO）")
     createdAt: Optional[str] = Field(default=None, description="创建时间（ISO）")

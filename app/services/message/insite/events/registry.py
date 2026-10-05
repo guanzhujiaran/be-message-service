@@ -8,6 +8,7 @@
 - ``handlers`` 既依赖 ``base.BaseEvent`` 又在本模块填充 ``EVENT_REGISTRY``；
 - ``base._resolve_handler_cls`` 读取本注册表，未登记类型回落到 ``GenericEvent``。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

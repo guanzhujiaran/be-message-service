@@ -7,6 +7,7 @@
 （``event_type`` / ``blocked_silent`` / ``setting_gate``），
 并在末尾把「类型 → 处理器」映射填入 ``registry.EVENT_REGISTRY``。
 """
+
 from __future__ import annotations
 
 from bili_common.models import InteractionActionTypeEnum
@@ -84,13 +85,19 @@ class ReplyEvent(GenericEvent):
 # 黑名单静默与设置闸门由 handler 类属性自动生效。
 EVENT_REGISTRY.update(
     {
-        InteractionActionTypeEnum.LIKE: EventSpec(InteractionActionTypeEnum.LIKE, LikeEvent),
-        InteractionActionTypeEnum.REPLY: EventSpec(InteractionActionTypeEnum.REPLY, ReplyEvent),
+        InteractionActionTypeEnum.LIKE: EventSpec(
+            InteractionActionTypeEnum.LIKE, LikeEvent
+        ),
+        InteractionActionTypeEnum.REPLY: EventSpec(
+            InteractionActionTypeEnum.REPLY, ReplyEvent
+        ),
         InteractionActionTypeEnum.AT: EventSpec(InteractionActionTypeEnum.AT, AtEvent),
         InteractionActionTypeEnum.AUDIT_REJECT: EventSpec(
             InteractionActionTypeEnum.AUDIT_REJECT, AuditRejectEvent
         ),
-        InteractionActionTypeEnum.HIDE: EventSpec(InteractionActionTypeEnum.HIDE, HideEvent),
+        InteractionActionTypeEnum.HIDE: EventSpec(
+            InteractionActionTypeEnum.HIDE, HideEvent
+        ),
         InteractionActionTypeEnum.REPORT_REJECT: EventSpec(
             InteractionActionTypeEnum.REPORT_REJECT, ReportRejectEvent
         ),

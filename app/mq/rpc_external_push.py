@@ -124,7 +124,9 @@ async def rpc_send_push_now(params: PushRpcSendNowParams) -> StandardResponse:
             )
         )
     return success_response(
-        data=PushRpcSendNowResult(success=True, message="推送已发送，请检查对应渠道是否收到")
+        data=PushRpcSendNowResult(
+            success=True, message="推送已发送，请检查对应渠道是否收到"
+        )
     )
 
 

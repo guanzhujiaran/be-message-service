@@ -44,7 +44,9 @@ class CasdoorError(Exception):
     def __init__(self, error: str, error_description: str = ""):
         self.error = error
         self.error_description = error_description
-        super().__init__(f"{error}: {error_description}" if error_description else error)
+        super().__init__(
+            f"{error}: {error_description}" if error_description else error
+        )
 
 
 def _get_sdk() -> AsyncCasdoorSDK:
@@ -123,7 +125,10 @@ async def _get_admin_access_token() -> str | None:
         raise ValueError("casdoor_endpoint 未配置")
 
     now = time.time()
-    if _admin_token_cache and _admin_token_expires_at > now + _ADMIN_TOKEN_BUFFER_SECONDS:
+    if (
+        _admin_token_cache
+        and _admin_token_expires_at > now + _ADMIN_TOKEN_BUFFER_SECONDS
+    ):
         return _admin_token_cache
 
     sdk = _get_admin_sdk()
@@ -176,12 +181,16 @@ async def _get_casdoor_user_with_admin(
     timeout = httpx.Timeout(10.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+            resp = await client.get(
+                url, params=params, headers={"Authorization": f"Bearer {token}"}
+            )
     except httpx.HTTPError as e:
         logger.error(f"[Casdoor] admin 模式 get-user 网络错误: {e}")
         return None
     if resp.status_code != 200:
-        logger.error(f"[Casdoor] admin 模式 get-user 非 200: {resp.status_code} {resp.text[:200]}")
+        logger.error(
+            f"[Casdoor] admin 模式 get-user 非 200: {resp.status_code} {resp.text[:200]}"
+        )
         return None
     try:
         payload = resp.json()
@@ -326,7 +335,9 @@ async def refresh_casdoor_token(
     token_model = CasdoorOAuthToken.model_validate(new_token)
 
     if not token_model.access_token:
-        logger.error(f"[Casdoor] 用户 {uid} 的 Casdoor token 刷新失败: 响应中无 access_token")
+        logger.error(
+            f"[Casdoor] 用户 {uid} 的 Casdoor token 刷新失败: 响应中无 access_token"
+        )
         return None
 
     # 写回 TUserInfo.pwd（仅存 access_token，便于后续直接调用 Casdoor API）
@@ -346,6 +357,41 @@ async def refresh_casdoor_token(
 
     logger.info(f"[Casdoor] 用户 {uid} 的 Casdoor token 刷新成功")
     return token_model.access_token
+
+
+async def delete_casdoor_user(user_name: str) -> None:
+    """删除 Casdoor 中心账号（管理员应用 service 模式，失败抛异常由调用方补偿）。
+
+    通过 admin 应用（app-built-in）的 clientId/clientSecret 调 Casdoor
+    ``POST /api/delete-user?id={org}/{name}``，与 casdoor Python SDK
+    ``AsyncCasdoorSDK.delete_user`` 等价（删除属管理操作，故用 admin 应用凭证而非
+    普通登录应用）。本函数不吞异常：网络错误 / status!=ok 都抛出，由到期任务捕获并落
+    pending_casdoor 补偿态。
+
+    Args:
+        user_name: Casdoor 用户名（TUserInfo.user_name）
+    """
+    if not settings.casdoor_endpoint:
+        raise ValueError("casdoor_endpoint 未配置")
+    if not user_name:
+        raise ValueError("user_name 为空，无法删除 Casdoor 用户")
+    url = f"{settings.casdoor_endpoint.rstrip('/')}/api/delete-user"
+    params = {
+        "id": f"{settings.casdoor_organization}/{user_name}",
+        "clientId": settings.casdoor_admin_client_id,
+        "clientSecret": settings.casdoor_admin_client_secret,
+    }
+    timeout = httpx.Timeout(10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(url, params=params)
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"delete-user HTTP {resp.status_code}: {resp.text[:200]}"
+        )
+    payload = resp.json()
+    if not isinstance(payload, dict) or payload.get("status") != "ok":
+        raise RuntimeError(f"delete-user 业务失败: {payload}")
+    logger.info(f"[Casdoor] 已删除用户 {user_name}")
 
 
 async def get_casdoor_user_by_user_name(user_name: str) -> CasdoorApiUser | None:
@@ -377,7 +423,9 @@ async def get_casdoor_user_by_user_name(user_name: str) -> CasdoorApiUser | None
         logger.error(f"[Casdoor] service 模式 get-user 网络错误: {e}")
         return None
     if resp.status_code != 200:
-        logger.error(f"[Casdoor] service 模式 get-user 非 200: {resp.status_code} {resp.text[:200]}")
+        logger.error(
+            f"[Casdoor] service 模式 get-user 非 200: {resp.status_code} {resp.text[:200]}"
+        )
         return None
     try:
         payload = resp.json()
@@ -416,7 +464,9 @@ async def get_casdoor_user_by_email(email: str) -> CasdoorApiUser | None:
         logger.error(f"[Casdoor] email 模式 get-user 网络错误: {e}")
         return None
     if resp.status_code != 200:
-        logger.error(f"[Casdoor] email 模式 get-user 非 200: {resp.status_code} {resp.text[:200]}")
+        logger.error(
+            f"[Casdoor] email 模式 get-user 非 200: {resp.status_code} {resp.text[:200]}"
+        )
         return None
     try:
         payload = resp.json()
@@ -444,12 +494,16 @@ async def _get_casdoor_user_by_access_token(access_token: str) -> CasdoorApiUser
     timeout = httpx.Timeout(10.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(url, headers={"Authorization": f"Bearer {access_token}"})
+            resp = await client.get(
+                url, headers={"Authorization": f"Bearer {access_token}"}
+            )
     except httpx.HTTPError as e:
         logger.error(f"[Casdoor] 用户模式 get-user 网络错误: {e}")
         return None
     if resp.status_code != 200:
-        logger.error(f"[Casdoor] 用户模式 get-user 非 200: {resp.status_code} {resp.text[:200]}")
+        logger.error(
+            f"[Casdoor] 用户模式 get-user 非 200: {resp.status_code} {resp.text[:200]}"
+        )
         return None
     try:
         payload = resp.json()
@@ -490,9 +544,11 @@ async def get_casdoor_user_as_user(
     # 1. 解析用户登录名（admin / user_name 模式用）
     resolved_name = user_name
     if not resolved_name:
+
         async def _get_name(s: AsyncSession) -> str | None:
             stmt = select(PptrUserInfo.user_name).where(PptrUserInfo.uid == int(uid))
             return (await s.exec(stmt)).first()
+
         if session is not None:
             resolved_name = await _get_name(session)
         else:
@@ -524,13 +580,16 @@ async def _get_user_email_from_db(
     *, uid: int | str, session: AsyncSession | None = None
 ) -> str | None:
     """从 pptr Postgres TUserDetail.email 读用户邮箱。"""
+
     async def _get(s: AsyncSession) -> str | None:
         stmt = select(PptrUserDetail.email).where(PptrUserDetail.mid == int(uid))
         return (await s.exec(stmt)).first()
+
     if session is not None:
         return await _get(session)
     async with new_pptr_session() as s:
         return await _get(s)
+
 
 # ==================== Casdoor 登录回调（由 pptr 代理到本服务）====================
 
@@ -642,9 +701,7 @@ async def create_local_user_from_casdoor(
 
     # 2. 按 username 查重，冲突则自动分配
     final_username = username
-    existing = await PptrUser.fetch_profile(
-        user_name=final_username, session=session
-    )
+    existing = await PptrUser.fetch_profile(user_name=final_username, session=session)
     if existing:
         # 尝试 bili_ + username
         final_username = f"bili_{username}"
@@ -659,9 +716,7 @@ async def create_local_user_from_casdoor(
                 f"回退为 {final_username}"
             )
         else:
-            logger.info(
-                f"[Casdoor] username {username} 冲突，使用 bili_{username}"
-            )
+            logger.info(f"[Casdoor] username {username} 冲突，使用 bili_{username}")
 
     # 3. 创建用户（仅将 access_token 写入 TUserInfo.pwd，便于后续直接调用 Casdoor API）
     #    默认昵称统一为「bili_ + uuid」格式：新创建账号一眼可辨，
@@ -718,6 +773,7 @@ async def record_login_activity(
         act_info: 活动类型（login_succ / reg）
         session: 可选数据库会话，传入后共享同一事务
     """
+
     async def _run(s: AsyncSession) -> None:
         log = PptrUserActInfoLog(
             mid=uid,

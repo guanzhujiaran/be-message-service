@@ -3,6 +3,7 @@
 lottery 属**通用资源**：点赞走 ``do_like_generic``，后端**不自动生成 LIKE 事件**
 （动态点赞会生成），必须由 seed 显式补发，否则消息中心「收到的赞」永远看不到抽奖资源的赞。
 """
+
 from itertools import zip_longest
 
 import aiomysql
@@ -26,7 +27,8 @@ async def _fetch_lottery_ids(n: int = 1) -> list[int]:
         try:
             cur = await conn.cursor()
             await cur.execute(
-                "SELECT lottery_id FROM lotdata ORDER BY lottery_time DESC LIMIT %s", (n,)
+                "SELECT lottery_id FROM lotdata ORDER BY lottery_time DESC LIMIT %s",
+                (n,),
             )
             rows = await cur.fetchall()
         finally:
@@ -37,9 +39,7 @@ async def _fetch_lottery_ids(n: int = 1) -> list[int]:
         return []
 
 
-async def _fetch_lottery_ids_via_api(
-    crawler_base_url: str, n: int = 1
-) -> list[int]:
+async def _fetch_lottery_ids_via_api(crawler_base_url: str, n: int = 1) -> list[int]:
     """调 crawler 的 GetAllLottery HTTP 接口取真实 lottery_id（走接口，不直连库）。
 
     路径：``{crawler_base_url}/api/v1/lottery_database/bili/GetAllLottery`` (POST)。
@@ -47,13 +47,10 @@ async def _fetch_lottery_ids_via_api(
     """
     try:
         url = (
-            f"{crawler_base_url.rstrip('/')}"
-            "/api/v1/lottery_database/bili/GetAllLottery"
+            f"{crawler_base_url.rstrip('/')}/api/v1/lottery_database/bili/GetAllLottery"
         )
         async with httpx.AsyncClient(timeout=10.0) as cli:
-            resp = await cli.post(
-                url, params={"page_num": 1, "page_size": max(1, n)}
-            )
+            resp = await cli.post(url, params={"page_num": 1, "page_size": max(1, n)})
             resp.raise_for_status()
             payload = resp.json()
         data = (payload or {}).get("data") or {}

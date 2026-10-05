@@ -29,7 +29,9 @@ from enum import IntEnum
 from threading import Lock
 
 # 项目根（be-message-service/），词表路径从此处派生
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+)
 #: 词库目录（可通过环境变量覆盖，便于测试 / 部署自定义词库）
 WORDS_DIR = os.environ.get("SENSITIVE_WORDS_DIR") or os.path.join(
     _PROJECT_ROOT, "data", "sensitive-words"
@@ -135,7 +137,9 @@ def _split_line(line: str, *, comma_delimited: bool = False) -> list[str]:
 
 def load_whitelist() -> set[str]:
     """加载误杀豁免词（`whitelist.txt`），不存在 / 读取失败返回空集合。"""
-    return set(_load_words_from_path(os.path.join(_effective_words_dir(), WHITELIST_FILE)))
+    return set(
+        _load_words_from_path(os.path.join(_effective_words_dir(), WHITELIST_FILE))
+    )
 
 
 def _usable_word(word: str, whitelist: set[str]) -> bool:
@@ -306,7 +310,8 @@ class WordFilter:
                 level = _level_from_name(levels.get(category, "medium"))
                 trie = Trie()
                 words = [
-                    w for w in _load_words_from_path(os.path.join(d, filename))
+                    w
+                    for w in _load_words_from_path(os.path.join(d, filename))
                     if _usable_word(w, whitelist)
                 ]
                 for w in words:

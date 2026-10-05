@@ -3,6 +3,7 @@
 seed 全流程用「定值轮遍」取代 ``random.choice / random.sample / random.randint``：
 每个用户 / 每条素材都被均匀轮到、不重复，且结果可复现。
 """
+
 from collections.abc import Sequence
 from typing import TypeVar
 

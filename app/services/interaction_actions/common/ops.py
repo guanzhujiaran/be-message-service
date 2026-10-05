@@ -36,7 +36,9 @@ __all__ = [
 ]
 
 
-async def validate_exists(session, biz_type: InteractionBizTypeEnum, biz_id: int) -> None:
+async def validate_exists(
+    session, biz_type: InteractionBizTypeEnum, biz_id: int
+) -> None:
     """资源存在性校验（委托给对应资源类的 ``check_exists``；未实现资源类默认放行）。
 
     原注册式 ``InteractionResourceValidator`` 的存在性逻辑已下沉为各 Biz 子类的
@@ -69,7 +71,9 @@ async def do_like_generic(
     ).first()
 
     async def _count() -> int:
-        counts = await InteractionStatService.batch_get_counts(session, biz_type, [biz_id])
+        counts = await InteractionStatService.batch_get_counts(
+            session, biz_type, [biz_id]
+        )
         return counts.get(biz_id, {}).get("likeCount", 0)
 
     if up == 1:
@@ -183,7 +187,9 @@ async def do_dislike(
     ).first()
 
     async def _count() -> int:
-        counts = await InteractionStatService.batch_get_counts(session, biz_type, [biz_id])
+        counts = await InteractionStatService.batch_get_counts(
+            session, biz_type, [biz_id]
+        )
         return counts.get(biz_id, {}).get("dislikeCount", 0)
 
     if up == 1:

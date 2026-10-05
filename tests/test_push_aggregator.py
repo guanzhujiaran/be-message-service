@@ -71,7 +71,12 @@ def _force_due(monkeypatch) -> None:
 
 def test_should_aggregate_only_failure_topic():
     assert aggregator.should_aggregate("[f][svc@host] MQ消费失败") is True
-    for title in ("[i][svc@host] 数据更新", "[s][svc@host] 完成", "[w][svc@host] 警告", "无主题"):
+    for title in (
+        "[i][svc@host] 数据更新",
+        "[s][svc@host] 完成",
+        "[w][svc@host] 警告",
+        "无主题",
+    ):
         assert aggregator.should_aggregate(title) is False
 
 
@@ -128,7 +133,11 @@ async def test_digest_counts_duplicated_contents(monkeypatch):
     """同内容的重复推送被计成 ×N（crawler 的 347 条同因失败就是靠这个压成一条）。"""
     await aggregator.deliver(_alert("第一条"))
     for _ in range(347):
-        await aggregator.deliver(_alert("队列: OfficialReserveChargeLotQueue\n异常: RequestUnknownError: boom"))
+        await aggregator.deliver(
+            _alert(
+                "队列: OfficialReserveChargeLotQueue\n异常: RequestUnknownError: boom"
+            )
+        )
 
     _force_due(monkeypatch)
     await aggregator.flush_due_buckets()
@@ -188,7 +197,10 @@ async def test_different_titles_have_separate_buckets():
     await aggregator.deliver(_alert("服务异常-1", title="[f][svc] 服务异常"))
     await aggregator.deliver(_alert("消费失败-2", title="[f][svc] MQ消费失败"))
 
-    assert [content for _, content in _FakePushService.sent] == ["消费失败-1", "服务异常-1"]
+    assert [content for _, content in _FakePushService.sent] == [
+        "消费失败-1",
+        "服务异常-1",
+    ]
 
 
 # ============================================================================

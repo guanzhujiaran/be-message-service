@@ -22,12 +22,14 @@ from app.models.schemas import (
 from app.services.admin.report import ReportService
 
 # 2.41.0：be-gateway 已合并为 /api/v1/ 通配转发，举报使用独立业务域
-#（动态域前缀由 /api/v1/moment 更名为 /api/v1/community）；统一举报任意资源
-#（dynamic/comment/user/resource 由 bizType 区分）。
+# （动态域前缀由 /api/v1/moment 更名为 /api/v1/community）；统一举报任意资源
+# （dynamic/comment/user/resource 由 bizType 区分）。
 router = APIRouter(prefix="/api/v1/report", tags=["Report"])
 
 
-@router.post("", response_model=StandardResponse, summary="统一举报（动态/评论/用户空间）")
+@router.post(
+    "", response_model=StandardResponse, summary="统一举报（动态/评论/用户空间）"
+)
 async def create_report(
     session: SessionDep,
     user: RequiredUser,
@@ -53,8 +55,12 @@ async def create_report(
 async def list_reports(
     session: SessionDep,
     admin: AdminUser,
-    biz_type: InteractionBizTypeEnum | None = Query(default=None, description="按来源过滤（InteractionBizTypeEnum 值）"),
-    status: str | None = Query(default=None, description="按状态过滤：pending/resolved/rejected"),
+    biz_type: InteractionBizTypeEnum | None = Query(
+        default=None, description="按来源过滤（InteractionBizTypeEnum 值）"
+    ),
+    status: str | None = Query(
+        default=None, description="按状态过滤：pending/resolved/rejected"
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[ReportListResp]:

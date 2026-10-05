@@ -30,7 +30,10 @@ class CleanupDmService:
         )
         await session.exec(
             delete(DmMessageIndex).where(
-                or_(col(DmMessageIndex.owner_mid) == uid, col(DmMessageIndex.sender_uid) == uid)
+                or_(
+                    col(DmMessageIndex.owner_mid) == uid,
+                    col(DmMessageIndex.sender_uid) == uid,
+                )
             )
         )
         await session.exec(

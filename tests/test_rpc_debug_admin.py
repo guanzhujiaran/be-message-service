@@ -56,7 +56,9 @@ def test_registry_routing_keys_match_prefix_functions():
 
     resolved = RpcDebugService.resolve(GeoIpRpcMethodName.RESOLVE_IP_REGION)
     assert resolved is not None
-    assert resolved[0] == geoip_rpc_routing_key_for(GeoIpRpcMethodName.RESOLVE_IP_REGION)
+    assert resolved[0] == geoip_rpc_routing_key_for(
+        GeoIpRpcMethodName.RESOLVE_IP_REGION
+    )
 
     resolved = RpcDebugService.resolve(str(RpaRpcMethodName.LIST_TAGS))
     assert resolved is not None
@@ -146,10 +148,9 @@ async def test_methods_endpoint_lists_contracts():
 async def test_invoke_returns_envelope_from_rpc_client():
     """成功路径：RpcClient.call 打桩，验证信封原样回显 + 路由键正确。"""
     fake_envelope = {"code": 0, "msg": "success", "data": {"uid": 1}}
-    with patch.object(
-        RpcDebugService, "_client", AsyncMock()
-    ) as mock_client, patch.object(
-        RpcDebugService, "ensure_connected", new=AsyncMock()
+    with (
+        patch.object(RpcDebugService, "_client", AsyncMock()) as mock_client,
+        patch.object(RpcDebugService, "ensure_connected", new=AsyncMock()),
     ):
         mock_client.call = AsyncMock(return_value=fake_envelope)
         async with _client(_ROOT_HEADERS) as ac:

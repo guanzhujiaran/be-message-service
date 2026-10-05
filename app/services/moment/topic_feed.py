@@ -52,6 +52,7 @@ from app.services.moment.feed_engine import (
     build_viewer_key,
     rank_feed,
 )
+
 # 装配管线复用 moment_feed（与综合页 / 空间 / 详情共用，避免重复实现与 N+1）
 # 注意：moment_feed 不反向依赖本模块，无环；直接顶部导入即可。
 from app.services.moment.moment_feed import (
@@ -211,16 +212,12 @@ class TopicFeedService:
             session, topic_dyn_ids, limit=settings.edgerank_candidate_limit
         )
         if not feed_rows:
-            return MomentTopicFeedResp(
-                topicId=topic_id, topicName=topic_name, items=[]
-            )
+            return MomentTopicFeedResp(topicId=topic_id, topicName=topic_name, items=[])
 
         cand_ids = [r.bizId for r in feed_rows]
         # 渲染所需动态主表（内容）批量一次拉取
         moment_rows = (
-            await session.exec(
-                select(TMoment).where(col(TMoment.dynId).in_(cand_ids))
-            )
+            await session.exec(select(TMoment).where(col(TMoment.dynId).in_(cand_ids)))
         ).all()
         moment_map = {r.dynId: r for r in moment_rows}
 

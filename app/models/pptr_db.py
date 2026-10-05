@@ -49,14 +49,20 @@ class PptrUserInfo(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
     user_name: str | None = Field(default=None, sa_type=Text)
     pwd: str | None = Field(default=None, sa_type=Text)
     role: str | None = Field(
         default=None,
         max_length=255,
-        sa_column_kwargs={"server_default": text("'level0'"), "comment": "level0\nlevel1\n...\nroot"},
+        sa_column_kwargs={
+            "server_default": text("'level0'"),
+            "comment": "level0\nlevel1\n...\nroot",
+        },
     )
     deletedAt: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     reg_ip_info_id: int | None = Field(default=None, sa_type=BIGINT)
@@ -65,12 +71,19 @@ class PptrUserInfo(SQLModel, table=True):
 class PptrUserDetail(SQLModel, table=True):
     __tablename__ = "TUserDetail"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserInfo.uid"], onupdate="CASCADE", name="TUserDetail_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"], ["TUserInfo.uid"], onupdate="CASCADE", name="TUserDetail_mid_fkey"
+        ),
         PrimaryKeyConstraint("mid", name="TUserDetail_pkey"),
         UniqueConstraint("uname", name="TUserDetail_uname_key"),
     )
 
-    mid: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": False})
+    mid: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": False},
+    )
     createdAt: datetime = Field(
         default=None,
         nullable=False,
@@ -81,7 +94,10 @@ class PptrUserDetail(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
     avatar: str | None = Field(default=None, max_length=1024)
     uname: str | None = Field(default=None, max_length=50)
@@ -99,11 +115,18 @@ class PptrUserDetail(SQLModel, table=True):
 class PptrUserLevel(SQLModel, table=True):
     __tablename__ = "TUserLevel"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserDetail.mid"], onupdate="CASCADE", name="TUserLevel_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"], ["TUserDetail.mid"], onupdate="CASCADE", name="TUserLevel_mid_fkey"
+        ),
         PrimaryKeyConstraint("mid", name="TUserLevel_pkey"),
     )
 
-    mid: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": False})
+    mid: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": False},
+    )
     createdAt: datetime = Field(
         default=None,
         nullable=False,
@@ -114,22 +137,38 @@ class PptrUserLevel(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
-    current_exp: int | None = Field(default=None, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")})
-    current_level: int | None = Field(default=None, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")})
-    current_min: int | None = Field(default=None, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")})
+    current_exp: int | None = Field(
+        default=None, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}
+    )
+    current_level: int | None = Field(
+        default=None, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}
+    )
+    current_min: int | None = Field(
+        default=None, sa_type=BIGINT, sa_column_kwargs={"server_default": text("0")}
+    )
     deletedAt: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class PptrUserVip(SQLModel, table=True):
     __tablename__ = "TUserVip"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserDetail.mid"], onupdate="CASCADE", name="TUserVip_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"], ["TUserDetail.mid"], onupdate="CASCADE", name="TUserVip_mid_fkey"
+        ),
         PrimaryKeyConstraint("mid", name="TUserVip_pkey"),
     )
 
-    mid: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": False})
+    mid: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": False},
+    )
     createdAt: datetime = Field(
         default=None,
         nullable=False,
@@ -140,7 +179,10 @@ class PptrUserVip(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
     vip_due_date: int | None = Field(
         default=None,
@@ -148,15 +190,24 @@ class PptrUserVip(SQLModel, table=True):
     )
     vip_pay_type: int | None = Field(
         default=None,
-        sa_column_kwargs={"server_default": text("0"), "comment": "大致分成不同充值渠道？"},
+        sa_column_kwargs={
+            "server_default": text("0"),
+            "comment": "大致分成不同充值渠道？",
+        },
     )
     vip_status: int | None = Field(
         default=None,
-        sa_column_kwargs={"server_default": text("0"), "comment": "0：非vip\n1：目前就是vip\n2：非VIP（充值过，过期了）"},
+        sa_column_kwargs={
+            "server_default": text("0"),
+            "comment": "0：非vip\n1：目前就是vip\n2：非VIP（充值过，过期了）",
+        },
     )
     vip_type: int | None = Field(
         default=None,
-        sa_column_kwargs={"server_default": text("0"), "comment": "0：非vip\n1：月度\n2：年度\n3：十年\n4：百年"},
+        sa_column_kwargs={
+            "server_default": text("0"),
+            "comment": "0：非vip\n1：月度\n2：年度\n3：十年\n4：百年",
+        },
     )
     deletedAt: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
@@ -164,12 +215,23 @@ class PptrUserVip(SQLModel, table=True):
 class PptrUserActInfoLog(SQLModel, table=True):
     __tablename__ = "TUserActInfoLog"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserInfo.uid"], ondelete="SET NULL", name="TUserActInfoLog_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"],
+            ["TUserInfo.uid"],
+            ondelete="SET NULL",
+            name="TUserActInfoLog_mid_fkey",
+        ),
         PrimaryKeyConstraint("pk", name="TUserActInfoLog_pkey"),
+        Index("idx_log_mid_created", "mid", text('"createdAt" DESC')),
         {"comment": "用户行为日志，记录ip，ua，headers等信息？"},
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
+    pk: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": True},
+    )
     createdAt: datetime = Field(
         default=None,
         nullable=False,
@@ -180,7 +242,10 @@ class PptrUserActInfoLog(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
     mid: int | None = Field(default=None, sa_type=BIGINT)
     ip: str | None = Field(default=None, max_length=50)
@@ -196,13 +261,22 @@ class PptrUserActInfoLog(SQLModel, table=True):
 class PptrUserExpRecord(SQLModel, table=True):
     __tablename__ = "TUserExpRecord"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserInfo.uid"], name="TUserExpRecord_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"], ["TUserInfo.uid"], name="TUserExpRecord_mid_fkey"
+        ),
         PrimaryKeyConstraint("pk", name="TUserExpRecord_pkey"),
         Index("idx_exp_record_mid_action_ref_date", "mid", "action_type", "ref_date"),
-        {"comment": "用户经验增加记录表，记录所有行为（每日登录、发评论等）增加的经验值"},
+        {
+            "comment": "用户经验增加记录表，记录所有行为（每日登录、发评论等）增加的经验值"
+        },
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
+    pk: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": True},
+    )
     mid: int = Field(default=None, nullable=False, sa_type=BIGINT)
     createdAt: datetime = Field(
         default=None,
@@ -213,7 +287,9 @@ class PptrUserExpRecord(SQLModel, table=True):
     action_type: int = Field(
         default=None,
         nullable=False,
-        sa_column_kwargs={"comment": "行为类型 int：1=daily_login（每日登录），与 ExpActionType 枚举对应"},
+        sa_column_kwargs={
+            "comment": "行为类型 int：1=daily_login（每日登录），与 ExpActionType 枚举对应"
+        },
     )
     exp: int = Field(
         default=None,
@@ -224,18 +300,27 @@ class PptrUserExpRecord(SQLModel, table=True):
         default=None,
         max_length=10,
         nullable=False,
-        sa_column_kwargs={"comment": "行为引用日期，格式 YYYY-MM-DD，用于每日/每周行为幂等检查"},
+        sa_column_kwargs={
+            "comment": "行为引用日期，格式 YYYY-MM-DD，用于每日/每周行为幂等检查"
+        },
     )
 
 
 class PptrUserNameRecord(SQLModel, table=True):
     __tablename__ = "TUserNameRecord"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserInfo.uid"], name="TUserNameRecord_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"], ["TUserInfo.uid"], name="TUserNameRecord_mid_fkey"
+        ),
         PrimaryKeyConstraint("pk", name="TUserNameRecord_pkey"),
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
+    pk: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": True},
+    )
     createdAt: datetime = Field(
         default=None,
         nullable=False,
@@ -246,7 +331,10 @@ class PptrUserNameRecord(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
     mid: int = Field(default=None, nullable=False, sa_type=BIGINT)
     prev_uname: str | None = Field(default=None, max_length=50)
@@ -256,11 +344,18 @@ class PptrUserNameRecord(SQLModel, table=True):
 class PptrUserPwdRecord(SQLModel, table=True):
     __tablename__ = "TUserPwdRecord"
     __table_args__ = (
-        ForeignKeyConstraint(["mid"], ["TUserInfo.uid"], name="TUserPwdRecord_mid_fkey"),
+        ForeignKeyConstraint(
+            ["mid"], ["TUserInfo.uid"], name="TUserPwdRecord_mid_fkey"
+        ),
         PrimaryKeyConstraint("pk", name="TUserPwdRecord_pkey"),
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
+    pk: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": True},
+    )
     createdAt: datetime = Field(
         default=None,
         nullable=False,
@@ -271,7 +366,10 @@ class PptrUserPwdRecord(SQLModel, table=True):
         default=None,
         nullable=False,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP"), "onupdate": func.now()},
+        sa_column_kwargs={
+            "server_default": text("CURRENT_TIMESTAMP"),
+            "onupdate": func.now(),
+        },
     )
     mid: int | None = Field(default=None, sa_type=BIGINT)
     prev_pwd: str | None = Field(default=None, max_length=255)

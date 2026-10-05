@@ -6,6 +6,7 @@
   schema = 'public' 的 pptr 表（即 app.models.pptr_db 中定义的表），避免把 MySQL 表
   误同步进 Postgres。
 """
+
 # 让 alembic 能 import app.*
 import sys
 from pathlib import Path

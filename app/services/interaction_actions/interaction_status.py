@@ -150,7 +150,9 @@ class InteractionStatusService:
         # 点赞 / 收藏明细查不到任何行，匿名结果即 isLike=isFavorite=False，计数不受影响
         viewer_mid = int(mid)
         # 2.36.0：动态与非动态资源计数统一 TInteractionStat（batch_get_counts 全字段）
-        counts = await InteractionStatService.batch_get_counts(session, biz_type, biz_ids)
+        counts = await InteractionStatService.batch_get_counts(
+            session, biz_type, biz_ids
+        )
         like_counts = {b: c["likeCount"] for b, c in counts.items()}
         fav_counts = {b: c["favoriteCount"] for b, c in counts.items()}
         view_counts = {b: c["viewCount"] for b, c in counts.items()}

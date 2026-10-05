@@ -76,7 +76,9 @@ async def _bind_engine_per_test():
             text(f"DELETE FROM TUserAvatarAudit WHERE mid IN ({A_MID}, {A_MID2})")
         )
         await s.exec(
-            text(f"DELETE FROM msg_notify WHERE target_value IN ('{A_MID}', '{A_MID2}')")
+            text(
+                f"DELETE FROM msg_notify WHERE target_value IN ('{A_MID}', '{A_MID2}')"
+            )
         )
         await s.commit()
     # 预置 pptr 用户主数据，供审核通过写入公开头像（否则 TUserDetail 插入触发 FK 违约）
@@ -88,7 +90,9 @@ async def _bind_engine_per_test():
             text(f"DELETE FROM TUserAvatarAudit WHERE mid IN ({A_MID}, {A_MID2})")
         )
         await s.exec(
-            text(f"DELETE FROM msg_notify WHERE target_value IN ('{A_MID}', '{A_MID2}')")
+            text(
+                f"DELETE FROM msg_notify WHERE target_value IN ('{A_MID}', '{A_MID2}')"
+            )
         )
         await s.commit()
     # 清理 pptr 种子数据
@@ -112,14 +116,8 @@ async def _seed_pptr_user(mid: int) -> None:
         await s.exec(
             text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": mid}
         )
-        await s.exec(
-            text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": mid}
-        )
-        s.add(
-            PptrUserInfo(
-                uid=mid, user_name=f"avatar_audit_{mid}", role="level0"
-            )
-        )
+        await s.exec(text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": mid})
+        s.add(PptrUserInfo(uid=mid, user_name=f"avatar_audit_{mid}", role="level0"))
         await s.flush()
         s.add(
             PptrUserDetail(
@@ -139,9 +137,7 @@ async def _cleanup_pptr_user(mid: int) -> None:
         await s.exec(
             text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": mid}
         )
-        await s.exec(
-            text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": mid}
-        )
+        await s.exec(text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": mid})
         await s.commit()
 
 
@@ -180,7 +176,10 @@ async def test_resubmit_overrides_old_pending():
             s, uid=A_MID, new_avatar=NEW_AVATAR, old_avatar=OLD_AVATAR
         )
         pk2 = await AvatarAuditService.submit(
-            s, uid=A_MID, new_avatar="https://example.com/new2.png", old_avatar=OLD_AVATAR
+            s,
+            uid=A_MID,
+            new_avatar="https://example.com/new2.png",
+            old_avatar=OLD_AVATAR,
         )
         # 旧 pending 被覆盖为 rejected
         old = await s.get(TUserAvatarAudit, pk1)

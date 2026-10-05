@@ -2,6 +2,7 @@
 
 只读取，不写这些库（seed 严禁直写 MySQL，写操作一律经 be-message HTTP 接口，见计划书 C14）。
 """
+
 import aiomysql
 from loguru import logger
 from sqlalchemy import func

@@ -58,7 +58,9 @@ async def report_event(
 async def aggregate_event(
     session: SessionDep,
     user: RequiredUser,
-    event_type: InteractionActionTypeEnum | None = Query(default=None, description="按类型筛选"),
+    event_type: InteractionActionTypeEnum | None = Query(
+        default=None, description="按类型筛选"
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
     only_unread: bool = Query(default=False),
@@ -81,13 +83,17 @@ async def aggregate_event(
 
 
 @router.get(
-    "/list", response_model=StandardResponse[EventListResp], summary="互动提醒列表（B 站式聚合）"
+    "/list",
+    response_model=StandardResponse[EventListResp],
+    summary="互动提醒列表（B 站式聚合）",
 )
 async def list_event(
     session: SessionDep,
     user: RequiredUser,
     event_type: InteractionActionTypeEnum | None = Query(default=None),
-    cursor_id: int | None = Query(default=None, ge=1, description="上一页末条 id，用于翻页"),
+    cursor_id: int | None = Query(
+        default=None, ge=1, description="上一页末条 id，用于翻页"
+    ),
     page_size: int = Query(default=20, ge=1, le=50),
     only_unread: bool = Query(default=False),
 ) -> StandardResponse[EventListResp]:
@@ -145,7 +151,9 @@ async def delete_event(
 @router.get(
     "/unread", response_model=StandardResponse[dict], summary="各类型互动未读数"
 )
-async def unread_event(session: SessionDep, user: RequiredUser) -> StandardResponse[dict]:
+async def unread_event(
+    session: SessionDep, user: RequiredUser
+) -> StandardResponse[dict]:
     """一次查询返回 like / reply / at 的未读数，供前端渲染红点。"""
     data = await BaseEvent.count_unread_by_type(session, user.mid)
     return StandardResponse(

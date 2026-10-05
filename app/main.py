@@ -53,6 +53,7 @@ from app.api.report import router as report_router
 from app.api.rpa_tag import router as rpa_tag_router
 from app.api.rpc_debug import router as rpc_debug_router
 from app.api.setting import router as setting_router
+from app.api.space import router as space_router
 from app.api.sys_config import router as sys_config_router
 from app.api.user import router as user_router
 from app.core.broker import broker
@@ -65,6 +66,7 @@ from app.core.sharding import ensure_current_month_shards
 from app.mq import rpc_notify
 from app.mq import rpc_pptr_user
 from app.mq import rpc_external_push
+
 # IP 属地解析 RPC（message.geoip.rpc.*）：RPA 等按需查属地，mmdb 只留在本服务
 from app.mq import rpc_geoip
 from app.mq.consumers import comment, deactivate, dm, external_push
@@ -282,6 +284,7 @@ app.include_router(comment_admin_router)
 app.include_router(moment_router)
 app.include_router(moment_feed_router)
 app.include_router(moment_audit_router)
+app.include_router(space_router)
 app.include_router(audit_router)
 app.include_router(moment_topic_audit_router)
 app.include_router(favorite_router)
@@ -307,3 +310,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=settings.http_port)
+    

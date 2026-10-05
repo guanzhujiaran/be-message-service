@@ -17,6 +17,7 @@
 本文件阶段一为**纯新增、自包含**：不 import 业务表 / 现存量枚举，供阶段二起的
 资源接入时使用；`_write_audit_log` 默认空、可由子类覆盖为写 `TResourceAuditLog`。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

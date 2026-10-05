@@ -26,7 +26,7 @@ from app.models.db import (
     DmSession,
     EventMessage,
     NotifyMessage,
-    )
+)
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     DmMsgStatusEnum,
@@ -37,7 +37,6 @@ from app.models.enums import (
     NotifyStatusEnum,
     NotifyTargetTypeEnum,
 )
-
 
 
 @pytest.fixture(autouse=True)
@@ -102,15 +101,19 @@ async def test_enum_round_trip() -> None:
                 )
             )
         ).one()
-        assert raw[0] == NotifyTargetTypeEnum.LEVEL.name, f"target_type 应存成员名，实际 {raw[0]!r}"
-        assert raw[1] == NotifyLevelEnum.URGENT.name, f"level 应存成员名，实际 {raw[1]!r}"
-        assert raw[2] == NotifyStatusEnum.PUBLISHED.name, f"status 应存成员名，实际 {raw[2]!r}"
+        assert raw[0] == NotifyTargetTypeEnum.LEVEL.name, (
+            f"target_type 应存成员名，实际 {raw[0]!r}"
+        )
+        assert raw[1] == NotifyLevelEnum.URGENT.name, (
+            f"level 应存成员名，实际 {raw[1]!r}"
+        )
+        assert raw[2] == NotifyStatusEnum.PUBLISHED.name, (
+            f"status 应存成员名，实际 {raw[2]!r}"
+        )
 
         # 2) ORM 读回：还原成枚举成员，可用 is 比较
         s.expunge_all()
-        got = (
-            await s.exec(select(NotifyMessage).where(NotifyMessage.id == nid))
-        ).one()
+        got = (await s.exec(select(NotifyMessage).where(NotifyMessage.id == nid))).one()
         assert got.target_type is NotifyTargetTypeEnum.LEVEL
         assert got.level is NotifyLevelEnum.URGENT
         assert got.status is NotifyStatusEnum.PUBLISHED
@@ -240,7 +243,9 @@ async def test_event_enum_round_trip_all_members() -> None:
     """遍历事件枚举全部成员，逐一验证写入 → 读回一致。"""
     await _cleanup()
     async with new_session() as s:
-        created: list[tuple[int, InteractionActionTypeEnum, InteractionBizTypeEnum]] = []
+        created: list[
+            tuple[int, InteractionActionTypeEnum, InteractionBizTypeEnum]
+        ] = []
         for i, (et, st) in enumerate(
             [
                 (e, s_)
@@ -266,8 +271,12 @@ async def test_event_enum_round_trip_all_members() -> None:
             got = (
                 await s.exec(select(EventMessage).where(EventMessage.id == rid))
             ).one()
-            assert got.event_type is et, f"event_type 往返不一致: {got.event_type} != {et}"
-            assert got.source_type is st, f"source_type 往返不一致: {got.source_type} != {st}"
+            assert got.event_type is et, (
+                f"event_type 往返不一致: {got.event_type} != {et}"
+            )
+            assert got.source_type is st, (
+                f"source_type 往返不一致: {got.source_type} != {st}"
+            )
 
         # 库里字面量全部为成员名
         raws = (

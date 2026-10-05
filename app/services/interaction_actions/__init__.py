@@ -37,6 +37,7 @@ from app.services.interaction_actions.base_biz import (
     get_biz_class,
     registered_biz_types,
 )
+
 # 导入资源汇总模块：触发全部资源类的「继承即登记」副作用
 from app.services.interaction_actions import resources  # noqa: F401
 from app.services.interaction_actions.resources import (  # noqa: F401

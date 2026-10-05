@@ -75,9 +75,7 @@ class MessageAdminService:
         return items, total
 
     @staticmethod
-    async def get_status(
-        session: SessionDep, mid: int
-    ) -> tuple[bool, dict[str, int]]:
+    async def get_status(session: SessionDep, mid: int) -> tuple[bool, dict[str, int]]:
         """返回某用户是否为消息管理端管理员及其各域权限字。"""
         admin = (
             await session.exec(select(MessageAdmin).where(MessageAdmin.mid == mid))

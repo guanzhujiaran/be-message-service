@@ -35,6 +35,7 @@ from app.models.schemas.follow import (
 )
 from app.models.schemas.user_brief import UserBriefOut
 from app.services.user.account import PptrUser
+from app.services.user.space_privacy import SpacePrivacyService
 
 
 class FollowService:
@@ -56,7 +57,10 @@ class FollowService:
             raise ValueError("不能关注自己")
 
         # 拉黑方向校验：target_mid → mid 是否为 blocked
-        if await FollowService._relation_status(session, target_mid, mid) == FollowStatusEnum.BLOCKED:
+        if (
+            await FollowService._relation_status(session, target_mid, mid)
+            == FollowStatusEnum.BLOCKED
+        ):
             raise ValueError("对方已拉黑你，无法关注")
 
         now = datetime.now()
@@ -158,9 +162,7 @@ class FollowService:
         return await FollowService._build_op_resp(session, mid, target_mid)
 
     @staticmethod
-    async def unblock(
-        session: AsyncSession, mid: int, target_mid: int
-    ) -> FollowOpResp:
+    async def unblock(session: AsyncSession, mid: int, target_mid: int) -> FollowOpResp:
         """解除拉黑 target_mid。
 
         仅删除 `blocked` 记录；若存在 `following` 记录则保留（解除拉黑不等于取关）。
@@ -271,7 +273,9 @@ class FollowService:
     ) -> FollowListResp:
         """我关注的人列表（按关注时间倒序）。
 
-        `mutual` 字段会标记该用户是否与我互相关注，前端可据此展示「互相关注」徽标。
+        `mutual` 字段会标记该用户是否与我互相关注，前端可据此展示「互相关注」徽标；
+        `user` 内联对方展示信息（2.58.0：一次 `PptrUser.get_many` 批量回查 pptr 主数据，
+        弱依赖，回查失败降级为 `user=None`，前端按「账号已注销」渲染）。
         """
         total = int(
             (
@@ -301,12 +305,14 @@ class FollowService:
 
         target_mids = [r.target_mid for r in rows]
         mutual_set = await FollowService._mutual_mids(session, mid, target_mids)
+        briefs = await FollowService._briefs_of(target_mids)
 
         items = [
             FollowListItem(
                 mid=r.target_mid,
                 created_at=r.created_at,
                 mutual=r.target_mid in mutual_set,
+                user=briefs.get(r.target_mid),
             )
             for r in rows
         ]
@@ -343,7 +349,11 @@ class FollowService:
         page_num: int = 1,
         page_size: int = 20,
     ) -> FollowListResp:
-        """我的粉丝列表（按关注时间倒序）。"""
+        """我的粉丝列表（按关注时间倒序）。
+
+        2.58.0：`user` 内联粉丝展示信息（一次 `PptrUser.get_many` 批量回查，弱依赖，
+        回查失败降级为 `user=None`），供 TA 主页的粉丝模块直接展示昵称 / 头像。
+        """
         total = int(
             (
                 await session.exec(
@@ -375,18 +385,132 @@ class FollowService:
         # 注意 _mutual_mids 的语义是「mid 关注这些人 且 这些人也关注 mid」，
         # 对于「我的粉丝」场景，传入粉丝列表即可（双向对称，结果一致）
         mutual_set = await FollowService._mutual_mids(session, mid, follower_mids)
+        briefs = await FollowService._briefs_of(follower_mids)
 
         items = [
             FollowListItem(
                 mid=r.mid,
                 created_at=r.created_at,
                 mutual=r.mid in mutual_set,
+                user=briefs.get(r.mid),
             )
             for r in rows
         ]
         return FollowListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
         )
+
+    #: TA 主页粉丝模块最多回看的「最新粉丝」条数（按关注时间倒序）
+    SPACE_FANS_MAX = 500
+
+    @staticmethod
+    async def list_fans(
+        session: AsyncSession,
+        target_mid: int,
+        viewer_mid: int | None,
+        page_num: int = 1,
+        page_size: int = 20,
+    ) -> FollowListResp:
+        """TA 主页的粉丝列表（他人视角，按关注时间倒序），对标 B 站 /x/relation/fans。
+
+        与 ``list_followers``（查「我自己」的粉丝，已登录强校验）不同，本方法用于
+        个人空间公开模块：
+
+        - **隐私**：``viewer == target``（主人看自己）放行；否则必须
+          ``show_fans_list`` 打开，关闭时返回空列表（整类不展示，而非报错）；
+        - **截断**：最多回看**最新 500 个粉丝**（``SPACE_FANS_MAX``），超出窗口的
+          历史粉丝不再分页暴露 —— ``total`` 只统计这 500 个窗口内的数量，前端
+          ``has_more`` 据此判断；
+        - ``mutual`` 语义为「TA 与该粉丝是否互相关注」：viewer 是主人时即「我也
+          关注了 TA」，viewer 是访客时该标记仅在需要时展示，计算以 target 为基准。
+        """
+        # 隐私门控：非主人视角受 show_fans_list 开关约束
+        is_self = viewer_mid is not None and int(viewer_mid) == int(target_mid)
+        if not is_self:
+            flags = await SpacePrivacyService.get_flags(session, target_mid)
+            if not flags.show_fans_list:
+                return FollowListResp(
+                    items=[], total=0, page_num=page_num, page_size=page_size
+                )
+
+        # 最新 500 个粉丝的窗口总量（用于 has_more / 分页）
+        window_total = int(
+            (
+                await session.exec(
+                    select(func.count())
+                    .select_from(
+                        select(UserFollow)
+                        .where(
+                            col(UserFollow.target_mid) == target_mid,
+                            col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
+                        )
+                        .order_by(col(UserFollow.created_at).desc())
+                        .limit(FollowService.SPACE_FANS_MAX)
+                        .subquery()
+                    )
+                )
+            ).one()
+            or 0
+        )
+
+        offset = (page_num - 1) * page_size
+        if offset >= FollowService.SPACE_FANS_MAX:
+            return FollowListResp(
+                items=[],
+                total=window_total,
+                page_num=page_num,
+                page_size=page_size,
+            )
+
+        rows = (
+            await session.exec(
+                select(UserFollow)
+                .where(
+                    col(UserFollow.target_mid) == target_mid,
+                    col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
+                )
+                .order_by(col(UserFollow.created_at).desc())
+                .offset(offset)
+                # 单页也不得越过 500 窗口上界
+                .limit(min(page_size, FollowService.SPACE_FANS_MAX - offset))
+            )
+        ).all()
+
+        follower_mids = [r.mid for r in rows]
+        # 以空间主人 target 为基准的互关集合
+        mutual_set = await FollowService._mutual_mids(session, target_mid, follower_mids)
+        briefs = await FollowService._briefs_of(follower_mids)
+
+        items = [
+            FollowListItem(
+                mid=r.mid,
+                created_at=r.created_at,
+                mutual=r.mid in mutual_set,
+                user=briefs.get(r.mid),
+            )
+            for r in rows
+        ]
+        return FollowListResp(
+            items=items,
+            total=window_total,
+            page_num=page_num,
+            page_size=page_size,
+        )
+
+    @staticmethod
+    async def _briefs_of(mids: list[int]) -> dict[int, UserBriefOut]:
+        """批量回查用户展示信息（2.58.0 抽出，关注 / 粉丝 / 黑名单三处共用）。
+
+        弱依赖：pptr 不可用时只告警，返回空 dict —— 调用方按 `user=None` 降级渲染，
+        不让「主数据抖动」拖垮列表接口。
+        """
+        if not mids:
+            return {}
+        try:
+            return await PptrUser.get_many(mids)
+        except Exception as e:  # noqa: BLE001 - 弱依赖，任何异常都不阻断列表
+            logger.warning(f"关注关系列表回查用户信息失败（降级为 null）: {e}")
+            return {}
 
     @staticmethod
     async def list_blocked(
@@ -433,12 +557,7 @@ class FollowService:
 
         # 批量回查被拉黑用户展示信息（pptr 只读，直连自建会话）。
         # 弱依赖：失败只告警，items 的 user 字段降级为 null（前端显示「账号已注销」）。
-        briefs: dict[int, UserBriefOut] = {}
-        if rows:
-            try:
-                briefs = await PptrUser.get_many([r.target_mid for r in rows])
-            except Exception as e:  # noqa: BLE001 - 弱依赖，任何异常都不阻断列表
-                logger.warning(f"黑名单列表回查用户信息失败（降级为 null）: {e}")
+        briefs = await FollowService._briefs_of([r.target_mid for r in rows])
 
         # 黑名单管理页是「我看他人」视角：私域字段由序列化期自动剥离，不回传邮箱 / 经验
         items = [
@@ -456,9 +575,7 @@ class FollowService:
     # ==================== 闸门判定（供其他模块调用）====================
 
     @staticmethod
-    async def is_following(
-        session: AsyncSession, mid: int, target_mid: int
-    ) -> bool:
+    async def is_following(session: AsyncSession, mid: int, target_mid: int) -> bool:
         """mid 是否关注了 target_mid。"""
         return (
             await FollowService._relation_status(session, mid, target_mid)
@@ -466,9 +583,7 @@ class FollowService:
         )
 
     @staticmethod
-    async def is_mutual(
-        session: AsyncSession, mid_a: int, mid_b: int
-    ) -> bool:
+    async def is_mutual(session: AsyncSession, mid_a: int, mid_b: int) -> bool:
         """两个用户是否互相关注。"""
         forward = await FollowService._relation_status(session, mid_a, mid_b)
         if forward != FollowStatusEnum.FOLLOWING:
@@ -477,9 +592,7 @@ class FollowService:
         return reverse == FollowStatusEnum.FOLLOWING
 
     @staticmethod
-    async def is_blocked_by(
-        session: AsyncSession, mid: int, blocker: int
-    ) -> bool:
+    async def is_blocked_by(session: AsyncSession, mid: int, blocker: int) -> bool:
         """mid 是否被 blocker 拉黑（用于私信 / 关注等入口的拦截）。
 
         等价于「blocker → mid 的关系是否为 blocked」。

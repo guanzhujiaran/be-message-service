@@ -8,6 +8,7 @@
 配对按「接收方是否已拉黑发送方」单向判定主动避让 ``blocked``（对齐
 ``FollowService.is_blocked_by``），保证断言不因历史黑名单整段失败。
 """
+
 import asyncio
 
 from loguru import logger
@@ -84,12 +85,12 @@ async def seed_message(
             assert rows1b and all(
                 r.msg_status is DmMsgStatusEnum.RECALLED for r in rows1b
             ), "撤回后双方索引行应均为 RECALLED"
-            assert all(
-                r.recalled_by == a[0] for r in rows1b
-            ), "撤回记录 recalled_by 应落库为撤回方"
-            assert all(
-                r.recalled_at is not None for r in rows1b
-            ), "撤回记录 recalled_at 应落库"
+            assert all(r.recalled_by == a[0] for r in rows1b), (
+                "撤回记录 recalled_by 应落库为撤回方"
+            )
+            assert all(r.recalled_at is not None for r in rows1b), (
+                "撤回记录 recalled_at 应落库"
+            )
             logger.success(
                 f"私信撤回并留记录：msgkey={msgkey1}，recalled_by={rows1b[0].recalled_by}"
             )
@@ -99,12 +100,14 @@ async def seed_message(
                 (it for it in msgs1b.get("items", []) if it["msgkey"] == msgkey1), None
             )
             if item1b is not None:
-                assert (
-                    item1b["msg_status"] == DmMsgStatusEnum.RECALLED.value
-                ), "撤回后状态应为 RECALLED"
+                assert item1b["msg_status"] == DmMsgStatusEnum.RECALLED.value, (
+                    "撤回后状态应为 RECALLED"
+                )
                 assert item1b.get("recalled_by") == a[0], "撤回记录应出参 recalled_by"
                 assert item1b.get("recalled_at"), "撤回记录应出参 recalled_at"
-                logger.success(f"撤回记录出参验证通过：recalled_by={item1b['recalled_by']}")
+                logger.success(
+                    f"撤回记录出参验证通过：recalled_by={item1b['recalled_by']}"
+                )
     except RuntimeError as e:
         # 拉黑/陌生人过滤/网络超时等业务拒绝 → 软降级跳过本场景（不中断整体）
         logger.warning(f"场景A 私信链路被拒（软降级）: {e}")
@@ -122,10 +125,12 @@ async def seed_message(
             state2 = {r.owner_mid: r.msg_status for r in rows2}
             assert state2.get(a[0]) is DmMsgStatusEnum.DELETED, "删除者视角应 DELETED"
             if b[0] in state2:
-                assert (
-                    state2[b[0]] is DmMsgStatusEnum.NORMAL
-                ), "对方视角应保持 NORMAL（单方面删除）"
-            logger.success(f"单方面删除验证通过：{a[0]}=DELETED，{b[0]}={state2.get(b[0])}")
+                assert state2[b[0]] is DmMsgStatusEnum.NORMAL, (
+                    "对方视角应保持 NORMAL（单方面删除）"
+                )
+            logger.success(
+                f"单方面删除验证通过：{a[0]}=DELETED，{b[0]}={state2.get(b[0])}"
+            )
             # 删除者自己看不到，对方仍可见
             my_msgs = await client.dm_messages(a[0], b[0])
             assert not any(
@@ -167,22 +172,24 @@ async def seed_message(
             assert rows3b and all(
                 r.msg_status is DmMsgStatusEnum.RECALLED for r in rows3b
             ), "反向撤回后双方索引行应均为 RECALLED"
-            assert all(
-                r.recalled_by == b[0] for r in rows3b
-            ), "反向撤回 recalled_by 应落库为发送方 b"
-            assert all(
-                r.recalled_at is not None for r in rows3b
-            ), "反向撤回 recalled_at 应落库"
+            assert all(r.recalled_by == b[0] for r in rows3b), (
+                "反向撤回 recalled_by 应落库为发送方 b"
+            )
+            assert all(r.recalled_at is not None for r in rows3b), (
+                "反向撤回 recalled_at 应落库"
+            )
             # 接收方 a 拉取确认撤回记录出参
             msgs3b = await client.dm_messages(a[0], b[0])
             item3b = next(
                 (it for it in msgs3b.get("items", []) if it["msgkey"] == msgkey3), None
             )
             if item3b is not None:
-                assert (
-                    item3b["msg_status"] == DmMsgStatusEnum.RECALLED.value
-                ), "反向撤回后状态应为 RECALLED"
-                assert item3b.get("recalled_by") == b[0], "反向撤回记录应出参 recalled_by"
+                assert item3b["msg_status"] == DmMsgStatusEnum.RECALLED.value, (
+                    "反向撤回后状态应为 RECALLED"
+                )
+                assert item3b.get("recalled_by") == b[0], (
+                    "反向撤回记录应出参 recalled_by"
+                )
             logger.success(
                 f"反向互发撤回验证通过：b→a msgkey={msgkey3}，recalled_by={b[0]}"
             )
@@ -196,12 +203,16 @@ async def seed_message(
             logger.error(f"反向私信 {msgkey4} 发送后主库无索引行，跳过反向删除场景。")
         else:
             state4 = {r.owner_mid: r.msg_status for r in rows4}
-            assert state4.get(b[0]) is DmMsgStatusEnum.DELETED, "反向删除者视角应 DELETED"
+            assert state4.get(b[0]) is DmMsgStatusEnum.DELETED, (
+                "反向删除者视角应 DELETED"
+            )
             if a[0] in state4:
-                assert (
-                    state4[a[0]] is DmMsgStatusEnum.NORMAL
-                ), "反向对方视角应保持 NORMAL（单方面删除）"
-            logger.success(f"反向单方面删除验证通过：{b[0]}=DELETED，{a[0]}={state4.get(a[0])}")
+                assert state4[a[0]] is DmMsgStatusEnum.NORMAL, (
+                    "反向对方视角应保持 NORMAL（单方面删除）"
+                )
+            logger.success(
+                f"反向单方面删除验证通过：{b[0]}=DELETED，{a[0]}={state4.get(a[0])}"
+            )
             # 删除者自己看不到，对方仍可见
             my_msgs4 = await client.dm_messages(b[0], a[0])
             assert not any(
@@ -214,7 +225,9 @@ async def seed_message(
                 ), "反向对方视角应仍可见"
             # 删除后尝试撤回 → 应被拒
             ok4, msg4 = await client.dm_recall(b[0], msgkey4)
-            assert not ok4 and "无法撤回" in msg4, f"反向删除后撤回应被拒: {ok4=} {msg4}"
+            assert not ok4 and "无法撤回" in msg4, (
+                f"反向删除后撤回应被拒: {ok4=} {msg4}"
+            )
             logger.success(f"反向删除后不可撤回验证通过：{msg4}")
     except RuntimeError as e:
         # 拉黑/陌生人过滤/网络超时等业务拒绝 → 软降级跳过反向场景（不中断整体）
@@ -233,9 +246,7 @@ async def seed_message(
             logger.warning(f"用户对 {x[0]}<->{y[0]} 存在黑名单关系，跳过该对。")
             continue
         if not await _accept_stranger_dm(y[0]) or not await _accept_stranger_dm(x[0]):
-            logger.warning(
-                f"用户对 {x[0]}<->{y[0]} 存在关闭陌生人私信，跳过该对。"
-            )
+            logger.warning(f"用户对 {x[0]}<->{y[0]} 存在关闭陌生人私信，跳过该对。")
             continue
         # x→y 与 y→x 双向互发（拉黑/陌生人过滤等业务拒绝 → 跳过该对）
         try:
@@ -265,13 +276,13 @@ async def seed_message(
             )
             continue
         pair_count += 1
-        logger.success(
-            f"用户对 {x[0]}<->{y[0]} 双向互发可见：x→y={mk_xy}，y→x={mk_yx}"
-        )
+        logger.success(f"用户对 {x[0]}<->{y[0]} 双向互发可见：x→y={mk_xy}，y→x={mk_yx}")
     if pair_count:
         logger.success(f"[消息与管理] 额外 {pair_count} 对用户完成互相私信")
     else:
-        logger.warning("[消息与管理] 无额外用户对完成互发（用户数不足或均被陌生人过滤）")
+        logger.warning(
+            "[消息与管理] 无额外用户对完成互发（用户数不足或均被陌生人过滤）"
+        )
 
     # ---- 场景 E：批量互发私信填充（O(n²) 遍历用户对，总计 --full-count 条）----
     # O(n²) 遍历所有有序用户对 (sender, receiver)，把**总计 count 条**配额尽量分散
@@ -329,7 +340,6 @@ async def seed_message(
             f"[消息与管理] 批量私信填充完成：O(n²) 遍历用户对取前 {len(directed)} 对"
             f"（每对 1 条），实际发送 {total} 条（目标 {count} 条）"
         )
-
 
     await seed_moderation(client, users)
     logger.success("[消息与管理] 私信/通用计数/举报/封禁/头像审核流已覆盖")

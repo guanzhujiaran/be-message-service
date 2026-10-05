@@ -11,7 +11,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, delete
 
-from app.models.db import TFavoriteFolder, TFolderCoverAudit, TResourceFavorite, TUserFavoriteSetting
+from app.models.db import (
+    TFavoriteFolder,
+    TFolderCoverAudit,
+    TResourceFavorite,
+    TUserFavoriteSetting,
+)
 
 
 class CleanupFavoriteService:
@@ -20,7 +25,12 @@ class CleanupFavoriteService:
     @staticmethod
     async def delete_all_by_uid(session: AsyncSession, uid: int) -> None:
         """删除指定 uid 用户的全部收藏数据（调用方负责 commit）。"""
-        for model in (TFavoriteFolder, TResourceFavorite, TUserFavoriteSetting, TFolderCoverAudit):
+        for model in (
+            TFavoriteFolder,
+            TResourceFavorite,
+            TUserFavoriteSetting,
+            TFolderCoverAudit,
+        ):
             await session.exec(delete(model).where(col(model.mid) == uid))
 
 

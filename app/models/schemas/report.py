@@ -13,15 +13,25 @@ from app.models.schemas.interaction import InteractionResource
 
 
 from app.models.schemas.base import auto_str
+
+
 @auto_str
 class ReportCreateReq(SQLModel):
     """统一举报请求（评论 / 动态 / 用户空间 / RPA 资源）。"""
 
-    bizType: InteractionBizTypeEnum = Field(description="举报来源类型（InteractionBizTypeEnum 值，即业务资源类型：dynamic/lottery/rpa_*/comment/user）")
-    bizId: StrInt = Field(description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid，lottery/rpa_*→各自资源 id（雪花 ID，StrInt 兼容前端 str 传参）")
+    bizType: InteractionBizTypeEnum = Field(
+        description="举报来源类型（InteractionBizTypeEnum 值，即业务资源类型：dynamic/lottery/rpa_*/comment/user）"
+    )
+    bizId: StrInt = Field(
+        description="被举报对象 id：dynamic→dynId，comment→rpid，user→mid，lottery/rpa_*→各自资源 id（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
     reasonType: int = Field(description="统一举报原因（ReportReasonEnum 值）")
-    reasonDesc: str | None = Field(default=None, max_length=500, description="补充描述（选填）")
-    pics: list[str] | None = Field(default=None, description="证据图片 URL 列表（http(s)，最多 3 张）")
+    reasonDesc: str | None = Field(
+        default=None, max_length=500, description="补充描述（选填）"
+    )
+    pics: list[str] | None = Field(
+        default=None, description="证据图片 URL 列表（http(s)，最多 3 张）"
+    )
 
 
 @auto_str
@@ -42,7 +52,9 @@ class ReportItem(SQLModel):
     createdAt: str | None = None
     # 2.40.0：被举报数量双口径（跨来源/跨状态，管理端展示）
     reportCount: int = Field(default=0, description="被举报次数（累计，COUNT(*)）")
-    reportPeopleCount: int = Field(default=0, description="举报人数（去重，COUNT(DISTINCT reportMid)）")
+    reportPeopleCount: int = Field(
+        default=0, description="举报人数（去重，COUNT(DISTINCT reportMid)）"
+    )
     # 2.61.0：用户展示信息（举报人 / 被举报人，一次 PptrUser.get_many 批量回查；
     # 弱依赖，回查失败为 null，前端降级「用户{mid}」；见计划书 §5.19）
     reporterName: str | None = Field(default=None, description="举报人昵称")

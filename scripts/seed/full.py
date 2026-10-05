@@ -3,6 +3,7 @@
 顺序：动态 → lottery 资源 → 评论（混合资源池）→ 用户级互动 → 黑名单归一 → 消息与管理。
 动态是后续场景的上游产物：若 0 条成功则响亮报错并终止，避免在空资源池上静默空跑。
 """
+
 from loguru import logger
 
 from .blocklist import _normalize_blocklist
@@ -36,7 +37,9 @@ async def seed(
         return
     users = real_users[:users_n]
 
-    async with SeedClient(base_url, admin_mid, req_concurrency=_SEED_REQ_CONCURRENCY) as client:
+    async with SeedClient(
+        base_url, admin_mid, req_concurrency=_SEED_REQ_CONCURRENCY
+    ) as client:
         normal_ids: list[int] = []
 
         if not skip_moment:

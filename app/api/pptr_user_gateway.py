@@ -38,17 +38,20 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from loguru import logger
 
 from app.core.config import settings
-from app.core.database import SessionDep, new_pptr_session
+from app.core.database import SessionDep, new_pptr_session, new_session
 from app.dependencies import AdminUser, CurrentUser
 from app.models.str_int import StrInt
 from app.models.schemas import (
     SpaceFollowStat,
     SpaceInfoResp,
+    SpacePrivacyFlags,
+    SpacePrivacyUpdateReq,
     SpaceUpStat,
     UserActLogListResp,
     UserExpRecordListResp,
 )
 from app.services.user import casdoor_service
+from app.services.user import deactivation_service
 from app.services.infrastructure import jwt_service
 import app.services.message.infrastructure.publisher as publisher
 from app.services.moment.moment_feed import MomentFeedService
@@ -56,6 +59,7 @@ from app.services.user.avatar_audit import AvatarAuditService
 from app.services.user.avatar_check import verify_avatar_url
 from app.services.user.casdoor_service import CasdoorError
 from app.services.user.follow import FollowService
+from app.services.user.space_privacy import SpacePrivacyService
 from app.services.user.account import PptrUser
 from app.services.audit import audit_text
 from app.models.schemas.follow import (
@@ -160,23 +164,29 @@ async def identify_user(
         raise HTTPException(status_code=401, detail="用户不存在")
     info, detail, vip, level = profile
 
-    return StandardResponse(data={
-        "mid": str(info.uid),
-        # 用户名（不可变）← TUserInfo.user_name
-        "user_name": info.user_name or "",
-        # 等级 ← TUserLevel.current_level
-        "level": str(level.current_level) if level and level.current_level is not None else "0",
-        # 角色 ← TUserInfo.role
-        "role": info.role or "",
-        # 以下均来自 TUserDetail（昵称 uname 可变，其余为个人资料）
-        "uname": (detail.uname if detail else None) or "",
-        "sign": (detail.sign if detail else None) or "",
-        "sex": (detail.sex if detail else None) or "",
-        "email": (detail.email if detail else None) or "",
-        # 会员信息 ← TUserVip
-        "vip_status": str(vip.vip_status) if vip and vip.vip_status is not None else "",
-        "vip_type": str(vip.vip_type) if vip and vip.vip_type is not None else "",
-    })
+    return StandardResponse(
+        data={
+            "mid": str(info.uid),
+            # 用户名（不可变）← TUserInfo.user_name
+            "user_name": info.user_name or "",
+            # 等级 ← TUserLevel.current_level
+            "level": str(level.current_level)
+            if level and level.current_level is not None
+            else "0",
+            # 角色 ← TUserInfo.role
+            "role": info.role or "",
+            # 以下均来自 TUserDetail（昵称 uname 可变，其余为个人资料）
+            "uname": (detail.uname if detail else None) or "",
+            "sign": (detail.sign if detail else None) or "",
+            "sex": (detail.sex if detail else None) or "",
+            "email": (detail.email if detail else None) or "",
+            # 会员信息 ← TUserVip
+            "vip_status": str(vip.vip_status)
+            if vip and vip.vip_status is not None
+            else "",
+            "vip_type": str(vip.vip_type) if vip and vip.vip_type is not None else "",
+        }
+    )
 
 
 def parse_user_search_params(
@@ -305,11 +315,15 @@ async def update_user_info(
     if params.uname:
         uname_res = audit_text(params.uname, check_link=False)
         if uname_res.rejected:
-            raise HTTPException(status_code=422, detail=f"昵称未通过审核：{uname_res.reason}")
+            raise HTTPException(
+                status_code=422, detail=f"昵称未通过审核：{uname_res.reason}"
+            )
     if params.usersign:
         sign_res = audit_text(params.usersign)
         if sign_res.rejected:
-            raise HTTPException(status_code=422, detail=f"签名未通过审核：{sign_res.reason}")
+            raise HTTPException(
+                status_code=422, detail=f"签名未通过审核：{sign_res.reason}"
+            )
 
     if params.sex and params.sex not in VALID_SEX_VALUES:
         raise HTTPException(status_code=422, detail="性别不正确！")
@@ -393,7 +407,9 @@ async def add_blocklist(
     """将指定 mid 加入黑名单；与关注关系互斥（会解除对方对自己的关注）。"""
     uid = int(user.mid)
     try:
-        data = await FollowService.block(session, mid=uid, target_mid=int(req.target_mid))
+        data = await FollowService.block(
+            session, mid=uid, target_mid=int(req.target_mid)
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return StandardResponse(data=data, msg="已拉黑")
@@ -445,18 +461,30 @@ async def check_blocklist(
 async def deactivate_account(
     user: CurrentUser,
     req: UserDeactivateReq,
+    session: SessionDep,
 ) -> StandardResponse[str]:
-    """注销当前登录账户（二次确认后入队异步清理）。
+    """注销当前登录账户（二次确认，进入冷静期而非立即删除）。
 
-    仅接受 `confirm=true` 的主动注销请求；实际账户与数据清理由 consumer 异步执行。
+    仅接受 `confirm=true` 的主动注销请求；提交后账号进入
+    `account_deactivate_grace_days` 天冷静期（默认 7 天），本地数据保留，
+    期间重新走 Casdoor 登录即自动撤销；到期未撤销才由定时任务物理删除本地数据
+    并同步删除 Casdoor 账号。
     """
     if not req.confirm:
         raise HTTPException(status_code=400, detail="请确认注销操作")
     uid = int(user.mid)
-    ok = await publisher.publish_user_deactivate(uid)
-    if not ok:
-        raise HTTPException(status_code=500, detail="注销请求提交失败，请稍后重试")
-    return StandardResponse(data=str(uid), msg="注销申请已提交，账户将在后台异步清理")
+    try:
+        await deactivation_service.submit_deactivation(
+            session, uid, user_name=user.user_name
+        )
+        await session.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    grace = settings.account_deactivate_grace_days
+    return StandardResponse(
+        data=str(uid),
+        msg=f"注销申请已提交，账号将进入 {grace} 天冷静期，期间重新登录可撤销",
+    )
 
 
 @router.post(
@@ -503,7 +531,9 @@ async def set_user_role(
             status_code=400, detail="目标用户角色更新失败（可能受 root 保护）"
         )
 
-    role_description = settings.level_role_description.get(params.role, "普通用户 (Lv0)")
+    role_description = settings.level_role_description.get(
+        params.role, "普通用户 (Lv0)"
+    )
     return StandardResponse(
         data=PptrUserRoleSetResult(
             target_uid=str(target_uid),
@@ -545,7 +575,9 @@ async def search_users(
 def parse_record_query_params(
     offset: int = Query(0, ge=0, description="分页偏移量（游标），从 0 开始"),
     limit: int = Query(10, ge=1, le=100, description="单页条数，默认 10，最大 100"),
-    days: int = Query(7, ge=1, le=7, description="时间窗口天数，最多 7（仅展示最近一周）"),
+    days: int = Query(
+        7, ge=1, le=7, description="时间窗口天数，最多 7（仅展示最近一周）"
+    ),
 ) -> dict:
     """把「我的记录」两个接口共用的 query 参数解析为 dict。"""
     return {"offset": offset, "limit": limit, "days": days}
@@ -621,7 +653,10 @@ async def get_space_info(
     session: SessionDep,
     mid: Annotated[
         StrInt,
-        Query(..., description="目标用户 mid（对标 B 站 acc/info 的 mid 参数，StrInt 兼容前端 str 传参）"),
+        Query(
+            ...,
+            description="目标用户 mid（对标 B 站 acc/info 的 mid 参数，StrInt 兼容前端 str 传参）",
+        ),
     ],
     x_bili_mid: str | None = Header(default=None),
 ) -> StandardResponse[SpaceInfoResp]:
@@ -644,7 +679,9 @@ async def get_space_info(
     if viewer is not None and viewer != mid:
         blocked = await FollowService.is_blocked_relation(session, viewer, mid)
         if blocked:
-            return StandardResponse(code=403, msg="对方已将你加入黑名单，无法访问其空间")
+            return StandardResponse(
+                code=403, msg="对方已将你加入黑名单，无法访问其空间"
+            )
 
     # 用户档案四表（TUserInfo / TUserDetail / TUserVip / TUserLevel）在 pptr Postgres，
     # 不在本服务 MySQL 主库：不能把 MySQL 的 `session` 传进去（会报
@@ -676,64 +713,86 @@ async def get_space_info(
         dynamic_count=int(upstat.get("dynamic_count") or 0),
         like_count=int(upstat.get("like_count") or 0),
     )
+
+    # ---- 2.58.0：对外可见性（开关 + 上次登录 + 属地 + 被访问次数）----
+    # 统计数字（关注/粉丝/获赞/动态/被访问次数）固定展示、不受开关控制；
+    # 敏感字段（邮箱 / 上次登录 / 属地）按开关裁剪，本人恒可见。
+    data.privacy_flags = await SpacePrivacyService.get_flags(session, int(mid))
+    login_info = await SpacePrivacyService.load_login_info(int(mid))
+    data.last_login_at = login_info.last_login_at
+    data.ip_location = login_info.ip_location
+    data.view_count = await SpacePrivacyService.get_view_count(session, int(mid))
+    SpacePrivacyService.apply_flags_to_info(data, data.privacy_flags, int(mid), viewer)
     return StandardResponse(data=data)
 
 
-# ==================== 注销账号（P12，2.15.0 / 2.15.1）====================
+@router.get(
+    "/space/privacy",
+    response_model=StandardResponse[SpacePrivacyFlags],
+    summary="我的空间对外可见性开关（2.58.0）",
+)
+async def get_my_space_privacy(
+    session: SessionDep,
+    user: CurrentUser,
+) -> StandardResponse[SpacePrivacyFlags]:
+    """返回当前登录用户的空间可见性开关（仅本人，无需过滤）。
 
-
-async def _submit_deactivate(uid: int) -> bool:
-    """校验 uid 合法后投递注销 MQ（异步执行删除）。
-
-    Returns:
-        bool: 投递是否成功。
+    无记录时按「全关 + 收藏夹展示」返回（与 `TUserSpacePrivacy` 的默认口径一致）。
     """
-    if not uid or uid <= 0:
-        raise ValueError("mid 不合法")
-    return await publisher.publish_user_deactivate(uid)
+    flags = await SpacePrivacyService.get_flags(session, int(user.mid))
+    return StandardResponse(data=flags)
 
 
 @router.post(
-    "/deactivate",
-    response_model=StandardResponse,
-    summary="注销当前账号（投递注销，异步删除账号及业务数据）",
+    "/space/privacy",
+    response_model=StandardResponse[SpacePrivacyFlags],
+    summary="更新我的空间对外可见性开关（2.58.0）",
 )
-async def deactivate_self(user: CurrentUser) -> StandardResponse:
-    """注销当前登录账号：投递注销消息，由消费者异步物理删除 pptr 四表 +
-    彻底清除 be-message 业务数据（不可恢复）。
+async def update_my_space_privacy(
+    session: SessionDep,
+    user: CurrentUser,
+    req: SpacePrivacyUpdateReq,
+) -> StandardResponse[SpacePrivacyFlags]:
+    """整体覆盖当前登录用户的五个可见性开关，返回设置后的值。
 
-    **Casdoor 不管**（不同步禁用）。注销为异步执行，接口提交成功后返回；
-    前端应清除本地登录态并跳登录页。
+    全量提交（不做 PATCH）：前端设置页一次保存全部开关，避免「部分更新」与
+    「默认值」混淆。收藏夹可见性复用既有 `TUserFavoriteSetting.showFavorites`，
+    由 `GET/POST /favorite/setting` 单独维护，不在本接口范围内。
     """
-    try:
-        ok = await _submit_deactivate(int(user.mid))
-    except ValueError:
-        return StandardResponse(code=400, msg="mid 不合法")
-    if not ok:
-        return StandardResponse(code=500, msg="注销提交失败，请稍后重试")
-    return StandardResponse(data=None, msg="注销已提交，正在处理")
+    flags = await SpacePrivacyService.update_flags(session, int(user.mid), req)
+    return StandardResponse(data=flags)
+
+
+# ==================== 注销账号：管理端冷静期注销 ====================
 
 
 @router.post(
     "/admin/deactivate",
     response_model=StandardResponse,
-    summary="管理端注销指定用户（投递注销）",
+    summary="管理端注销指定用户（进入冷静期）",
 )
 async def deactivate_user(
     admin: AdminUser,
+    session: SessionDep,
     target_mid: Annotated[
         StrInt,
         Query(..., description="目标用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"),
     ],
 ) -> StandardResponse:
-    """管理端注销指定用户（root / 管理员）：投递注销消息，异步删除其账号及业务数据。"""
+    """管理端注销指定用户（root / 管理员）：与自助注销一致，进入冷静期。
+
+    提交后目标账号进入 `account_deactivate_grace_days` 天冷静期（默认 7 天），
+    数据保留、期间重新登录可撤销；到期未撤销才物理删除本地数据并同步删除 Casdoor 账号。
+    """
     try:
-        ok = await _submit_deactivate(target_mid)
-    except ValueError:
-        return StandardResponse(code=400, msg="mid 不合法")
-    if not ok:
-        return StandardResponse(code=500, msg="注销提交失败，请稍后重试")
-    return StandardResponse(data=None, msg="注销已提交，正在处理")
+        await deactivation_service.submit_deactivation(
+            session, int(target_mid), user_name=None
+        )
+        await session.commit()
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    grace = settings.account_deactivate_grace_days
+    return StandardResponse(data=None, msg=f"已提交，账号进入 {grace} 天冷静期")
 
 
 # ==================== JWT 续期 & Casdoor 等新增端点 ====================
@@ -771,7 +830,9 @@ async def _maybe_refresh_jwt(x_bili_jwt: str | None, uid: int) -> str | None:
     try:
         await casdoor_service.refresh_casdoor_token(uid=uid)
     except Exception as e:
-        logger.warning(f"[JWT] 用户 {uid} 的 Casdoor token 刷新失败（不影响 JWT 续期）: {e}")
+        logger.warning(
+            f"[JWT] 用户 {uid} 的 Casdoor token 刷新失败（不影响 JWT 续期）: {e}"
+        )
 
     return new_token
 
@@ -906,14 +967,20 @@ async def casdoor_callback(
         )
 
     # 3. 获取客户端 IP / UA（从代理头中提取）
-    client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() if request else None
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if request
+        else None
+    )
     client_ua = request.headers.get("user-agent") if request else None
 
     try:
         # 1. 获取 OAuth token
         oauth_token = await casdoor_service.get_oauth_token(code)
         if not oauth_token.access_token:
-            logger.error("[Casdoor callback] 获取 OAuth token 失败：响应中无 access_token")
+            logger.error(
+                "[Casdoor callback] 获取 OAuth token 失败：响应中无 access_token"
+            )
             return JSONResponse(
                 status_code=400,
                 content={
@@ -924,7 +991,9 @@ async def casdoor_callback(
             )
 
         # 2. 解析用户信息
-        casdoor_user = casdoor_service.get_casdoor_user_info_from_token(oauth_token.access_token)
+        casdoor_user = casdoor_service.get_casdoor_user_info_from_token(
+            oauth_token.access_token
+        )
         if not casdoor_user:
             logger.error("[Casdoor callback] 解析 Casdoor JWT 失败")
             return JSONResponse(
@@ -976,7 +1045,9 @@ async def casdoor_callback(
                 session=session,
             )
     except CasdoorError as e:
-        logger.error(f"[Casdoor callback] Casdoor 错误: {e.error} - {e.error_description}")
+        logger.error(
+            f"[Casdoor callback] Casdoor 错误: {e.error} - {e.error_description}"
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -995,6 +1066,20 @@ async def casdoor_callback(
                 "data": None,
             },
         )
+
+    # 5.5 冷静期内重新登录 = 自动撤销注销（独立 MySQL 会话；失败不阻断登录，避免锁死）
+    try:
+        async with new_session() as msg_session:
+            revoked = await deactivation_service.auto_revoke_if_cooling(
+                msg_session, int(local_user.uid)
+            )
+            if revoked:
+                await msg_session.commit()
+                logger.info(
+                    f"[Casdoor callback] 用户 {local_user.uid} 冷静期登录，已自动撤销注销"
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[Casdoor callback] 自动撤销注销失败（放行登录）: {e}")
 
     # 6. 签发本地 JWT
     jwt_token = jwt_service.create_token(
@@ -1015,4 +1100,3 @@ async def casdoor_callback(
     resp = RedirectResponse(url=redirect_target, status_code=302)
     set_jwt_cookie(resp, jwt_token)
     return resp
-

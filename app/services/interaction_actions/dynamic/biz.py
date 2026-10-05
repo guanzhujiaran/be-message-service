@@ -15,7 +15,13 @@ from datetime import datetime
 from loguru import logger
 from sqlmodel import col, delete, select
 
-from app.models.db import TMoment, TResourceDislike, TResourceFavorite, TResourceFeed, TResourceReport
+from app.models.db import (
+    TMoment,
+    TResourceDislike,
+    TResourceFavorite,
+    TResourceFeed,
+    TResourceReport,
+)
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
@@ -60,9 +66,14 @@ class DynamicBiz(BaseBiz):
     async def check_exists(self) -> bool:
         """动态存在且未软删、且 auditStatus 非 REJECTED/HIDDEN（被驳回 / 管理员下架视为不存在）。"""
         dyn = await self._get_moment()
-        return dyn is not None and dyn.deletedAt is None and dyn.auditStatus not in (
-            ResourceAuditStatusEnum.REJECTED,
-            ResourceAuditStatusEnum.HIDDEN,
+        return (
+            dyn is not None
+            and dyn.deletedAt is None
+            and dyn.auditStatus
+            not in (
+                ResourceAuditStatusEnum.REJECTED,
+                ResourceAuditStatusEnum.HIDDEN,
+            )
         )
 
     async def _load_meta(self) -> tuple[str | None, str | None]:
@@ -84,7 +95,9 @@ class DynamicBiz(BaseBiz):
         return dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
 
     @classmethod
-    async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
+    async def batch_get_resources(
+        cls, session, biz_ids, *, actor_mid=None, rpid_map=None
+    ):
         """动态批量回捞：一次 IN 查询，按 dynId 装配快照（计划书 §5.11 / C20）。"""
         from sqlmodel import select as _select
 
@@ -97,15 +110,22 @@ class DynamicBiz(BaseBiz):
         moment_map: dict[int, TMoment] = {}
         if biz_ids:
             rows = (
-                await session.exec(_select(TMoment).where(col(TMoment.dynId).in_(biz_ids)))
+                await session.exec(
+                    _select(TMoment).where(col(TMoment.dynId).in_(biz_ids))
+                )
             ).all()
             moment_map = {m.dynId: m for m in rows}
         out: dict[int, InteractionResource] = {}
         for bid in biz_ids:
             dyn = moment_map.get(bid)
-            exists = dyn is not None and dyn.deletedAt is None and dyn.auditStatus not in (
-                ResourceAuditStatusEnum.REJECTED,
-                ResourceAuditStatusEnum.HIDDEN,
+            exists = (
+                dyn is not None
+                and dyn.deletedAt is None
+                and dyn.auditStatus
+                not in (
+                    ResourceAuditStatusEnum.REJECTED,
+                    ResourceAuditStatusEnum.HIDDEN,
+                )
             )
             title = cover = None
             author_mid = None
@@ -169,13 +189,17 @@ class DynamicBiz(BaseBiz):
                 )
             )
             await self.session.flush()
-            await MomentStatService.incr_stat(self.session, self.biz_id, "dislikeCount", 1)
+            await MomentStatService.incr_stat(
+                self.session, self.biz_id, "dislikeCount", 1
+            )
             await self.session.commit()
             return True, await self._read_stat("dislikeCount")
         if existing is None:
             return False, await self._read_stat("dislikeCount")
         await self.session.exec(  # type: ignore[call-overload]
-            TResourceDislike.__table__.delete().where(col(TResourceDislike.pk) == existing)
+            TResourceDislike.__table__.delete().where(
+                col(TResourceDislike.pk) == existing
+            )
         )
         await MomentStatService.decr_stat(
             self.session, self.biz_id, "dislikeCount", floor_zero=True
@@ -194,7 +218,9 @@ class DynamicBiz(BaseBiz):
         biz_type = InteractionBizTypeEnum.DYNAMIC
         if action == "add":
             if folder_id is None:
-                folder_id = await ops._ensure_default_folder(self.session, self.actor_mid)
+                folder_id = await ops._ensure_default_folder(
+                    self.session, self.actor_mid
+                )
             else:
                 folder_id = int(folder_id)
             exists = (
@@ -220,7 +246,9 @@ class DynamicBiz(BaseBiz):
             await self.session.flush()
             already = await self._fav_other(folder_id)
             if already is None:
-                await MomentStatService.incr_stat(self.session, self.biz_id, "favoriteCount", 1)
+                await MomentStatService.incr_stat(
+                    self.session, self.biz_id, "favoriteCount", 1
+                )
             await self.session.commit()
             return True, folder_id
         if action == "remove":
@@ -319,29 +347,59 @@ class DynamicBiz(BaseBiz):
 
     @biz_action()
     async def reply(
-        self, content: str, *, parent: int | None = None, at_mids=None,
-        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+        self,
+        content: str,
+        *,
+        parent: int | None = None,
+        at_mids=None,
+        at_name_to_mid=None,
+        pictures=None,
+        emote_meta=None,
+        up_mid=0,
     ):
         """在动态下发表评论（一级，root=0）。返回 CommentAddResp。"""
         return await ops.do_comment(
-            self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=0, parent=parent, message=content, at_mids=at_mids,
-            at_name_to_mid=at_name_to_mid, pictures=pictures,
-            emote_meta=emote_meta, up_mid=up_mid,
+            self.session,
+            self.biz_type,
+            self.biz_id,
+            self.actor_mid,
+            root=0,
+            parent=parent,
+            message=content,
+            at_mids=at_mids,
+            at_name_to_mid=at_name_to_mid,
+            pictures=pictures,
+            emote_meta=emote_meta,
+            up_mid=up_mid,
             **self.comment_ctx(),
         )
 
     @biz_action()
     async def at(
-        self, mids, content: str, *, parent: int | None = None,
-        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+        self,
+        mids,
+        content: str,
+        *,
+        parent: int | None = None,
+        at_name_to_mid=None,
+        pictures=None,
+        emote_meta=None,
+        up_mid=0,
     ):
         """在动态下 @ 提及用户（一级，root=0）。返回 CommentAddResp。"""
         return await ops.do_comment(
-            self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=0, parent=parent, message=content, at_mids=list(mids),
-            at_name_to_mid=at_name_to_mid, pictures=pictures,
-            emote_meta=emote_meta, up_mid=up_mid,
+            self.session,
+            self.biz_type,
+            self.biz_id,
+            self.actor_mid,
+            root=0,
+            parent=parent,
+            message=content,
+            at_mids=list(mids),
+            at_name_to_mid=at_name_to_mid,
+            pictures=pictures,
+            emote_meta=emote_meta,
+            up_mid=up_mid,
             **self.comment_ctx(),
         )
 
@@ -407,7 +465,9 @@ class DynamicBiz(BaseBiz):
         )
         # 状态机触发点①：FORWARD 且源动态存在 → 源动态 repostCount +1
         if dyn.dynType is MomentTypeEnum.FORWARD and dyn.repostSrcDynId:
-            await MomentStatService.incr_repost_count(self.session, dyn.repostSrcDynId, 1)
+            await MomentStatService.incr_repost_count(
+                self.session, dyn.repostSrcDynId, 1
+            )
         self.session.add(
             _build_audit_log(
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
@@ -454,7 +514,9 @@ class DynamicBiz(BaseBiz):
             and dyn.repostSrcDynId
             and before_normal
         ):
-            await MomentStatService.incr_repost_count(self.session, dyn.repostSrcDynId, -1)
+            await MomentStatService.incr_repost_count(
+                self.session, dyn.repostSrcDynId, -1
+            )
         self.session.add(
             _build_audit_log(
                 biz_type=InteractionBizTypeEnum.DYNAMIC,
@@ -469,7 +531,9 @@ class DynamicBiz(BaseBiz):
         )
         await self.session.commit()
         await self.session.refresh(dyn)
-        logger.info(f"管理员 {self.actor_mid} 审核驳回动态 dynId={self.biz_id}：{reject_reason}")
+        logger.info(
+            f"管理员 {self.actor_mid} 审核驳回动态 dynId={self.biz_id}：{reject_reason}"
+        )
         await _notify_reject(self.actor_mid, dyn, reject_reason)
         author = await _safe_author_brief(dyn.mid)
         return _to_audit_item(dyn, author)

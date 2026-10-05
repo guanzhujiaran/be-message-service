@@ -50,9 +50,7 @@ class UserFollow(TimestampMixin, table=True):
     # 主动方 mid：发起关注 / 拉黑的用户
     mid: int = Field(sa_type=BIGINT, index=True, description="主动方 mid")
     # 被动方 mid：被关注 / 被拉黑的用户
-    target_mid: int = Field(
-        sa_type=BIGINT, index=True, description="被动方 mid"
-    )
+    target_mid: int = Field(sa_type=BIGINT, index=True, description="被动方 mid")
 
     # 关系状态：following 关注 / blocked 拉黑
     status: FollowStatusEnum = Field(

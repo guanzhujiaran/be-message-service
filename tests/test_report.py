@@ -84,9 +84,7 @@ def _next_oid() -> int:
 async def _cleanup(oid: int) -> None:
     async with new_session() as s:
         for t in _TABLES:
-            await s.exec(
-                text(f"DELETE FROM {t} WHERE bizId = {oid}")
-            )
+            await s.exec(text(f"DELETE FROM {t} WHERE bizId = {oid}"))
         await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizId = {oid}"))
         await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
         # 处置/审核通知事件（作者/举报人/审核员区间）
@@ -153,15 +151,23 @@ async def test_record_report_idempotent():
     """`ReportBaseService.record_report` 幂等：同一用户同一对象第二次 created=False。"""
     async with new_session() as s:
         created1, pk1 = await ReportBaseService.record_report(
-            s, TUserReport,
-            reporter_mid=REP_A, biz_type=InteractionBizTypeEnum.USER.value,
-            biz_id=27, accused_mid=27, reason_type=1,
+            s,
+            TUserReport,
+            reporter_mid=REP_A,
+            biz_type=InteractionBizTypeEnum.USER.value,
+            biz_id=27,
+            accused_mid=27,
+            reason_type=1,
         )
         assert created1 is True and pk1 is not None
         created2, pk2 = await ReportBaseService.record_report(
-            s, TUserReport,
-            reporter_mid=REP_A, biz_type=InteractionBizTypeEnum.USER.value,
-            biz_id=27, accused_mid=27, reason_type=1,
+            s,
+            TUserReport,
+            reporter_mid=REP_A,
+            biz_type=InteractionBizTypeEnum.USER.value,
+            biz_id=27,
+            accused_mid=27,
+            reason_type=1,
         )
         assert created2 is False and pk2 is None
         # 清理
@@ -177,8 +183,14 @@ async def test_report_dynamic_writes_tmoment_report():
             await _create_moment(s, oid)
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A,
-                ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1, reasonDesc="动态举报"),
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.DYNAMIC,
+                    bizId=oid,
+                    reasonType=1,
+                    reasonDesc="动态举报",
+                ),
             )
             assert created is True
         async with new_session() as s:
@@ -201,7 +213,11 @@ async def test_review_resolve_hide_hides_moment():
             await _create_moment(s, oid)
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A, ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1)
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1
+                ),
             )
             assert created is True
             pk = (
@@ -214,7 +230,8 @@ async def test_review_resolve_hide_hides_moment():
             ).one()
         async with new_session() as s:
             await ReportService.review(
-                s, REP_B,
+                s,
+                REP_B,
                 ReportReviewReq(
                     reportPk=int(pk),
                     decision="resolve",
@@ -223,9 +240,7 @@ async def test_review_resolve_hide_hides_moment():
                 ),
             )
         async with new_session() as s:
-            dyn = (
-                await s.exec(select(TMoment).where(col(TMoment.dynId) == oid))
-            ).one()
+            dyn = (await s.exec(select(TMoment).where(col(TMoment.dynId) == oid))).one()
             assert dyn.auditStatus is ResourceAuditStatusEnum.HIDDEN  # 管理员下架
             rec = (
                 await s.exec(
@@ -270,9 +285,11 @@ async def test_report_resource_lottery_not_hideable():
             await s.commit()
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A,
+                s,
+                REP_A,
                 ReportCreateReq(
-                    bizType=InteractionBizTypeEnum.LOTTERY, bizId=oid,
+                    bizType=InteractionBizTypeEnum.LOTTERY,
+                    bizId=oid,
                     reasonType=1,
                 ),
             )
@@ -287,7 +304,8 @@ async def test_report_resource_lottery_not_hideable():
             ).one()
         async with new_session() as s:
             await ReportService.review(
-                s, REP_B,
+                s,
+                REP_B,
                 ReportReviewReq(
                     reportPk=int(pk), decision="resolve", resourceAction="hide"
                 ),
@@ -301,7 +319,9 @@ async def test_report_resource_lottery_not_hideable():
                     )
                 )
             ).one()
-            assert feed.auditStatus == ResourceAuditStatusEnum.NORMAL  # 不允许下架 → 仍在 Feed
+            assert (
+                feed.auditStatus == ResourceAuditStatusEnum.NORMAL
+            )  # 不允许下架 → 仍在 Feed
             rec = (
                 await s.exec(
                     select(TResourceReport).where(
@@ -310,7 +330,9 @@ async def test_report_resource_lottery_not_hideable():
                     )
                 )
             ).one()
-            assert rec.auditStatus == ReportAuditStatusEnum.RESOLVED  # 举报已处置（仅记录）
+            assert (
+                rec.auditStatus == ReportAuditStatusEnum.RESOLVED
+            )  # 举报已处置（仅记录）
     finally:
         await _cleanup(oid)
 
@@ -334,9 +356,11 @@ async def test_report_resource_rpa_hide_exits_feed():
             await s.commit()
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A,
+                s,
+                REP_A,
                 ReportCreateReq(
-                    bizType=InteractionBizTypeEnum.RPA_ACTION, bizId=oid,
+                    bizType=InteractionBizTypeEnum.RPA_ACTION,
+                    bizId=oid,
                     reasonType=1,
                 ),
             )
@@ -351,7 +375,8 @@ async def test_report_resource_rpa_hide_exits_feed():
             ).one()
         async with new_session() as s:
             await ReportService.review(
-                s, REP_B,
+                s,
+                REP_B,
                 ReportReviewReq(
                     reportPk=int(pk), decision="resolve", resourceAction="hide"
                 ),
@@ -365,7 +390,9 @@ async def test_report_resource_rpa_hide_exits_feed():
                     )
                 )
             ).one()
-            assert feed.auditStatus == ResourceAuditStatusEnum.HIDDEN  # rpa 允许下架 → 退出 Feed
+            assert (
+                feed.auditStatus == ResourceAuditStatusEnum.HIDDEN
+            )  # rpa 允许下架 → 退出 Feed
     finally:
         await _cleanup(oid)
 
@@ -379,8 +406,11 @@ async def test_report_list_aggregates_report_count():
         async with new_session() as s:
             for mid in (REP_A, REP_B, REP_C):
                 created, _ = await ReportService.report(
-                    s, mid,
-                    ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1),
+                    s,
+                    mid,
+                    ReportCreateReq(
+                        bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1
+                    ),
                 )
                 assert created is True
         async with new_session() as s:
@@ -402,7 +432,11 @@ async def test_report_review_reject_notifies_reporter():
             await _create_moment(s, oid)
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A, ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1)
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1
+                ),
             )
             assert created is True
             pk = (
@@ -415,8 +449,11 @@ async def test_report_review_reject_notifies_reporter():
             ).one()
         async with new_session() as s:
             await ReportService.review(
-                s, REP_B,
-                ReportReviewReq(reportPk=int(pk), decision="reject", remark="举报不成立"),
+                s,
+                REP_B,
+                ReportReviewReq(
+                    reportPk=int(pk), decision="reject", remark="举报不成立"
+                ),
             )
         async with new_session() as s:
             rec = (
@@ -432,7 +469,8 @@ async def test_report_review_reject_notifies_reporter():
                 await s.exec(
                     select(EventMessage).where(
                         EventMessage.mid == REP_A,
-                        EventMessage.event_type == InteractionActionTypeEnum.REPORT_REJECT,
+                        EventMessage.event_type
+                        == InteractionActionTypeEnum.REPORT_REJECT,
                     )
                 )
             ).all()
@@ -450,7 +488,11 @@ async def test_report_review_resolve_notifies_reporter():
             await _create_moment(s, oid)
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A, ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1)
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1
+                ),
             )
             assert created is True
             pk = (
@@ -463,7 +505,8 @@ async def test_report_review_resolve_notifies_reporter():
             ).one()
         async with new_session() as s:
             await ReportService.review(
-                s, REP_B,
+                s,
+                REP_B,
                 ReportReviewReq(reportPk=int(pk), decision="resolve", remark="成立"),
             )
         async with new_session() as s:
@@ -480,7 +523,8 @@ async def test_report_review_resolve_notifies_reporter():
                 await s.exec(
                     select(EventMessage).where(
                         EventMessage.mid == REP_A,
-                        EventMessage.event_type == InteractionActionTypeEnum.REPORT_RESOLVED,
+                        EventMessage.event_type
+                        == InteractionActionTypeEnum.REPORT_RESOLVED,
                     )
                 )
             ).all()
@@ -496,8 +540,14 @@ async def test_report_user_writes_tuser_report():
     try:
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A,
-                ReportCreateReq(bizType=InteractionBizTypeEnum.USER, bizId=target, reasonType=7, reasonDesc="用户举报"),
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.USER,
+                    bizId=target,
+                    reasonType=7,
+                    reasonDesc="用户举报",
+                ),
             )
             assert created is True
         async with new_session() as s:
@@ -513,7 +563,11 @@ async def test_report_user_writes_tuser_report():
             assert rows[0].bizType == InteractionBizTypeEnum.USER
     finally:
         async with new_session() as s:
-            await s.exec(text(f"DELETE FROM TUserReport WHERE bizId = {target} AND reportMid = {REP_A}"))
+            await s.exec(
+                text(
+                    f"DELETE FROM TUserReport WHERE bizId = {target} AND reportMid = {REP_A}"
+                )
+            )
             await s.commit()
 
 
@@ -526,8 +580,11 @@ async def test_report_comment_writes_comment_report():
             rpid = await _create_comment(s, oid)
         async with new_session() as s:
             created, _ = await ReportService.report(
-                s, REP_A,
-                ReportCreateReq(bizType=InteractionBizTypeEnum.COMMENT, bizId=rpid, reasonType=3),
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.COMMENT, bizId=rpid, reasonType=3
+                ),
             )
             assert created is True
         async with new_session() as s:
@@ -555,15 +612,29 @@ async def test_report_pics_validation():
     async with new_session() as s:
         with pytest.raises(ValueError):
             await ReportService.report(
-                s, REP_A,
-                ReportCreateReq(bizType=InteractionBizTypeEnum.USER, bizId=27, reasonType=1, pics=["not-a-url"]),
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.USER,
+                    bizId=27,
+                    reasonType=1,
+                    pics=["not-a-url"],
+                ),
             )
         with pytest.raises(ValueError):
             await ReportService.report(
-                s, REP_A,
+                s,
+                REP_A,
                 ReportCreateReq(
-                    bizType=InteractionBizTypeEnum.USER, bizId=27, reasonType=1,
-                    pics=["https://a.com/1.jpg", "https://a.com/2.jpg", "https://a.com/3.jpg", "https://a.com/4.jpg"],
+                    bizType=InteractionBizTypeEnum.USER,
+                    bizId=27,
+                    reasonType=1,
+                    pics=[
+                        "https://a.com/1.jpg",
+                        "https://a.com/2.jpg",
+                        "https://a.com/3.jpg",
+                        "https://a.com/4.jpg",
+                    ],
                 ),
             )
 
@@ -573,7 +644,13 @@ async def test_report_missing_dynamic():
     async with new_session() as s:
         with pytest.raises(ValueError):
             await ReportService.report(
-                s, REP_A, ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=999_999_999_999, reasonType=1)
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.DYNAMIC,
+                    bizId=999_999_999_999,
+                    reasonType=1,
+                ),
             )
 
 
@@ -590,15 +667,17 @@ async def test_report_dynamic_threshold_linkage():
         for reporter in (REP_A, REP_B, REP_C):
             async with new_session() as s:
                 created, triggered = await ReportService.report(
-                    s, reporter, ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=2)
+                    s,
+                    reporter,
+                    ReportCreateReq(
+                        bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=2
+                    ),
                 )
                 assert created is True
             if reporter == REP_C:
                 assert triggered is True  # 第 3 次达阈值（仅队列标记）
         async with new_session() as s:
-            dyn = (
-                await s.exec(select(TMoment).where(col(TMoment.dynId) == oid))
-            ).one()
+            dyn = (await s.exec(select(TMoment).where(col(TMoment.dynId) == oid))).one()
             # 2.40.0：达阈值不下架、不转审核——资源状态保持 normal，等管理员在队列中决定
             assert dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
     finally:
@@ -614,15 +693,24 @@ async def test_report_list_review():
     try:
         async with new_session() as s:
             await _create_moment(s, oid)
-            await ReportService.report(s, REP_A, ReportCreateReq(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1))
+            await ReportService.report(
+                s,
+                REP_A,
+                ReportCreateReq(
+                    bizType=InteractionBizTypeEnum.DYNAMIC, bizId=oid, reasonType=1
+                ),
+            )
         async with new_session() as s:
-            data = await ReportService.list_reports(s, biz_type=InteractionBizTypeEnum.DYNAMIC)
+            data = await ReportService.list_reports(
+                s, biz_type=InteractionBizTypeEnum.DYNAMIC
+            )
             assert data.total >= 1
             target = next((it for it in data.items if it.bizId == oid), None)
             assert target is not None
             assert target.auditStatus == "pending"
             await ReportService.review(
-                s, 1,
+                s,
+                1,
                 ReportReviewReq(reportPk=target.pk, decision="resolve", remark="属实"),
             )
         async with new_session() as s:

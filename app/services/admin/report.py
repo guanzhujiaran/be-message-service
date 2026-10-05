@@ -22,7 +22,11 @@ from loguru import logger
 from sqlmodel import col, func, select
 
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
@@ -59,7 +63,11 @@ def _distinct_models() -> list[type]:
 
     跨表汇总 / 按主键检索都遍历这里，避免 `TResourceReport` 被 6 个资源重复查询。
     """
-    return list(dict.fromkeys(c.model for c in BaseBiz._registry.values() if c.model is not None))
+    return list(
+        dict.fromkeys(
+            c.model for c in BaseBiz._registry.values() if c.model is not None
+        )
+    )
 
 
 def _status_value(status) -> int | None:
@@ -166,7 +174,6 @@ def _model_for(biz_type) -> type:
 
 
 class ReportService:
-
     @staticmethod
     async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """举报审核统计：跨**全部**举报表聚合（与 `admin/list` 无 biz_type 时的
@@ -303,7 +310,7 @@ class ReportService:
             )
             total += sub_total
             merged.extend(sub_items)
-        merged.sort(key=lambda r: (r.created_at or datetime.min), reverse=True)
+        merged.sort(key=lambda r: r.created_at or datetime.min, reverse=True)
         page_rows = merged[(page - 1) * page_size : page * page_size]
         # 2.61.0：只按当页结果批量回捞，调用次数与分页大小无关
         users = await _load_user_briefs(page_rows)
@@ -341,11 +348,15 @@ class ReportService:
                 break
         if rec is None:
             raise ValueError("举报记录不存在")
-        biz = get_biz(InteractionBizTypeEnum(int(rec.bizType)), session, rec.bizId, admin_mid)
+        biz = get_biz(
+            InteractionBizTypeEnum(int(rec.bizType)), session, rec.bizId, admin_mid
+        )
         # req.decision 是字符串（"reject"/"resolve"，见 ReportReviewReq.decision），
         # 用成员名小写比较（决策枚举 value 是 int，不能直接比字符串）。
         if req.decision == ReportReviewDecisionEnum.REJECT.name.lower():
-            await biz.report_reject(report_pk=req.reportPk, admin_mid=admin_mid, remark=req.remark)
+            await biz.report_reject(
+                report_pk=req.reportPk, admin_mid=admin_mid, remark=req.remark
+            )
         elif req.decision == ReportReviewDecisionEnum.RESOLVE.name.lower():
             await biz.report_resolved(
                 report_pk=req.reportPk,
@@ -453,7 +464,10 @@ class ReportService:
         reporter = (users or {}).get(int(r.reportMid)) if r.reportMid else None
         accused = (users or {}).get(int(r.accusedMid)) if r.accusedMid else None
         try:
-            resource_key = (int(InteractionBizTypeEnum.from_text(r.bizType)), int(r.bizId))
+            resource_key = (
+                int(InteractionBizTypeEnum.from_text(r.bizType)),
+                int(r.bizId),
+            )
         except (TypeError, ValueError):
             resource_key = None
         return ReportItem(
@@ -468,7 +482,9 @@ class ReportService:
             auditStatus=_status_name(r.auditStatus),
             auditRemark=r.auditRemark,
             auditAdminMid=int(r.auditAdminMid) if r.auditAdminMid else None,
-            createdAt=r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
+            createdAt=r.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            if r.created_at
+            else None,
             reporterName=reporter.uname if reporter else None,
             reporterFace=reporter.avatar if reporter else None,
             accusedName=accused.uname if accused else None,

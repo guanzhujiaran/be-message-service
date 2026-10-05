@@ -34,7 +34,7 @@ from app.models.db import (
     NotifyState,
     UserActivity,
     UserMessageSetting,
-    )
+)
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import DmMsgStatusEnum, DmMsgTypeEnum, NotifyTargetTypeEnum
 from app.models.schemas import (
@@ -44,7 +44,7 @@ from app.models.schemas import (
     EventUnreadResp,
     MessageSettingUpdateReq,
     NotifyCreateReq,
-    )
+)
 import app.services.message.dm.dm as dm_svc_mod
 import app.services.message.infrastructure.publisher as publisher
 from app.services.message.insite.activity import ActivityService
@@ -161,7 +161,9 @@ async def test_notify_cursor_dedup_and_visibility() -> None:
     async with new_session() as s:
         # 发布一条面向全站的已发布通知（用测试 mid 作为创建者，便于清理）
         created = await NotifyService.create(
-            s, M["notify_user"], NotifyCreateReq(title="t", content="c", publish_now=True)
+            s,
+            M["notify_user"],
+            NotifyCreateReq(title="t", content="c", publish_now=True),
         )
         # 第一次拉取：应返回该通知并推进游标
         r1 = await NotifyService.pull(s, user)
@@ -206,7 +208,9 @@ async def test_notify_cursor_dedup_and_visibility() -> None:
         target = AuthInfo(mid=M["notify_custom"], role="normal", level=0)
         ro = await NotifyService.pull(s, other)
         rt = await NotifyService.pull(s, target)
-        assert all(i.id != custom.id for i in ro.items), "非目标用户不应看到 CUSTOM 通知"
+        assert all(i.id != custom.id for i in ro.items), (
+            "非目标用户不应看到 CUSTOM 通知"
+        )
         assert any(i.id == custom.id for i in rt.items), "目标用户应看到 CUSTOM 通知"
 
         # 就地清理本测试产生的通知数据（含 notify_user / notify_custom 的游标与状态）
@@ -309,7 +313,9 @@ async def test_event_aggregation_and_dedup() -> None:
         # 不同人对同一来源 → 两条明细，聚合为 count=2
         await BaseEvent.from_req(req(800002)).report(s)
 
-        groups, total = await BaseEvent.aggregate(s, mid, InteractionActionTypeEnum.LIKE)
+        groups, total = await BaseEvent.aggregate(
+            s, mid, InteractionActionTypeEnum.LIKE
+        )
         assert total == 1, "应聚合成 1 个分组"
         assert groups[0].count == 2, "聚合 count 应为 2"
         assert groups[0].unread_count == 2
@@ -319,7 +325,9 @@ async def test_event_aggregation_and_dedup() -> None:
 
         # 按类型一键已读
         await BaseEvent.mark_read(
-            s, mid, EventReadReq(event_type=InteractionActionTypeEnum.LIKE)  # type: ignore[arg-type]
+            s,
+            mid,
+            EventReadReq(event_type=InteractionActionTypeEnum.LIKE),  # type: ignore[arg-type]
         )
         assert await BaseEvent.count_unread(s, mid) == 0
 
@@ -353,7 +361,9 @@ async def test_dm_write_diffusion_recall_and_stranger(
     sender, receiver = M["dm_sender"], M["dm_receiver"]
     async with new_session() as s:
         resp = await DmSessionObject(s, sender, receiver).send(
-            DmSendReq(receiver_mid=receiver, content="hello", msg_type=DmMsgTypeEnum.TEXT),
+            DmSendReq(
+                receiver_mid=receiver, content="hello", msg_type=DmMsgTypeEnum.TEXT
+            ),
             sender_name="senderName",
         )
         assert not resp.filtered, "默认应正常送达"
@@ -383,9 +393,7 @@ async def test_dm_write_diffusion_recall_and_stranger(
         ok, msg = await DmSessionObject(s, sender).recall_message(mk)
         assert ok, f"撤回应成功: {msg}"
         after = (
-            await s.exec(
-                select(DmMessageIndex).where(DmMessageIndex.msgkey == mk)
-            )
+            await s.exec(select(DmMessageIndex).where(DmMessageIndex.msgkey == mk))
         ).all()
         assert all(r.msg_status is DmMsgStatusEnum.RECALLED for r in after)
 
@@ -404,9 +412,13 @@ async def test_dm_write_diffusion_recall_and_stranger(
     # 陌生人过滤：接收方关闭陌生人私信 → 仅写发送方视角
     async with new_session() as s:
         await SettingService.update(
-            s, M["dm_stranger_receiver"], MessageSettingUpdateReq(recv_stranger_dm=False)
+            s,
+            M["dm_stranger_receiver"],
+            MessageSettingUpdateReq(recv_stranger_dm=False),
         )
-        resp2 = await DmSessionObject(s, M["dm_stranger_sender"], M["dm_stranger_receiver"]).send(
+        resp2 = await DmSessionObject(
+            s, M["dm_stranger_sender"], M["dm_stranger_receiver"]
+        ).send(
             DmSendReq(
                 receiver_mid=M["dm_stranger_receiver"],
                 content="hi",
@@ -417,7 +429,9 @@ async def test_dm_write_diffusion_recall_and_stranger(
         assert resp2.filtered, "关闭陌生人私信应被过滤"
         recv_sessions = (
             await s.exec(
-                select(DmSession).where(DmSession.owner_mid == M["dm_stranger_receiver"])
+                select(DmSession).where(
+                    DmSession.owner_mid == M["dm_stranger_receiver"]
+                )
             )
         ).all()
         assert recv_sessions == [], "被过滤时接收方不应有会话"
@@ -478,7 +492,9 @@ async def test_msg_feed_unread_aggregation() -> None:
     async with new_session() as s:
         # 造一条通知 + 一条 like 事件 + 一发私信（用桩）
         await NotifyService.create(
-            s, M["feed_user"], NotifyCreateReq(title="tf", content="cf", publish_now=True)
+            s,
+            M["feed_user"],
+            NotifyCreateReq(title="tf", content="cf", publish_now=True),
         )
         await BaseEvent.from_req(
             EventReportReq(
@@ -550,11 +566,13 @@ async def test_event_biz_id_roundtrip(monkeypatch) -> None:
         assert groups and groups[0].biz_id == "10000001", "aggregate 应透传 biz_id"
 
         # msgfeed 出参带 resource_id（替代原 biz_id + subject_id）
-        feed = await BaseEvent.list_msgfeed(s, mid, event_type=InteractionActionTypeEnum.REPLY)
+        feed = await BaseEvent.list_msgfeed(
+            s, mid, event_type=InteractionActionTypeEnum.REPLY
+        )
         assert feed.total.items, "msgfeed 应有聚合条目"
-        assert (
-            feed.total.items[0].item.resource_id == "10000001"
-        ), "msgfeed item 应透传 resource_id"
+        assert feed.total.items[0].item.resource_id_str == "10000001", (
+            "msgfeed item 应透传 resource_id_str"
+        )
 
         # 就地清理本测试产生的事件数据
         await _delete_event(s, mid)

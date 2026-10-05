@@ -104,7 +104,9 @@ async def _clean_test_data() -> None:
         await s.exec(text('DELETE FROM "TUserInfo" WHERE uid = :u'), params={"u": UID})
         await s.exec(text('DELETE FROM "TUserLevel" WHERE mid = :u'), params={"u": UID})
         await s.exec(text('DELETE FROM "TUserVip" WHERE mid = :u'), params={"u": UID})
-        await s.exec(text('DELETE FROM "TUserDetail" WHERE mid = :u'), params={"u": UID})
+        await s.exec(
+            text('DELETE FROM "TUserDetail" WHERE mid = :u'), params={"u": UID}
+        )
         await s.commit()
 
 
@@ -170,7 +172,10 @@ async def test_cleanup_moment_deletes_dynamic_and_children():
 
     async with new_session() as s:
         dyn = (
-            await s.exec(text("SELECT COUNT(*) AS c FROM TMoment WHERE dynId = :d"), params={"d": DYN_ID})
+            await s.exec(
+                text("SELECT COUNT(*) AS c FROM TMoment WHERE dynId = :d"),
+                params={"d": DYN_ID},
+            )
         ).one()
         assert dyn.c == 0
 
@@ -219,18 +224,26 @@ async def test_cleanup_misc_deletes_setting_activity_ban_admin():
     async with new_session() as s:
         for table in ("msg_user_setting", "msg_user_activity"):
             row = (
-                await s.exec(text(f"SELECT COUNT(*) AS c FROM {table} WHERE mid = :a"), params={"a": UID})
+                await s.exec(
+                    text(f"SELECT COUNT(*) AS c FROM {table} WHERE mid = :a"),
+                    params={"a": UID},
+                )
             ).one()
             assert row.c == 0
         ban = (
             await s.exec(
-                text("SELECT COUNT(*) AS c FROM msg_user_ban WHERE mid = :a OR operator_mid = :a"),
+                text(
+                    "SELECT COUNT(*) AS c FROM msg_user_ban WHERE mid = :a OR operator_mid = :a"
+                ),
                 params={"a": UID},
             )
         ).one()
         assert ban.c == 0
         admin = (
-            await s.exec(text("SELECT COUNT(*) AS c FROM msg_admin WHERE mid = :a"), params={"a": UID})
+            await s.exec(
+                text("SELECT COUNT(*) AS c FROM msg_admin WHERE mid = :a"),
+                params={"a": UID},
+            )
         ).one()
         assert admin.c == 0
 
@@ -279,7 +292,7 @@ async def test_deactivate_composes_pptr_and_msg():
 
     async with new_pptr_session() as s:
         await s.exec(
-            text('INSERT INTO "TUserInfo" (uid, user_name) VALUES (:u, \'t_deact\')'),
+            text("INSERT INTO \"TUserInfo\" (uid, user_name) VALUES (:u, 't_deact')"),
             params={"u": UID},
         )
         await s.commit()
@@ -296,7 +309,10 @@ async def test_deactivate_composes_pptr_and_msg():
         assert row.c == 0
     async with new_pptr_session() as s:
         row = (
-            await s.exec(text('SELECT COUNT(*) AS c FROM "TUserInfo" WHERE uid = :u'), params={"u": UID})
+            await s.exec(
+                text('SELECT COUNT(*) AS c FROM "TUserInfo" WHERE uid = :u'),
+                params={"u": UID},
+            )
         ).one()
         assert row.c == 0
 
@@ -326,9 +342,7 @@ async def test_publish_user_deactivate_calls_broker(monkeypatch):
     calls: list[dict] = []
 
     async def fake_publish(message, exchange, routing_key, queue):
-        calls.append(
-            {"message": message, "routing_key": routing_key, "queue": queue}
-        )
+        calls.append({"message": message, "routing_key": routing_key, "queue": queue})
 
     monkeypatch.setattr(publisher.broker, "publish", fake_publish)
     ok = await publisher.publish_user_deactivate(UID)

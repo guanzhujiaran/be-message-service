@@ -78,8 +78,12 @@ async def _cleanup() -> None:
             select(UserMessageSetting).where(UserMessageSetting.mid.in_(ALL_MIDS)),
             select(EventMessage).where(EventMessage.mid.in_(ALL_MIDS)),
             select(UserActivity).where(UserActivity.mid.in_(ALL_MIDS)),
-            select(DmContentDeadLetter).where(DmContentDeadLetter.sender_uid.in_(ALL_MIDS)),
-            select(DmContentDeadLetter).where(DmContentDeadLetter.receiver_uid.in_(ALL_MIDS)),
+            select(DmContentDeadLetter).where(
+                DmContentDeadLetter.sender_uid.in_(ALL_MIDS)
+            ),
+            select(DmContentDeadLetter).where(
+                DmContentDeadLetter.receiver_uid.in_(ALL_MIDS)
+            ),
         ]:
             for r in (await s.exec(stmt)).all():
                 await s.delete(r)
@@ -152,7 +156,9 @@ async def test_c3_retry_dead_letter_job(monkeypatch) -> None:
     async with new_session() as s:
         dl = (
             await s.exec(
-                select(DmContentDeadLetter).where(DmContentDeadLetter.msgkey == 999000001)
+                select(DmContentDeadLetter).where(
+                    DmContentDeadLetter.msgkey == 999000001
+                )
             )
         ).one()
         assert dl.resolved is True, "死信应标记已解决"

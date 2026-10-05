@@ -31,7 +31,10 @@ class TResourceFeed(TimestampMixin, table=True):
         PrimaryKeyConstraint("bizType", "bizId", name="TResourceFeed_pkey"),
         Index("idx_resfeed_status_pubtime", "auditStatus", text("pubTime DESC")),
         Index("idx_resfeed_mid_pubtime", "mid", text("pubTime DESC")),
-        {"extend_existing": True, "comment": "通用资源 Feed 元数据：bizType+bizId 统一入 Feed 的排序元数据"},
+        {
+            "extend_existing": True,
+            "comment": "通用资源 Feed 元数据：bizType+bizId 统一入 Feed 的排序元数据",
+        },
     )
 
     bizType: InteractionBizTypeEnum = Field(
@@ -52,7 +55,9 @@ class TResourceFeed(TimestampMixin, table=True):
         sa_type=BIGINT,
         description="资源作者 UID（可能无作者，如 lottery/rpa_*；2.37.0 起可空）",
     )
-    pubTime: datetime | None = Field(default=None, description="实际对外发布时间（审核通过写入），Feed 排序依据")
+    pubTime: datetime | None = Field(
+        default=None, description="实际对外发布时间（审核通过写入），Feed 排序依据"
+    )
     auditStatus: ResourceAuditStatusEnum | None = Field(
         default=None,
         sa_type=SAEnum(ResourceAuditStatusEnum),
@@ -71,7 +76,9 @@ class TResourceFeed(TimestampMixin, table=True):
         sa_type=JSON,
         description="标签 id 列表：dynamic=话题 id（TMomentTopicRel 冗余，供个性化/话题流）；其他资源=分类/空",
     )
-    deletedAt: datetime | None = Field(default=None, description="软删时间（不为 NULL 时不入 Feed）")
+    deletedAt: datetime | None = Field(
+        default=None, description="软删时间（不为 NULL 时不入 Feed）"
+    )
 
 
 __all__ = ["TResourceFeed"]

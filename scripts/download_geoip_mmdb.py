@@ -65,7 +65,9 @@ def download_one(client: httpx.Client, name: str, sha: str, out: Path) -> None:
     expected = _EXPECTED_SIZE.get(name)
     if expected is not None and size != expected:
         dest.unlink(missing_ok=True)
-        raise RuntimeError(f"{name} 下载不完整（{size} 字节 ≠ 预期 {expected}），已删除")
+        raise RuntimeError(
+            f"{name} 下载不完整（{size} 字节 ≠ 预期 {expected}），已删除"
+        )
     logger.success(f"  {name}: {size / 1024 / 1024:.1f} MB OK")
 
 

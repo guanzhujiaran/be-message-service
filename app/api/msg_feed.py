@@ -24,7 +24,9 @@ router = APIRouter(prefix="/api/v1/message/msg_feed", tags=["message"])
 
 
 @router.get(
-    "/unread", response_model=StandardResponse[EventUnreadResp], summary="全站未读数汇总"
+    "/unread",
+    response_model=StandardResponse[EventUnreadResp],
+    summary="全站未读数汇总",
 )
 async def unread_summary(
     session: SessionDep, user: RequiredUser

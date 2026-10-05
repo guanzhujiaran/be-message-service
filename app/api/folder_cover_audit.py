@@ -22,7 +22,9 @@ from app.models.schemas.folder_cover_audit import (
 )
 from app.services.user.folder_cover_audit import FolderCoverAuditService
 
-router = APIRouter(prefix="/api/v1/favorite/folder/cover/audit", tags=["folder-cover-audit"])
+router = APIRouter(
+    prefix="/api/v1/favorite/folder/cover/audit", tags=["folder-cover-audit"]
+)
 
 
 def _parse_folder_id(value: str | None) -> int | None:

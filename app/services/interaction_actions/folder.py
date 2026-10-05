@@ -261,7 +261,9 @@ class FavoriteFolderAction:
             if other is None:
                 affected.append((detail.bizType, detail.bizId))
         await session.exec(
-            delete(TResourceFavorite).where(col(TResourceFavorite.folderId) == folder_id)
+            delete(TResourceFavorite).where(
+                col(TResourceFavorite.folderId) == folder_id
+            )
         )
         await session.exec(
             delete(TFavoriteFolder).where(col(TFavoriteFolder.folder_id) == folder_id)

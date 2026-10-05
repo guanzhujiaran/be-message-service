@@ -149,6 +149,7 @@ async def _bind_engine_per_test():
         expire_on_commit=False,
         autoflush=False,
     )
+
     async def _cleanup() -> None:
         async with new_session() as s:
             # 2.36.0：计数/Feed 元数据统一表（先于 TMoment 清理，bizId 依赖 dynId）
@@ -626,7 +627,9 @@ async def test_comprehensive_feed_personal_dislike_penalty(monkeypatch):
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM TResourceDislike WHERE mid = {viewer}"))
-            await s.exec(text(f"DELETE FROM TFeedImpression WHERE viewerKey = 'mid:{viewer}'"))
+            await s.exec(
+                text(f"DELETE FROM TFeedImpression WHERE viewerKey = 'mid:{viewer}'")
+            )
             await s.commit()
 
 
@@ -657,7 +660,9 @@ async def test_comprehensive_feed_personal_dislike_exclude(monkeypatch):
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM TResourceDislike WHERE mid = {viewer}"))
-            await s.exec(text(f"DELETE FROM TFeedImpression WHERE viewerKey = 'mid:{viewer}'"))
+            await s.exec(
+                text(f"DELETE FROM TFeedImpression WHERE viewerKey = 'mid:{viewer}'")
+            )
             await s.commit()
 
 
@@ -755,9 +760,7 @@ async def test_topic_feed_hot_uses_topic_edgerank():
         # autoflush=False：text UPDATE 前需先 flush 让 TMoment 行落库，否则匹配不到
         await s.flush()
         await s.exec(
-            text(
-                f"UPDATE TMoment SET topicId={E_TOPIC_A} WHERE dynId IN ({a}, {b})"
-            )
+            text(f"UPDATE TMoment SET topicId={E_TOPIC_A} WHERE dynId IN ({a}, {b})")
         )
         await s.commit()
 
@@ -772,12 +775,20 @@ async def test_topic_square_uses_topic_edgerank():
     """话题广场：EdgeRank 排序——isHot + dynCount 加权的热门话题排在更新话题之前。"""
     async with new_session() as s:
         _seed_topic(
-            s, E_TOPIC_A, name="er-square-a",
-            is_hot=1, dyn_count=1000, seconds_ago=120,
+            s,
+            E_TOPIC_A,
+            name="er-square-a",
+            is_hot=1,
+            dyn_count=1000,
+            seconds_ago=120,
         )
         _seed_topic(
-            s, E_TOPIC_B, name="er-square-b",
-            is_hot=0, dyn_count=10, seconds_ago=30,
+            s,
+            E_TOPIC_B,
+            name="er-square-b",
+            is_hot=0,
+            dyn_count=10,
+            seconds_ago=30,
         )
         await s.commit()
 
@@ -791,14 +802,16 @@ async def test_topic_square_uses_topic_edgerank():
 async def test_topic_square_hot_only_filters():
     """热搜 hot_only：仅返回 isHot=1 的话题（EdgeRank 排序下仍生效）。"""
     async with new_session() as s:
-        _seed_topic(s, E_TOPIC_A, name="er-hot-a", is_hot=1, dyn_count=5, seconds_ago=30)
-        _seed_topic(s, E_TOPIC_B, name="er-hot-b", is_hot=0, dyn_count=999, seconds_ago=30)
+        _seed_topic(
+            s, E_TOPIC_A, name="er-hot-a", is_hot=1, dyn_count=5, seconds_ago=30
+        )
+        _seed_topic(
+            s, E_TOPIC_B, name="er-hot-b", is_hot=0, dyn_count=999, seconds_ago=30
+        )
         await s.commit()
 
         # 2.46.0 推荐流：无 page 参数，page_size 截断
-        resp = await MomentTopicService.topic_square(
-            s, page_size=20, hot_only=True
-        )
+        resp = await MomentTopicService.topic_square(s, page_size=20, hot_only=True)
         ids = [it.topicId for it in resp.items]
         assert E_TOPIC_A in ids
         assert E_TOPIC_B not in ids
@@ -868,8 +881,6 @@ async def test_comprehensive_feed_impression_dedup_no_repeat():
         monkeypatch.undo()
         async with new_session() as s:
             await s.exec(
-                text(
-                    f"DELETE FROM TFeedImpression WHERE viewerKey='mid:{E_MID2}'"
-                )
+                text(f"DELETE FROM TFeedImpression WHERE viewerKey='mid:{E_MID2}'")
             )
             await s.commit()

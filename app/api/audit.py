@@ -69,9 +69,7 @@ async def audit_reject(
 ) -> StandardResponse[AuditActionResp]:
     try:
         biz = get_biz(req.bizType, session, int(req.bizId), user.mid)
-        data = await biz.audit_reject(
-            reject_reason=req.rejectReason, remark=req.remark
-        )
+        data = await biz.audit_reject(reject_reason=req.rejectReason, remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     except NotImplementedError as e:

@@ -168,9 +168,7 @@ async def _seed_moment(
     await session.flush()
     if with_stat:
         # 2.36.0：计数统一 TInteractionStat
-        session.add(
-            TInteractionStat(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=did)
-        )
+        session.add(TInteractionStat(bizType=InteractionBizTypeEnum.DYNAMIC, bizId=did))
     session.add(
         TResourceFeed(
             bizType=InteractionBizTypeEnum.DYNAMIC,
@@ -239,13 +237,13 @@ async def test_approve_sets_normal_and_pubtime():
         did = await _seed_moment(
             s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
-        item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_approve(remark="ok")
+        item = await get_biz(
+            InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID
+        ).audit_approve(remark="ok")
         assert item.auditStatus == ResourceAuditStatusEnum.NORMAL.name
         assert item.pubTime is not None
 
-        dyn = (
-            await s.exec(select(TMoment).where(TMoment.dynId == did))
-        ).one_or_none()
+        dyn = (await s.exec(select(TMoment).where(TMoment.dynId == did))).one_or_none()
         assert dyn.auditStatus is ResourceAuditStatusEnum.NORMAL
         assert dyn.pubTime is not None
         assert dyn.auditRejectReason is None
@@ -295,14 +293,12 @@ async def test_reject_sets_rejected_and_reason():
         did = await _seed_moment(
             s, A_MID, audit_status=ResourceAuditStatusEnum.AUDITING
         )
-        item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
-            reject_reason="违规内容", remark="r"
-        )
+        item = await get_biz(
+            InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID
+        ).audit_reject(reject_reason="违规内容", remark="r")
         assert item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
 
-        dyn = (
-            await s.exec(select(TMoment).where(TMoment.dynId == did))
-        ).one_or_none()
+        dyn = (await s.exec(select(TMoment).where(TMoment.dynId == did))).one_or_none()
         assert dyn.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert dyn.auditRejectReason == "违规内容"
 
@@ -398,26 +394,34 @@ async def test_pending_list_filters_by_status():
         normal_ids = {it.dynId for it in normal_resp.items}
         rejected_ids = {it.dynId for it in rejected_resp.items}
 
-        assert m_audit in audit_ids and m_audit not in normal_ids and m_audit not in rejected_ids
-        assert m_normal in normal_ids and m_normal not in audit_ids and m_normal not in rejected_ids
-        assert m_rejected in rejected_ids and m_rejected not in audit_ids and m_rejected not in normal_ids
+        assert (
+            m_audit in audit_ids
+            and m_audit not in normal_ids
+            and m_audit not in rejected_ids
+        )
+        assert (
+            m_normal in normal_ids
+            and m_normal not in audit_ids
+            and m_normal not in rejected_ids
+        )
+        assert (
+            m_rejected in rejected_ids
+            and m_rejected not in audit_ids
+            and m_rejected not in normal_ids
+        )
 
 
 async def test_reject_normal_word_moment_reverts():
     """失误过审撤回：normal 的 WORD 动态可驳回为 rejected（写原因 + 流水），
     并立即从 normal 列表消失、进入 rejected 列表。"""
     async with new_session() as s:
-        did = await _seed_moment(
-            s, A_MID, audit_status=ResourceAuditStatusEnum.NORMAL
-        )
-        item = await get_biz(InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID).audit_reject(
-            reject_reason="误过审，撤回"
-        )
+        did = await _seed_moment(s, A_MID, audit_status=ResourceAuditStatusEnum.NORMAL)
+        item = await get_biz(
+            InteractionBizTypeEnum.DYNAMIC, s, did, ADMIN_MID
+        ).audit_reject(reject_reason="误过审，撤回")
         assert item.auditStatus == ResourceAuditStatusEnum.REJECTED.name
 
-        dyn = (
-            await s.exec(select(TMoment).where(TMoment.dynId == did))
-        ).one_or_none()
+        dyn = (await s.exec(select(TMoment).where(TMoment.dynId == did))).one_or_none()
         assert dyn.auditStatus is ResourceAuditStatusEnum.REJECTED
         assert dyn.auditRejectReason == "误过审，撤回"
 

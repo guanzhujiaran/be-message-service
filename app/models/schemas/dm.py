@@ -20,7 +20,9 @@ from app.models.str_int import StrInt
 class DmSendReq(SQLModel):
     """发送一条私信。"""
 
-    receiver_mid: StrInt = Field(description="接收者mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    receiver_mid: StrInt = Field(
+        description="接收者mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
     content: str = Field(min_length=1, max_length=20000, description="消息内容")
     msg_type: DmMsgTypeEnum = Field(default=DmMsgTypeEnum.TEXT, description="消息类型")
     receiver_name: str | None = Field(
@@ -29,8 +31,9 @@ class DmSendReq(SQLModel):
     receiver_avatar: str | None = Field(default=None, max_length=512)
 
 
+@auto_str
 class DmSendResp(SQLModel):
-    msgkey: str = Field(description="消息全局唯一键（字符串形式，避免 JS 精度丢失）")
+    msgkey: int = Field(description="消息全局唯一键（雪花ID；字符串版见 msgkey_str）")
     session_key: str = Field(description="会话键")
     msg_ts: int = Field(description="消息毫秒时间戳")
     filtered: bool = Field(
@@ -49,7 +52,7 @@ class DmSessionItem(SQLModel):
     talker_name: str | None = None
     talker_avatar: str | None = None
     session_key: str
-    last_msgkey: str | None = None
+    last_msgkey: int | None = None
     last_content_preview: str | None = None
     last_msg_ts: int = 0
     last_sender_uid: int | None = None
@@ -75,9 +78,12 @@ class DmSessionListResp(SQLModel):
     # 主列表（SINGLE）未读之和：用于顶部私信红点；不含 STRANGER（陌生人分类独立红点）
     unread_total: int = Field(default=0, description="主列表（SINGLE）未读数之和")
     # 陌生人分类聚合：用于「陌生人私信」顶部聚合条的红点与条数
-    stranger_unread: int = Field(default=0, description="陌生人分类（STRANGER）未读数之和")
+    stranger_unread: int = Field(
+        default=0, description="陌生人分类（STRANGER）未读数之和"
+    )
     stranger_total: int = Field(
-        default=0, description="陌生人分类（STRANGER）会话总数（用于聚合条 [N 条] 副标题）"
+        default=0,
+        description="陌生人分类（STRANGER）会话总数（用于聚合条 [N 条] 副标题）",
     )
     # 前端聚合条展示前提：开关开启 + 确有 STRANGER 会话，两个条件同时满足才展示
     stranger_dm_intercept_enabled: bool = Field(
@@ -90,7 +96,7 @@ class DmSessionListResp(SQLModel):
 class DmMessageItem(SQLModel):
     """聊天记录中的一条消息。"""
 
-    msgkey: str
+    msgkey: int
     sender_uid: int
     msg_type: DmMsgTypeEnum = DmMsgTypeEnum.TEXT
     msg_status: DmMsgStatusEnum = DmMsgStatusEnum.NORMAL
@@ -107,10 +113,12 @@ class DmMessageItem(SQLModel):
         default=None, description="撤回时间（仅撤回后非空）"
     )
     recalled_by: int | None = Field(
-        default=None, description="撤回操作者mid（前端据此展示「你/对方撤回了一条消息」）"
+        default=None,
+        description="撤回操作者mid（前端据此展示「你/对方撤回了一条消息」）",
     )
 
 
+@auto_str
 class DmMessageListResp(SQLModel):
     """聊天记录（游标翻页）。
 
@@ -119,7 +127,9 @@ class DmMessageListResp(SQLModel):
     """
 
     items: list[DmMessageItem] = Field(default_factory=list)
-    cursor: str | None = Field(default=None, description="下一页游标（本页最小 msgkey）")
+    cursor: str | None = Field(
+        default=None, description="下一页游标（本页最小 msgkey）"
+    )
     has_more: bool = False
     talker_mid: int = 0
     session_key: str = ""
@@ -134,7 +144,7 @@ class DmDeleteReq(SQLModel):
 class DmRecallReq(SQLModel):
     """撤回消息（双方均不可见，仅发送者可操作且受时间窗口限制）。"""
 
-    msgkey: str = Field(description="要撤回的 msgkey")
+    msgkey: StrInt = Field(description="要撤回的 msgkey（前端传字符串）")
 
 
 class DmOperationResp(SQLModel):
@@ -145,20 +155,26 @@ class DmOperationResp(SQLModel):
 class DmAckReq(SQLModel):
     """标记会话已读，把未读数清零并抬高已读水位。"""
 
-    talker_mid: StrInt = Field(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    talker_mid: StrInt = Field(
+        description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
     ack_msgkey: str | None = Field(
         default=None, description="已读到的最大 msgkey，为空表示全部已读"
     )
 
 
 class DmSessionDeleteReq(SQLModel):
-    talker_mid: StrInt = Field(description="要删除的会话对方mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    talker_mid: StrInt = Field(
+        description="要删除的会话对方mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
 
 
 class DmTopReq(SQLModel):
     """会话置顶 / 取消置顶（2.59.0）。"""
 
-    talker_mid: StrInt = Field(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    talker_mid: StrInt = Field(
+        description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
     top: bool = Field(description="true=置顶（top_ts=now）；false=取消置顶（top_ts=0）")
 
 
@@ -169,14 +185,16 @@ class DmTopResp(SQLModel):
     talker_mid: int = Field(default=0, description="被置顶/取消的会话对方 mid")
     top_ts: int = Field(default=0, description="置顶时间戳(毫秒)；0=未置顶")
     is_top: bool = Field(default=False, description="= top_ts != 0")
-    affected: int = Field(default=0, description="受影响会话行数（0=会话不存在或幂等无操作）")
+    affected: int = Field(
+        default=0, description="受影响会话行数（0=会话不存在或幂等无操作）"
+    )
 
 
 @auto_str
 class DmAuditItem(SQLModel):
     """私信审核队列中的一条消息。"""
 
-    msgkey: str = Field(description="消息全局唯一键（字符串）")
+    msgkey: int = Field(description="消息全局唯一键（雪花ID；字符串版见 msgkey_str）")
     sender_mid: int = Field(description="发送者mid")
     talker_mid: int = Field(description="对话方mid")
     session_key: str = Field(description="会话键：小mid_大mid")
@@ -191,14 +209,15 @@ class DmAuditItem(SQLModel):
     )
     # 管理端审核视角：使用**私有**简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色）
     sender: UserBriefOut | None = Field(
-        default=None, description="发送者信息（管理端：含私有字段），装配时直连 pptr 只读取回"
+        default=None,
+        description="发送者信息（管理端：含私有字段），装配时直连 pptr 只读取回",
     )
 
 
 class DmAuditReq(SQLModel):
     """管理端人工审核 / 上下架。"""
 
-    msgkey: str = Field(description="待处理私信 msgkey（字符串）")
+    msgkey: StrInt = Field(description="待处理私信 msgkey（前端传字符串）")
     op: str = Field(description="pass | reject | hidden | restore")
     note: str | None = Field(default=None, max_length=256, description="审核备注")
 

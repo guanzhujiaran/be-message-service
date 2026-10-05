@@ -6,6 +6,8 @@ from sqlmodel import Field, SQLModel
 
 
 from app.models.schemas.base import auto_str
+
+
 @auto_str
 class MessageSettingResp(SQLModel):
     """用户当前的消息设置。"""
@@ -29,7 +31,9 @@ class MessageSettingUpdateReq(SQLModel):
     recv_like: bool | None = Field(default=None, description="是否接收点赞提醒")
     recv_reply: bool | None = Field(default=None, description="是否接收回复提醒")
     recv_at: bool | None = Field(default=None, description="是否接收@提醒")
-    recv_stranger_dm: bool | None = Field(default=None, description="是否接收陌生人私信")
+    recv_stranger_dm: bool | None = Field(
+        default=None, description="是否接收陌生人私信"
+    )
     recv_notify: bool | None = Field(default=None, description="是否接收系统通知")
     push_enabled: bool | None = Field(default=None, description="是否推送到外部渠道")
     dnd_start_hour: int | None = Field(

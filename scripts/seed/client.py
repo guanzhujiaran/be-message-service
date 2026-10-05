@@ -3,6 +3,7 @@
 按功能域分段：动态 / 评论 / 收藏夹 / 关注·拉黑 / 事件通知 / 私信 / 举报·封禁 / 头像审核。
 新增资源的接口方法请加在对应分段内，保持一处收口。
 """
+
 import asyncio
 
 import httpx
@@ -128,9 +129,7 @@ class SeedClient:
             f"topic approve id={topic_id}",
         )
 
-    async def list_my_topics(
-        self, page: int = 1, page_size: int = 50
-    ) -> dict:
+    async def list_my_topics(self, page: int = 1, page_size: int = 50) -> dict:
         """分页获取当前登录用户（admin）创建的话题，返回 {items, hasMore}。"""
         return await self._req(
             lambda: self._get(
@@ -192,7 +191,11 @@ class SeedClient:
                 lambda: self._post(
                     "/api/v1/community/thumb",
                     mid,
-                    {"bizType": InteractionBizTypeEnum.LOTTERY, "bizId": lottery_id, "up": 1},
+                    {
+                        "bizType": InteractionBizTypeEnum.LOTTERY,
+                        "bizId": lottery_id,
+                        "up": 1,
+                    },
                 ),
                 f"thumb lottery mid={mid} id={lottery_id}",
             )
@@ -463,7 +466,11 @@ class SeedClient:
             lambda: self._post(
                 "/api/v1/favorite/add",
                 mid,
-                {"bizType": InteractionBizTypeEnum.DYNAMIC, "bizId": str(dyn_id), "folderId": folder_id},
+                {
+                    "bizType": InteractionBizTypeEnum.DYNAMIC,
+                    "bizId": str(dyn_id),
+                    "folderId": folder_id,
+                },
             ),
             f"favorite add mid={mid} dyn={dyn_id}",
         )

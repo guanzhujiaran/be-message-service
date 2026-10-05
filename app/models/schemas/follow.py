@@ -23,13 +23,17 @@ from app.models.schemas.user_brief import UserBriefOut
 class FollowReq(SQLModel):
     """关注 / 取关 请求。"""
 
-    target_mid: StrInt = Field(description="被关注的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    target_mid: StrInt = Field(
+        description="被关注的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
 
 
 class BlockReq(SQLModel):
     """拉黑 / 解除拉黑 请求。"""
 
-    target_mid: StrInt = Field(description="被拉黑的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    target_mid: StrInt = Field(
+        description="被拉黑的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
 
 
 # ==================== 响应体 ====================

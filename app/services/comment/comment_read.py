@@ -17,6 +17,7 @@
 另一条红线：**总数一律读评论区冗余计数，禁止 `COUNT(*)`**。
 评论区上万条时 `COUNT(*)` 会扫掉整段索引，是最典型的慢查询来源。
 """
+
 from typing import Sequence
 
 import re
@@ -41,7 +42,7 @@ from app.models.schemas import (
     CommentLatestResp,
     CommentListResp,
     CommentSubListResp,
-    )
+)
 from app.models.schemas.user_brief import UserBriefOut
 from app.services.comment import VISIBLE_STATES, CommentService
 from app.services.user.account import CommentAdminUser
@@ -104,7 +105,11 @@ class CommentReadService:
                     )
                 )
             ).one_or_none()
-            if focus_row is not None and focus_row.oid == oid and focus_row.type == type_:
+            if (
+                focus_row is not None
+                and focus_row.oid == oid
+                and focus_row.type == type_
+            ):
                 # 一级评论：自己就是根；楼中楼：取其根评论
                 focus_root = focus_row.root if focus_row.root != 0 else focus_row.rpid
 
@@ -139,13 +144,16 @@ class CommentReadService:
         if viewer_mid:
             auditing_rows = (
                 await session.exec(
-                    select(CommentIndex).where(
+                    select(CommentIndex)
+                    .where(
                         col(CommentIndex.oid) == oid,
                         col(CommentIndex.type) == type_,
                         col(CommentIndex.root) == 0,
-                        col(CommentIndex.auditStatus) == ResourceAuditStatusEnum.AUDITING,
+                        col(CommentIndex.auditStatus)
+                        == ResourceAuditStatusEnum.AUDITING,
                         col(CommentIndex.mid) == viewer_mid,
-                    ).order_by(col(CommentIndex.rpid).desc())
+                    )
+                    .order_by(col(CommentIndex.rpid).desc())
                 )
             ).all()
 
@@ -174,10 +182,12 @@ class CommentReadService:
                 # 一次性装配根评论及其全部楼中楼（不止预览条数），前端需完整展开以定位子评论
                 subs = (
                     await session.exec(
-                        select(CommentIndex).where(
+                        select(CommentIndex)
+                        .where(
                             col(CommentIndex.root) == focus_root,
                             col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
-                        ).order_by(col(CommentIndex.rpid))
+                        )
+                        .order_by(col(CommentIndex.rpid))
                     )
                 ).all()
                 focus_assembled = await CommentReadService.assemble_items(
@@ -367,7 +377,8 @@ class CommentReadService:
                 await session.exec(
                     select(CommentIndex).where(
                         col(CommentIndex.root).in_(root_ids),
-                        col(CommentIndex.auditStatus) == ResourceAuditStatusEnum.AUDITING,
+                        col(CommentIndex.auditStatus)
+                        == ResourceAuditStatusEnum.AUDITING,
                         col(CommentIndex.mid) == viewer_mid,
                     )
                 )
@@ -435,7 +446,8 @@ class CommentReadService:
                     select(CommentIndex)
                     .where(
                         col(CommentIndex.root) == root,
-                        col(CommentIndex.auditStatus) == ResourceAuditStatusEnum.AUDITING,
+                        col(CommentIndex.auditStatus)
+                        == ResourceAuditStatusEnum.AUDITING,
                         col(CommentIndex.mid) == viewer_mid,
                     )
                     .order_by(col(CommentIndex.rpid))
@@ -535,7 +547,11 @@ class CommentReadService:
         message = raw_message
         at_name_to_mid: dict[str, int] = {}
         if content and content.at_mids:
-            mid_to_brief = {at_mid: profiles[at_mid] for at_mid in content.at_mids if at_mid in profiles}
+            mid_to_brief = {
+                at_mid: profiles[at_mid]
+                for at_mid in content.at_mids
+                if at_mid in profiles
+            }
             for at_mid, brief in mid_to_brief.items():
                 uname = (brief.uname or "").strip()
                 if not uname:
@@ -580,7 +596,9 @@ class CommentReadService:
             is_essence=bool(row.attr & CommentAttrBit.ESSENCE.value),
             is_up_liked=bool(row.attr & CommentAttrBit.UP_LIKED.value),
             # IP 属地：数据库无值（旧数据/未解析）时兜底为「未知」，不返回 None
-            ip_location=(content.ip_location if content and content.ip_location else "未知"),
+            ip_location=(
+                content.ip_location if content and content.ip_location else "未知"
+            ),
             ip_isp=content.ip_isp if content else None,
             plat=content.plat if content else None,
             device=content.device if content else None,

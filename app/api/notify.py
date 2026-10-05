@@ -43,11 +43,15 @@ router = APIRouter(prefix="/api/v1/message/notify", tags=["message-notify"])
 # ==================== 用户侧 ====================
 
 
-@router.get("/pull", response_model=StandardResponse[NotifyPullResp], summary="定时拉取增量通知")
+@router.get(
+    "/pull", response_model=StandardResponse[NotifyPullResp], summary="定时拉取增量通知"
+)
 async def pull_notify(
     session: SessionDep,
     user: RequiredUser,
-    cursor: int | None = Query(default=None, description="客户端游标，不传则用服务端持久化游标"),
+    cursor: int | None = Query(
+        default=None, description="客户端游标，不传则用服务端持久化游标"
+    ),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> StandardResponse[NotifyPullResp]:
     """拉取本用户可见的增量通知。
@@ -88,7 +92,9 @@ async def list_notify(
 
 
 @router.get("/unread", response_model=StandardResponse[int], summary="系统通知未读数")
-async def unread_notify(session: SessionDep, user: RequiredUser) -> StandardResponse[int]:
+async def unread_notify(
+    session: SessionDep, user: RequiredUser
+) -> StandardResponse[int]:
     return StandardResponse(data=await NotifyService.unread_count(session, user))
 
 
@@ -121,7 +127,11 @@ async def system_notify_bili(
     )
 
 
-@router.post("/delete", response_model=StandardResponse[int], summary="删除通知（仅管理员，逐用户软删）")
+@router.post(
+    "/delete",
+    response_model=StandardResponse[int],
+    summary="删除通知（仅管理员，逐用户软删）",
+)
 async def delete_notify(
     session: SessionDep, admin: AdminUser, req: NotifyDeleteReq
 ) -> StandardResponse[int]:

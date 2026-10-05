@@ -11,6 +11,9 @@ from bili_common.rpc.rpa import ResourceDetail
 
 from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.base import auto_str
+
+
+@auto_str
 class InteractionResource(SQLModel):
     """互动目标资源的**统一表示**（2.47.0；非 DB 表）。
 
@@ -23,13 +26,27 @@ class InteractionResource(SQLModel):
 
     bizType: InteractionBizTypeEnum = Field(description="资源类型")
     bizId: int = Field(description="资源 id（动态时 = dynId）")
-    authorMid: int | None = Field(default=None, description="资源作者 mid（未知/非动态资源可为空）")
-    ownerMid: int | None = Field(default=None, description="资源所有者 mid（DAC `OWNER_ONLY` 校验依据；未知时经 RPC/子类覆盖判断）")
+    authorMid: int | None = Field(
+        default=None, description="资源作者 mid（未知/非动态资源可为空）"
+    )
+    ownerMid: int | None = Field(
+        default=None,
+        description="资源所有者 mid（DAC `OWNER_ONLY` 校验依据；未知时经 RPC/子类覆盖判断）",
+    )
     exists: bool = Field(default=True, description="资源是否存在")
-    interactable: bool = Field(default=True, description="是否可互动（如动态需 normal 未软删；收藏语义允许 auditing）")
-    title: str | None = Field(default=None, description="附加展示字段（可选，通知等使用）")
-    content: str | None = Field(default=None, description="内容摘要（可选，通知等使用）")
-    cover: str | None = Field(default=None, description="封面图（动态首图 / 资源卡封面，可选）")
+    interactable: bool = Field(
+        default=True,
+        description="是否可互动（如动态需 normal 未软删；收藏语义允许 auditing）",
+    )
+    title: str | None = Field(
+        default=None, description="附加展示字段（可选，通知等使用）"
+    )
+    content: str | None = Field(
+        default=None, description="内容摘要（可选，通知等使用）"
+    )
+    cover: str | None = Field(
+        default=None, description="封面图（动态首图 / 资源卡封面，可选）"
+    )
     jumpTarget: str | None = Field(
         default=None,
         description="后端下发的跳转目标 route:{name}?{query}（事件提醒等读取侧随资源返回；见计划书 §2.10 / §5.11）",
@@ -44,26 +61,47 @@ class InteractionStatusItem(SQLModel):
     **点踩计数不外露**：``dislikeCount`` 仍在 ``TInteractionStat`` 内供 EdgeRank 全局降权使用，但不出参。
     """
 
-    bizType: InteractionBizTypeEnum = Field(description="资源类型（InteractionBizTypeEnum 值）")
+    bizType: InteractionBizTypeEnum = Field(
+        description="资源类型（InteractionBizTypeEnum 值）"
+    )
     bizId: str = Field(description="资源 id（字符串）")
     isLike: bool = Field(default=False, description="当前用户是否已赞")
     isFavorite: bool = Field(default=False, description="当前用户是否已收藏")
-    isDislike: bool = Field(default=False, description="当前用户是否已点踩（2.62.0；匿名恒 false）")
+    isDislike: bool = Field(
+        default=False, description="当前用户是否已点踩（2.62.0；匿名恒 false）"
+    )
     likeCount: int = Field(default=0, description="点赞数")
     favoriteCount: int = Field(default=0, description="收藏数")
-    commentCount: int = Field(default=0, description="评论数（dynamic 时=动态统计；非动态资源无评论，恒为 0）")
-    repostCount: int = Field(default=0, description="转发数（dynamic 时=动态统计；非动态资源无转发，恒为 0）")
-    viewCount: int = Field(default=0, description="浏览数（dynamic 与非动态统一=TInteractionStat.viewCount）")
-    reportCount: int = Field(default=0, description="被举报次数（累计，COUNT(*)，2.40.0）")
-    reportPeopleCount: int = Field(default=0, description="举报人数（去重举报人，COUNT(DISTINCT reportMid)，2.40.0）")
-    detail: ResourceDetail | None = Field(default=None, description="资源详情（非动态资源经 RPC 获取，弱依赖可空；2.18.0）")
+    commentCount: int = Field(
+        default=0, description="评论数（dynamic 时=动态统计；非动态资源无评论，恒为 0）"
+    )
+    repostCount: int = Field(
+        default=0, description="转发数（dynamic 时=动态统计；非动态资源无转发，恒为 0）"
+    )
+    viewCount: int = Field(
+        default=0,
+        description="浏览数（dynamic 与非动态统一=TInteractionStat.viewCount）",
+    )
+    reportCount: int = Field(
+        default=0, description="被举报次数（累计，COUNT(*)，2.40.0）"
+    )
+    reportPeopleCount: int = Field(
+        default=0,
+        description="举报人数（去重举报人，COUNT(DISTINCT reportMid)，2.40.0）",
+    )
+    detail: ResourceDetail | None = Field(
+        default=None,
+        description="资源详情（非动态资源经 RPC 获取，弱依赖可空；2.18.0）",
+    )
 
 
 @auto_str
 class InteractionStatusResp(SQLModel):
     """批量交互态查询响应。"""
 
-    items: list[InteractionStatusItem] = Field(default_factory=list, description="各资源交互态")
+    items: list[InteractionStatusItem] = Field(
+        default_factory=list, description="各资源交互态"
+    )
 
 
 __all__ = ["InteractionResource", "InteractionStatusItem", "InteractionStatusResp"]

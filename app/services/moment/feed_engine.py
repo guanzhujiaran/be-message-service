@@ -28,6 +28,7 @@
 - 渲染：由调用方（Provider）按 ``bizType`` 分发（dynamic → ``TMoment`` 内容模块；
   其他 → RPC 详情）。
 """
+
 from bili_common.models import InteractionBizTypeEnum
 
 from datetime import datetime, timedelta

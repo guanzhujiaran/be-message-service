@@ -196,7 +196,9 @@ def audit_text(
         hit_categories=hit_categories,
         links=links,
         risk=risk,
-        reason="自动审核通过" if not low_hits else f"通过（记录低风险词：{_hits_reason(hit_words, hit_categories)}）",
+        reason="自动审核通过"
+        if not low_hits
+        else f"通过（记录低风险词：{_hits_reason(hit_words, hit_categories)}）",
     )
 
 

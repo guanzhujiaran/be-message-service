@@ -281,9 +281,7 @@ class DmSessionObject:
 
     # ==================== 发送 ====================
 
-    async def send(
-        self, req: DmSendReq, sender_name: str | None = None
-    ) -> DmSendResp:
+    async def send(self, req: DmSendReq, sender_name: str | None = None) -> DmSendResp:
         """以 self.owner_mid 身份向 self.talker_mid 发送一条私信（写扩散）。"""
         sender_mid = self.owner_mid
         receiver_mid = self.talker_mid
@@ -305,7 +303,9 @@ class DmSessionObject:
         # ---- 0. 先审后发开关 ----
         is_auditing = settings.dm_pre_audit
         audit_state = (
-            ResourceAuditStatusEnum.AUDITING if is_auditing else ResourceAuditStatusEnum.NORMAL
+            ResourceAuditStatusEnum.AUDITING
+            if is_auditing
+            else ResourceAuditStatusEnum.NORMAL
         )
 
         # ---- 拦截：任一向黑名单关系 → 直接拒绝发送 ----
@@ -589,7 +589,10 @@ class DmSessionObject:
         for r in rows:
             if r.msg_status is DmMsgStatusEnum.RECALLED:
                 content, ready = None, True
-            elif r.auditStatus in (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN):
+            elif r.auditStatus in (
+                ResourceAuditStatusEnum.REJECTED,
+                ResourceAuditStatusEnum.HIDDEN,
+            ):
                 content = (
                     "[该消息已被管理员下架]"
                     if r.auditStatus is ResourceAuditStatusEnum.HIDDEN
@@ -777,9 +780,7 @@ class DmSessionObject:
 
     # ==================== 内部方法 ====================
 
-    async def _is_stranger(
-        self, receiver_mid: int, sender_mid: int
-    ) -> bool:
+    async def _is_stranger(self, receiver_mid: int, sender_mid: int) -> bool:
         """判断发送者对接收者而言是否为陌生人。
 
         判定规则（任一成立即为熟人）：
@@ -1112,14 +1113,18 @@ class DmInbox:
         # 拦截后所有 STRANGER 分类行的 relation 都是 STRANGER，但用
         # session_type 区分能避免与「被接收方接受但尚未回过消息的
         # 陌生人 SINGLE 会话」混淆。
-        agg_stmt = select(
-            DmSession.session_type,
-            func.coalesce(func.sum(DmSession.unread_count), 0),
-            func.count(),
-        ).where(
-            DmSession.owner_mid == self.owner_mid,
-            DmSession.is_deleted == False,
-        ).group_by(DmSession.session_type)
+        agg_stmt = (
+            select(
+                DmSession.session_type,
+                func.coalesce(func.sum(DmSession.unread_count), 0),
+                func.count(),
+            )
+            .where(
+                DmSession.owner_mid == self.owner_mid,
+                DmSession.is_deleted == False,
+            )
+            .group_by(DmSession.session_type)
+        )
         agg_map: dict[str, tuple[int, int]] = {
             str(st): (int(ucnt or 0), int(cnt or 0))
             for st, ucnt, cnt in (await self.session.exec(agg_stmt)).all()

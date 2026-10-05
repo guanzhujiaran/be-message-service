@@ -1,8 +1,12 @@
-"""用户注销 MQ 消费处理。
+"""[已废弃] 用户注销 MQ 消费处理。
 
-注销接口只投递消息，真实删除由本 handler 异步执行：
-调用 `PptrUser(mid=uid).deactivate()` 物理删除 pptr 四表 + 彻底清除
-be-message 业务数据。
+两阶段注销上线后，注销接口（/deactivate、/admin/deactivate）不再投递
+``message.user.deactivate``，而是写 MySQL 冷静期记录；到期物理删除由定时任务
+``app.tasks.scheduler.deactivate_expire_job`` 驱动（并同步删除 Casdoor）。
+
+本 handler 保留仅为兼容队列中可能残留的历史消息：收到后仍执行一次幂等的本地物理
+删除（PptrUser.deactivate），不涉及 Casdoor。待确认线上无残留消息后可连同
+publisher.publish_user_deactivate 与消息路由一并清理。
 
 ack 策略（MANUAL）：
 - 成功 → ack；
@@ -17,7 +21,9 @@ from app.models.schemas import UserDeactivatePayload
 from app.services.user.account import PptrUser
 
 
-async def handle_user_deactivate(payload: UserDeactivatePayload, msg: RabbitMessage) -> None:
+async def handle_user_deactivate(
+    payload: UserDeactivatePayload, msg: RabbitMessage
+) -> None:
     """消费注销消息，执行完整删除流程。"""
     uid = payload.uid
     try:

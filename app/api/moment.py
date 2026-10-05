@@ -44,13 +44,13 @@ from fastapi import APIRouter, Header, Query, Request
 from app.models.str_int import StrInt
 
 from app.core.database import SessionDep
-from app.dependencies import RequiredUser, OptionalUser, RootUser
+from app.dependencies import ActiveUser, RequiredUser, OptionalUser, RootUser
 from app.models import StandardResponse
 from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.interaction import (
     InteractionStatusItem,
     InteractionStatusResp,
-    )
+)
 from app.models.schemas.mq import InteractionViewPayload
 from app.models.schemas.moment import (
     MomentAtListResp,
@@ -80,7 +80,7 @@ from app.models.schemas.moment import (
     MomentTopReq,
     MomentTopResp,
     MomentTopicDetailResp,
-    )
+)
 from app.services.message.infrastructure.publisher import publish_interaction_view
 from app.services.interaction_actions import get_biz
 from app.services.interaction_actions.interaction_status import (
@@ -118,7 +118,7 @@ def _client_ctx(
 )
 async def create_dynamic(
     session: SessionDep,
-    user: RequiredUser,
+    user: ActiveUser,
     req: MomentCreateReq,
     request: Request,
     user_agent: str | None = Header(default=None, alias="user-agent"),
@@ -367,7 +367,9 @@ async def share(
 async def interaction_status(
     session: SessionDep,
     user: OptionalUser,
-    bizType: InteractionBizTypeEnum = Query(description="资源类型（InteractionBizTypeEnum 值）"),
+    bizType: InteractionBizTypeEnum = Query(
+        description="资源类型（InteractionBizTypeEnum 值）"
+    ),
     bizIds: str = Query(description="资源 id 列表（逗号分隔，限 50 个）"),
 ) -> StandardResponse[InteractionStatusResp]:
     """批量互动态（2.60.0 起匿名可读，计划书 §5.18）。
@@ -406,7 +408,9 @@ async def interaction_status_detail(
     session: SessionDep,
     user: OptionalUser,
     biz_id: str,
-    bizType: InteractionBizTypeEnum = Query(description="资源类型（InteractionBizTypeEnum 值）"),
+    bizType: InteractionBizTypeEnum = Query(
+        description="资源类型（InteractionBizTypeEnum 值）"
+    ),
 ) -> StandardResponse[InteractionStatusItem]:
     """查询单个资源互动状态；detail 页调用，查询后投递浏览 MQ 异步累计（2.23.1）。
 
@@ -521,10 +525,18 @@ def _parse_int_list(raw: str | None) -> list[int] | None:
 async def topic_square(
     session: SessionDep,
     user: OptionalUser,
-    page_size: int = Query(20, ge=1, le=50, description="单页条数（推荐流，对齐 feed ps）"),
-    last_showlist: str | None = Query(None, description="已展示的 topicId 列表（逗号分隔，服务端去重，上限 100）"),
-    keyword: str | None = Query(None, description="话题名关键词搜索（模糊匹配 topicName）"),
-    hot_only: bool = Query(False, description="仅返回热门话题（isHot=1），对齐 /topic/hot-search"),
+    page_size: int = Query(
+        20, ge=1, le=50, description="单页条数（推荐流，对齐 feed ps）"
+    ),
+    last_showlist: str | None = Query(
+        None, description="已展示的 topicId 列表（逗号分隔，服务端去重，上限 100）"
+    ),
+    keyword: str | None = Query(
+        None, description="话题名关键词搜索（模糊匹配 topicName）"
+    ),
+    hot_only: bool = Query(
+        False, description="仅返回热门话题（isHot=1），对齐 /topic/hot-search"
+    ),
 ) -> StandardResponse[MomentTopicSquareResp]:
     data = await MomentTopicService.topic_square(
         session,
@@ -546,10 +558,15 @@ async def topic_hot_search(
     user: OptionalUser,
     page: int = 1,  # 兼容旧调用（发布表单传 page=1），推荐流忽略
     page_size: int = Query(20, ge=1, le=50),
-    last_showlist: str | None = Query(None, description="已展示 topicId 列表（逗号分隔，去重）"),
+    last_showlist: str | None = Query(
+        None, description="已展示 topicId 列表（逗号分隔，去重）"
+    ),
 ) -> StandardResponse[MomentTopicSquareResp]:
     data = await MomentTopicService.topic_square(
-        session, page_size=page_size, last_showlist=_parse_int_list(last_showlist), hot_only=True
+        session,
+        page_size=page_size,
+        last_showlist=_parse_int_list(last_showlist),
+        hot_only=True,
     )
     return StandardResponse(data=data)
 
@@ -594,7 +611,8 @@ async def topic_feed(
         None, description="已展示的 dynId 列表（逗号分隔，recommend 去重，上限 100）"
     ),
     last_clicklist: str | None = Query(
-        None, description="已互动的 dynId 列表（逗号分隔，个性化反馈预留，当前不参与排序）"
+        None,
+        description="已互动的 dynId 列表（逗号分隔，个性化反馈预留，当前不参与排序）",
     ),
     uniq_id: str | None = Query(None, description="客户端唯一 ID（匿名随机排序种子）"),
 ) -> StandardResponse[MomentTopicFeedResp]:

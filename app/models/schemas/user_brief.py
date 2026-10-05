@@ -25,11 +25,11 @@ from typing import Annotated
 from sqlmodel import SQLModel
 
 from app.models.schemas.base import auto_str
-from app.models.schemas.visibility import Private, VisibilityMixin
+from bili_common.models.auto_str import Private
 
 
 @auto_str
-class UserBriefOut(SQLModel, VisibilityMixin):
+class UserBriefOut(SQLModel):
     """用户展示简档：他人可见字段 + 本人 / 管理员可见的私域字段。
 
     私域字段在他人视角下由序列化器自动剥离，装配层**不需要**（也不应该）
@@ -37,6 +37,9 @@ class UserBriefOut(SQLModel, VisibilityMixin):
     """
 
     mid: int
+    # B 站式用户简写字段（P2：关注/粉丝列表、行为时间线共用）：name=展示名，face=头像URL
+    name: str | None = None
+    face: str | None = None
     uname: str | None = None
     avatar: str | None = None
     level: int = 0

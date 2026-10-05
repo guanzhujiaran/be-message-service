@@ -34,7 +34,7 @@ from app.models.db import (
     TInteractionStat,
     TResourceFeed,
     TResourceReport,
-    )
+)
 from app.models.db.comment_tbl import CommentSubject
 from bili_common.models import InteractionBizTypeEnum
 from bili_common.models.report import ReportAuditStatusEnum
@@ -54,7 +54,7 @@ from app.models.schemas.moment import (
     MomentLikerListResp,
     MomentModule,
     MomentTopicRef,
-    )
+)
 from app.services.moment.feed_engine import (
     AuthorQualitySignal,
     FeedCandidate,
@@ -158,7 +158,9 @@ def _collect_lottery_ids(dyns: list[TMoment]) -> list[int]:
         for node in content:
             if not isinstance(node, dict):
                 continue
-            if node.get("type") == "RESOURCE" and _is_lottery_biz_type(node.get("bizType")):
+            if node.get("type") == "RESOURCE" and _is_lottery_biz_type(
+                node.get("bizType")
+            ):
                 _add(node.get("bizId"))
     return ids
 
@@ -260,7 +262,11 @@ async def _build_feed_item(
     # additional（附加卡）模块（2.21.0）：渲染于 desc 正文下方，只存 bizType+bizId，
     # name/cover/jumpUrl 由装配层 RPC 实时获取（弱依赖失败仅返回 bizType+bizId）
     if dyn.bizType and dyn.bizRid:
-        detail = (lottery_detail_map or {}).get(int(dyn.bizRid)) if dyn.bizType == InteractionBizTypeEnum.LOTTERY else None
+        detail = (
+            (lottery_detail_map or {}).get(int(dyn.bizRid))
+            if dyn.bizType == InteractionBizTypeEnum.LOTTERY
+            else None
+        )
         modules.append(
             MomentModule(
                 moduleType="additional",
@@ -344,15 +350,12 @@ async def _build_feed_item(
         auditRejectReason=dyn.auditRejectReason,
         # IP 属地：数据库无值（旧数据/未解析）时兜底为「未知」，不返回 None
         ipLocation=dyn.ipLocation or "未知",
-
         ipIsp=dyn.ipIsp,
         modules=modules,
     )
 
 
-async def _attach_authors(
-    session: AsyncSession, items: list[MomentFeedItem]
-) -> None:
+async def _attach_authors(session: AsyncSession, items: list[MomentFeedItem]) -> None:
     """批量回查作者信息并回填 author 模块（一次 IN 查询，无 N+1）。
 
     递归处理嵌套的 ``forward.srcMoment``（转发原动态的作者信息一并回填）。
@@ -380,9 +383,7 @@ async def _attach_authors(
                 m.face = b.avatar if b else None
 
 
-async def _attach_topics(
-    session: AsyncSession, items: list[MomentFeedItem]
-) -> None:
+async def _attach_topics(session: AsyncSession, items: list[MomentFeedItem]) -> None:
     """批量回查话题名称并回填 extend 模块（一次 IN 查询，无 N+1）。
 
     2.22.0 起 extend 模块含 ``topics[]`` 多话题数组，一并回填 topicName；
@@ -503,8 +504,7 @@ async def _load_like_states(
         return {}
     rows = (
         await session.exec(
-            select(TResourceLike.bizId)
-            .where(
+            select(TResourceLike.bizId).where(
                 col(TResourceLike.bizType) == InteractionBizTypeEnum.DYNAMIC,
                 col(TResourceLike.bizId).in_(moment_ids),
                 col(TResourceLike.mid) == viewer_mid,
@@ -886,9 +886,7 @@ class MomentFeedService:
         cand_ids = [r.bizId for r in res_rows]
         # 渲染所需动态主表（内容）批量一次拉取
         moment_rows = (
-            await session.exec(
-                select(TMoment).where(col(TMoment.dynId).in_(cand_ids))
-            )
+            await session.exec(select(TMoment).where(col(TMoment.dynId).in_(cand_ids)))
         ).all()
         moment_map = {r.dynId: r for r in moment_rows}
         cand_stats = await _load_stats(session, cand_ids)
@@ -1066,7 +1064,6 @@ class MomentFeedService:
             updateNum=0,
         )
 
-
     # ==================== 个人空间 Feed（P3-T2）====================
 
     @staticmethod
@@ -1088,12 +1085,16 @@ class MomentFeedService:
         page_size = min(max(1, page_size), 50)
         is_self = viewer_mid is not None and viewer_mid == host_mid
 
-        stmt = select(TMoment).where(col(TMoment.mid) == host_mid).where(
-            col(TMoment.deletedAt).is_(None)
+        stmt = (
+            select(TMoment)
+            .where(col(TMoment.mid) == host_mid)
+            .where(col(TMoment.deletedAt).is_(None))
         )
         if not is_self:
             # 访客：仅 normal + 2.46.0 可见范围为公开
-            stmt = stmt.where(col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL)
+            stmt = stmt.where(
+                col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL
+            )
             stmt = stmt.where(col(TMoment.pubTime).isnot(None))
             stmt = stmt.where(
                 col(TMoment.visibleScope) == MomentVisibleScopeEnum.PUBLIC
@@ -1199,7 +1200,9 @@ class MomentFeedService:
         moment_ids = list(dict.fromkeys(moment_ids))[:_DETAIL_BATCH_LIMIT]
 
         rows = (
-            await session.exec(select(TMoment).where(col(TMoment.dynId).in_(moment_ids)))
+            await session.exec(
+                select(TMoment).where(col(TMoment.dynId).in_(moment_ids))
+            )
         ).all()
         by_id = {r.dynId: r for r in rows}
 
@@ -1208,7 +1211,10 @@ class MomentFeedService:
             dyn = by_id.get(did)
             if dyn is None or dyn.deletedAt is not None:
                 continue
-            if dyn.auditStatus != ResourceAuditStatusEnum.NORMAL and dyn.mid != viewer_mid:
+            if (
+                dyn.auditStatus != ResourceAuditStatusEnum.NORMAL
+                and dyn.mid != viewer_mid
+            ):
                 continue
             visible.append(dyn)
 
@@ -1259,9 +1265,7 @@ class MomentFeedService:
         )
 
         dynamic_count = (
-            await session.exec(
-                select(func.count(TMoment.dynId)).where(*visible)
-            )
+            await session.exec(select(func.count(TMoment.dynId)).where(*visible))
         ).one()
 
         like_count = (
@@ -1370,9 +1374,7 @@ class MomentFeedService:
 
         # 2) 总数
         total: int = (
-            await session.exec(
-                select(func.count()).select_from(base.subquery())
-            )
+            await session.exec(select(func.count()).select_from(base.subquery()))
         ).one()
 
         # 3) 明细

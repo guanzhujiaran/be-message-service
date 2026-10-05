@@ -15,22 +15,28 @@ from app.core.database import SessionDep
 from app.dependencies import CurrentUser, RootUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
+from bili_common.models.auto_str import auto_str
 from app.services.admin.message_admin import MessageAdminService
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin"])
 
 
 class GrantAdminReq(BaseModel):
-    mid: StrInt = Query(..., description="被授予权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    mid: StrInt = Query(
+        ..., description="被授予权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
     # 管理端权限（per-biz 位掩码）：键=资源域文本（dynamic/dm/…），值=权限字 0~7
     biz_perms: dict[str, int] = {}
     note: str | None = None
 
 
 class RevokeAdminReq(BaseModel):
-    mid: StrInt = Query(..., description="被撤销权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）")
+    mid: StrInt = Query(
+        ..., description="被撤销权限的用户 mid（雪花 ID，StrInt 兼容前端 str 传参）"
+    )
 
 
+@auto_str
 class AdminItem(BaseModel):
     mid: int
     granted_by: int

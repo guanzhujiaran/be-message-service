@@ -104,6 +104,7 @@ def test_reload_words_takes_effect():
 
 # ---------------- 链接 / 域名 ----------------
 
+
 def test_link_blacklist_rejected(words_dir):
     (words_dir / "domains_blacklist.txt").write_text("spam.example\n", encoding="utf-8")
     result = audit_text("来这里看看 https://spam.example/a")
@@ -133,9 +134,12 @@ def test_disable_link_check(words_dir):
 
 # ---------------- 词库自带分类 ----------------
 
+
 def test_category_high_word_rejected(words_dir):
     """分类词库命中 → 按 levels.json 映射高风险 → 自动拒绝，带命中分类。"""
-    (words_dir / _CAT_DIRNAME / "涉政类.txt").write_text("某个涉政演示词\n", encoding="utf-8")
+    (words_dir / _CAT_DIRNAME / "涉政类.txt").write_text(
+        "某个涉政演示词\n", encoding="utf-8"
+    )
     (words_dir / _LEVELS_FILENAME).write_text('{"涉政类": "high"}', encoding="utf-8")
     word_filter.load(force=True)
 
@@ -161,6 +165,7 @@ def test_category_default_medium_needs_manual(words_dir):
 
 
 # ---------------- 脱敏（打码） ----------------
+
 
 def test_mask_word():
     from app.services.audit.mask import mask_word
@@ -190,13 +195,18 @@ def test_reject_reason_contains_masked_words():
 
 # ---------------- 误杀防护（词库切分 / 白名单 / 单字词） ----------------
 
+
 def test_phrase_with_space_not_split_into_common_fragments(words_dir):
     """回归：带空格的短语（「燃烧弹 制作」）不得切出「制作」等通用碎片词误杀。
 
     同时保留短语本身与其「去空白紧凑形式」的匹配能力。
     """
-    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text("燃烧弹 制作\n", encoding="utf-8")
-    (words_dir / _LEVELS_FILENAME).write_text('{"涉枪涉爆类": "high"}', encoding="utf-8")
+    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text(
+        "燃烧弹 制作\n", encoding="utf-8"
+    )
+    (words_dir / _LEVELS_FILENAME).write_text(
+        '{"涉枪涉爆类": "high"}', encoding="utf-8"
+    )
     word_filter.load(force=True)
 
     assert audit_text("感谢@某某 制作").passed  # 通用碎片词不再单独命中
@@ -208,8 +218,12 @@ def test_phrase_with_space_not_split_into_common_fragments(words_dir):
 
 def test_whitelist_exempts_common_word(words_dir):
     """白名单词只在「整词相等」时豁免，长词仍正常命中。"""
-    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text("制作\n炸药配方与制作\n", encoding="utf-8")
-    (words_dir / _LEVELS_FILENAME).write_text('{"涉枪涉爆类": "high"}', encoding="utf-8")
+    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text(
+        "制作\n炸药配方与制作\n", encoding="utf-8"
+    )
+    (words_dir / _LEVELS_FILENAME).write_text(
+        '{"涉枪涉爆类": "high"}', encoding="utf-8"
+    )
     (words_dir / "whitelist.txt").write_text("制作\n", encoding="utf-8")
     word_filter.load(force=True)
 
@@ -221,8 +235,12 @@ def test_whitelist_exempts_common_word(words_dir):
 
 def test_single_char_word_ignored(words_dir):
     """单字词无判别力（「枪」会误杀「水枪大战」），不参与匹配。"""
-    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text("枪\n手枪\n", encoding="utf-8")
-    (words_dir / _LEVELS_FILENAME).write_text('{"涉枪涉爆类": "high"}', encoding="utf-8")
+    (words_dir / _CAT_DIRNAME / "涉枪涉爆类.txt").write_text(
+        "枪\n手枪\n", encoding="utf-8"
+    )
+    (words_dir / _LEVELS_FILENAME).write_text(
+        '{"涉枪涉爆类": "high"}', encoding="utf-8"
+    )
     word_filter.load(force=True)
 
     assert audit_text("水枪大战").passed
@@ -232,6 +250,7 @@ def test_single_char_word_ignored(words_dir):
 
 
 # ---------------- 通知文案脱敏 ----------------
+
 
 async def test_notice_excerpt_masked(monkeypatch):
     """回归：通知里的原文摘录必须先打码，不得把完整敏感词原样下发给作者。"""

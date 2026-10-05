@@ -28,6 +28,7 @@ _DEFAULTS: dict[str, bool] = {
     "push_enabled": True,
 }
 
+
 class SettingService:
     """消息设置读写。"""
 
@@ -141,7 +142,12 @@ class SettingService:
             return
         stmt = mysql_insert(UserMessageSetting.__table__).values(
             [
-                {"mid": mid, "created_at": datetime.now(), "updated_at": datetime.now(), **_DEFAULTS}
+                {
+                    "mid": mid,
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now(),
+                    **_DEFAULTS,
+                }
                 for mid in set(mids)
             ]
         )

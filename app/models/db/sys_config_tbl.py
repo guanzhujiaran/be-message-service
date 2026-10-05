@@ -37,7 +37,9 @@ class SysConfig(TimestampMixin, table=True):
         default=None, max_length=255, description="备注（管理端展示，说明用途）"
     )
     updatedBy: int = Field(
-        default=0, sa_type=BIGINT, description="最后修改该配置的管理员 mid（0=系统 / 未知）"
+        default=0,
+        sa_type=BIGINT,
+        description="最后修改该配置的管理员 mid（0=系统 / 未知）",
     )
 
 

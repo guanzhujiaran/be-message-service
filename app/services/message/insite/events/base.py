@@ -20,6 +20,7 @@
 幂等：``dedup_key``（唯一索引）由 ``mid:event_type:actor_mid:source_type:source_id:biz_id``
 摘要而来。MQ 重投、前端重试、爬虫重复扫描都会被数据库直接拦掉。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -68,6 +69,7 @@ from .constants import (
     _MAX_USERS_PER_ITEM,
 )
 from .registry import EVENT_REGISTRY
+
 # 读取侧公共装配：资源快照批量回捞 / @提及昵称替换（与举报审核共用，base_biz.py）
 from app.services.interaction_actions.base_biz import (
     batch_get_resource_snapshots,
@@ -208,10 +210,10 @@ class CommentLocate:
     """
 
     resource_type: int
-    resource_id: str = ""
-    root_id: str = ""
-    source_id: str = ""
-    target_id: str = ""
+    resource_id: int = 0
+    root_id: int = 0
+    source_id: int = 0
+    target_id: int = 0
     source_content: str = ""
     target_content: str = ""
     source_mid: int = 0
@@ -235,12 +237,12 @@ def is_comment_anchored(
     return source_type_to_biz_type(source_type) is InteractionBizTypeEnum.COMMENT
 
 
-def _comment_author(ctx: "MsgfeedBuildContext", rpid: str) -> int:
+def _comment_author(ctx: "MsgfeedBuildContext", rpid: int) -> int:
     """按 rpid 取评论作者 mid（读 ``CommentBiz`` 批量回捞的评论快照，计划书 §5.12）。
 
     快照缺失（评论不存在 / 已被物理删除）或无作者时返回 ``0``，前端据此跳过作者展示。
     """
-    res = ctx.comment_resources.get(int(rpid)) if rpid and rpid.isdigit() else None
+    res = ctx.comment_resources.get(rpid) if rpid else None
     if res is None or res.authorMid is None:
         return 0
     return int(res.authorMid)
@@ -373,7 +375,9 @@ class BaseEvent(ABC):
         顺序：消息设置闸门 → 自赞过滤 → 黑名单静默 → dedup_key 幂等 → 落库。
         """
         # 闸门一：用户是否愿意接收这类提醒
-        accepted = await SettingService.accept_event(session, self.mid, self.setting_gate)
+        accepted = await SettingService.accept_event(
+            session, self.mid, self.setting_gate
+        )
         if not accepted:
             logger.debug(f"用户 {self.mid} 已关闭 {self.event_type} 提醒，跳过")
             return EventReportResp(accepted=False, duplicated=False)
@@ -387,7 +391,9 @@ class BaseEvent(ABC):
         # 不再依赖底层枚举元数据。@ 本身仍然允许（动态 AT 节点 / 评论 @ 关系照常落库与渲染），
         # 这里只拦「提醒投递」这一步；双向任一向拉黑即静默。
         if self.blocked_silent:
-            if await FollowService.is_blocked_relation(session, self.mid, self.actor_mid):
+            if await FollowService.is_blocked_relation(
+                session, self.mid, self.actor_mid
+            ):
                 logger.debug(
                     f"用户 {self.mid} 与 {self.actor_mid} 存在黑名单关系，"
                     f"跳过 {self.event_type} 提醒"
@@ -476,7 +482,7 @@ class BaseEvent(ABC):
         biz_id = latest.biz_id or ""
         return CommentLocate(
             resource_type=biz_type.value,
-            resource_id=biz_id if biz_id.isdigit() else "",
+            resource_id=int(biz_id) if biz_id.isdigit() else 0,
         )
 
     def _locate_comment(
@@ -519,13 +525,13 @@ class BaseEvent(ABC):
         if idx is None:
             return CommentLocate(
                 resource_type=resource_type,
-                resource_id=biz_id if biz_id.isdigit() else "",
+                resource_id=int(biz_id) if biz_id.isdigit() else 0,
                 comment_deleted=True,
             )
         if idx.auditStatus is not ResourceAuditStatusEnum.NORMAL:
             return CommentLocate(
                 resource_type=resource_type,
-                resource_id=str(idx.oid),
+                resource_id=idx.oid,
                 comment_deleted=True,
             )
 
@@ -533,20 +539,16 @@ class BaseEvent(ABC):
         parent_pk = idx.parent or 0
         target_pk = parent_pk if parent_pk else root_pk
         # 触发评论自身 rpid（一级评论时 root_id 与之相同，target_id 为空）
-        source_id = biz_id
-        target_id = str(target_pk) if target_pk else ""
+        source_id = int(biz_id) if biz_id.isdigit() else 0
+        target_id = target_pk
         return CommentLocate(
             resource_type=resource_type,
-            resource_id=str(idx.oid),
-            root_id=str(root_pk) if root_pk else source_id,
+            resource_id=idx.oid,
+            root_id=root_pk if root_pk else source_id,
             source_id=source_id,
             target_id=target_id,
-            source_content=ctx.comment_content.get(int(biz_id), ""),
-            target_content=(
-                ctx.comment_content.get(int(target_id), "")
-                if target_id and target_id.isdigit()
-                else ""
-            ),
+            source_content=ctx.comment_content.get(source_id, ""),
+            target_content=ctx.comment_content.get(target_id, ""),
             source_mid=_comment_author(ctx, source_id),
             target_mid=_comment_author(ctx, target_id),
         )
@@ -610,9 +612,7 @@ class BaseEvent(ABC):
             EventMessage.source_id,
         )
 
-        subq = (
-            select(*group_cols).where(*conditions).group_by(*group_cols).subquery()
-        )
+        subq = select(*group_cols).where(*conditions).group_by(*group_cols).subquery()
         total = int(
             (await session.exec(select(func.count()).select_from(subq))).one() or 0
         )
@@ -683,7 +683,9 @@ class BaseEvent(ABC):
                         mid=r.actor_mid,
                         nickname=info.uname if info else None,
                         avatar=info.avatar if info else None,
-                        fans=int(getattr(info, "follower_count", 0) or 0) if info else 0,
+                        fans=int(getattr(info, "follower_count", 0) or 0)
+                        if info
+                        else 0,
                         follow=False,
                     )
                 )
@@ -972,9 +974,7 @@ class BaseEvent(ABC):
             comment_author_names = {
                 m: nickname_map[m] for m in author_mids if m in nickname_map
             }
-            at_nickname_map = {
-                m: nickname_map[m] for m in at_mids if m in nickname_map
-            }
+            at_nickname_map = {m: nickname_map[m] for m in at_mids if m in nickname_map}
             if at_nickname_map:
                 comment_content = {
                     rpid: replace_at_mentions(msg, at_nickname_map)
@@ -1141,7 +1141,9 @@ class BaseEvent(ABC):
 
         now = datetime.now()
         result = await session.exec(
-            table.update().where(*conditions).values(  # type: ignore[call-overload]
+            table.update()
+            .where(*conditions)
+            .values(  # type: ignore[call-overload]
                 is_read=True, read_at=now, updated_at=now
             )
         )

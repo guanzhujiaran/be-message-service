@@ -90,10 +90,44 @@ async def get_admin_user(
     return auth
 
 
+async def get_active_user(
+    auth: Annotated[AuthInfo, Depends(get_current_user)],
+) -> AuthInfo:
+    """活跃用户依赖：在登录态基础上拒绝处于注销冷静期的账号。
+
+    供敏感写接口使用（发布 / 互动 / 资料修改等）。查 MySQL 注销状态表，
+    cooling 状态抛 403，提示重新登录恢复。只读纯头解析的 `get_current_user`
+    保持不加库查询，避免拖慢所有接口。
+    """
+    # 局部导入避免循环依赖（service → models，dependencies 在启动早期被多处导入）
+    from loguru import logger
+
+    from app.core.database import new_session
+    from app.services.user import deactivation_service
+
+    try:
+        async with new_session() as session:
+            deactivated = await deactivation_service.is_deactivated(
+                session, int(auth.mid)
+            )
+    except Exception as e:  # noqa: BLE001 - 查询失败不阻断正常业务，降级放行
+        logger.warning(f"注销态查询失败，降级放行 mid={auth.mid}: {e}")
+        deactivated = False
+    if deactivated:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账号已注销，重新登录即可恢复",
+        )
+    return auth
+
+
 # CurrentUser 与 RequiredUser 等价：get_current_user 在缺 x-bili-mid 且
 # JWT 回退也失败时已直接抛 401，并不存在「可选 / 匿名」分支，故两者指向同一依赖。
 CurrentUser = Annotated[AuthInfo, Depends(get_current_user)]
 RequiredUser = CurrentUser
+# 敏感写接口用：登录态 + 非注销冷静期
+ActiveUser = Annotated[AuthInfo, Depends(get_active_user)]
+
 
 # 可选用户（匿名可读）：允许未登录访问的纯浏览/发现类只读接口使用。
 # 复用 get_current_user（保留 x-bili-mid 缺失时 JWT 回退），仅把「未登录」异常

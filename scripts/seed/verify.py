@@ -3,6 +3,7 @@
 全互动阶段的断言失败会「响亮报错」（``logger.error``）以暴露代码 bug；
 @ 通知属弱依赖（黑名单静默 / 消息设置闸门 / 幂等去重）只 warning。
 """
+
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 
@@ -36,7 +37,9 @@ async def _verify_at_event(client: SeedClient, at_mid: int, resource_id: str) ->
             f"（共 {len(items)} 条；可能是黑名单静默 / 消息设置闸门 / 幂等去重，均属预期）"
         )
         return
-    logger.success(f"[@通知] 验证通过：用户 {at_mid} 已收到 resource_id={resource_id} 的 @ 提醒")
+    logger.success(
+        f"[@通知] 验证通过：用户 {at_mid} 已收到 resource_id={resource_id} 的 @ 提醒"
+    )
 
 
 async def _verify_dynamic_at(client: SeedClient, viewer_mid: int, dyn_id: int) -> None:
@@ -63,7 +66,9 @@ async def _verify_dynamic_at(client: SeedClient, viewer_mid: int, dyn_id: int) -
         return
     joined = "".join(texts)
     missed = [
-        n.get("name") for n in at_nodes if n.get("name") and f"@{n['name']}" not in joined
+        n.get("name")
+        for n in at_nodes
+        if n.get("name") and f"@{n['name']}" not in joined
     ]
     if missed:
         logger.error(f"[动态@] dyn={dyn_id} 正文未渲染 @昵称: {missed}")

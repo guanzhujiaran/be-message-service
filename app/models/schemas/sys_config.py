@@ -13,6 +13,8 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from app.models.schemas.base import auto_str, SnowflakeInt
+
 
 # ==================== 配置值模型 ====================
 
@@ -46,6 +48,7 @@ class CommentRateLimitConfig(SQLModel):
 # ==================== 管理端接口模型 ====================
 
 
+@auto_str
 class SysConfigItem(SQLModel):
     """单个运行时配置项（管理端读）。
 
@@ -56,9 +59,13 @@ class SysConfigItem(SQLModel):
     key: str
     value: dict
     remark: str | None = None
-    updatedBy: int = Field(default=0, description="最后修改者 mid")
+    updatedBy: SnowflakeInt = Field(
+        default=0, description="最后修改者 mid（字符串版见 updatedBy_str）"
+    )
     updated_at: datetime | None = Field(default=None, description="最后更新时间")
-    isDefault: bool = Field(default=False, description="是否仍是 settings 默认值（未写入 DB）")
+    isDefault: bool = Field(
+        default=False, description="是否仍是 settings 默认值（未写入 DB）"
+    )
 
 
 class SysConfigListResp(SQLModel):

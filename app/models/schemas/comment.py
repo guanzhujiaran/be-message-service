@@ -21,7 +21,8 @@ from app.models.enums import (
 from app.models.schemas.audit import AuditSourceInfo
 from app.models.schemas.base import auto_str
 from app.models.schemas.user_brief import UserBriefOut
-from app.models.schemas.visibility import Private, VisibilityMixin
+from bili_common.models.auto_str import Private
+from app.models.str_int import StrInt
 
 # ==================== 公共片段 ====================
 
@@ -43,8 +44,8 @@ __all__ = ["CommentUserBrief"]
 class CommentItem(SQLModel):
     """一条评论的完整视图模型。"""
 
-    rpid: str = Field(description="评论id（字符串）")
-    oid: str = Field(description="所属业务实体id（字符串）")
+    rpid: int = Field(description="评论id（雪花ID；字符串版见 rpid_str）")
+    oid: int = Field(description="所属业务实体id（雪花ID；字符串版见 oid_str）")
     type: InteractionBizTypeEnum
 
     mid: int = Field(description="发布者mid")
@@ -52,24 +53,31 @@ class CommentItem(SQLModel):
         default=None, description="发布者信息快照，快照缺失时为 null"
     )
 
-    root: str = Field(default="0", description="根评论rpid，'0' 表示一级评论")
-    parent: str = Field(default="0", description="父评论rpid，'0' 表示一级评论")
-    dialog: str = Field(default="0", description="楼中楼会话串id")
+    root: int = Field(
+        default=0, description="根评论rpid，0 表示一级评论；字符串版见 root_str"
+    )
+    parent: int = Field(
+        default=0, description="父评论rpid，0 表示一级评论；字符串版见 parent_str"
+    )
+    dialog: int = Field(
+        default=0, description="楼中楼会话串id（字符串版见 dialog_str）"
+    )
     floor: int = Field(default=0, description="楼层号")
     reply_to: CommentUserBrief | None = Field(
         default=None, description="被回复者，楼中楼展示「回复 @xxx」"
     )
 
     message: str = Field(
-        default="", description="正文，@ 已渲染为 @昵称 文本（对齐 B 站 content.message）"
+        default="",
+        description="正文，@ 已渲染为 @昵称 文本（对齐 B 站 content.message）",
     )
     pictures: list[str] = Field(default_factory=list, description="图片URL数组")
     at_users: list[CommentUserBrief] = Field(
         default_factory=list, description="被@用户信息数组（对齐 B 站 content.members）"
     )
     # @ 昵称 → mid 映射（对齐 B 站 content.at_name_to_mid / at_name_to_mid_str）
-    at_name_to_mid: dict[str, int] = Field(
-        default_factory=dict, description="被@用户：昵称 → mid 映射"
+    at_name_to_mid: dict[str, StrInt] = Field(
+        default_factory=dict, description="被@用户：昵称 → mid 映射（前端传字符串 mid）"
     )
     at_name_to_mid_str: dict[str, str] = Field(
         default_factory=dict, description="被@用户：昵称 → mid 字符串映射"
@@ -117,10 +125,10 @@ CommentItem.model_rebuild()
 class CommentAddReq(SQLModel):
     """发表评论。"""
 
-    oid: str = Field(description="业务实体id（字符串）")
+    oid: StrInt = Field(description="业务实体id（前端传字符串，后端归一为 int）")
     type: InteractionBizTypeEnum = Field(description="业务实体类型")
-    root: str = Field(default="0", description="根评论rpid；发一级评论传 '0'")
-    parent: str = Field(default="0", description="父评论rpid；发一级评论传 '0'")
+    root: StrInt = Field(default=0, description="根评论rpid；发一级评论传 0")
+    parent: StrInt = Field(default=0, description="父评论rpid；发一级评论传 0")
     message: str = Field(
         min_length=1,
         description="正文；@ 以 @昵称 文本表达（对齐 B 站），服务端会按 at_name_to_mid 转为 @{mid} 占位符存储",
@@ -130,8 +138,8 @@ class CommentAddReq(SQLModel):
     )
     at_mids: list[int] = Field(default_factory=list, description="被@用户的mid列表")
     # @ 昵称 → mid 映射（对齐 B 站 content.at_name_to_mid），服务端据此把正文里的 @昵称 归一为 @{mid}
-    at_name_to_mid: dict[str, int] = Field(
-        default_factory=dict, description="被@用户：昵称 → mid 映射"
+    at_name_to_mid: dict[str, StrInt] = Field(
+        default_factory=dict, description="被@用户：昵称 → mid 映射（前端传字符串 mid）"
     )
     emote_meta: dict | None = Field(default=None, description="表情包元信息")
     up_mid: int | None = Field(
@@ -142,9 +150,9 @@ class CommentAddReq(SQLModel):
 
 @auto_str
 class CommentAddResp(SQLModel):
-    rpid: str = Field(description="新评论id（字符串）")
-    root: str = "0"
-    parent: str = "0"
+    rpid: int = Field(description="新评论id（雪花ID；字符串版见 rpid_str）")
+    root: int = 0
+    parent: int = 0
     state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     need_audit: bool = Field(
         default=False, description="是否进入待审核（仅作者本人可见）"
@@ -153,7 +161,7 @@ class CommentAddResp(SQLModel):
 
 @auto_str
 class CommentDelReq(SQLModel):
-    rpid: str = Field(description="待删除的评论id（字符串）")
+    rpid: StrInt = Field(description="待删除的评论id（前端传字符串，后端归一为 int）")
 
 
 @auto_str
@@ -178,12 +186,12 @@ class CommentListResp(SQLModel):
     page_num: int = 1
     page_size: int = 20
     subject_state: CommentSubjectStateEnum = CommentSubjectStateEnum.NORMAL
-    focus_rpid: str | None = Field(
+    focus_rpid: int | None = Field(
         default=None,
         description="本次请求携带 focus_rpid 时回填，指向最终要定位的评论"
         "（可能是一级评论本身，也可能是楼中楼中的某条子评论）。",
     )
-    focus_root: str | None = Field(
+    focus_root: int | None = Field(
         default=None,
         description="focus_rpid 所属的根评论 rpid。当 focus 目标是楼中楼时，"
         "根评论会被提到列表顶部，前端据此展开楼中楼并滚动到 focus_rpid。",
@@ -200,7 +208,7 @@ class CommentSubListResp(SQLModel):
     """楼中楼（子评论）列表。"""
 
     items: list[CommentItem] = Field(default_factory=list)
-    root: str = Field(default="0", description="所属根评论rpid")
+    root: int = Field(default=0, description="所属根评论rpid（字符串版见 root_str）")
     total: int = Field(default=0, description="该根评论下的子评论总数")
     page_num: int = 1
     page_size: int = 20
@@ -210,7 +218,7 @@ class CommentSubListResp(SQLModel):
 class CommentCountResp(SQLModel):
     """评论区计数。"""
 
-    oid: str
+    oid: int
     type: InteractionBizTypeEnum
     root_count: int = 0
     all_count: int = 0
@@ -219,11 +227,14 @@ class CommentCountResp(SQLModel):
 
 # ==================== 最新评论（首页，按资源类型分组） ====================
 
+
 @auto_str
 class CommentLatestGroup(SQLModel):
     """某资源类型下的最新根评论分组（首页「最新评论」用）。"""
 
-    type: InteractionBizTypeEnum = Field(description="资源类型（dynamic / lottery / rpa_action ...）")
+    type: InteractionBizTypeEnum = Field(
+        description="资源类型（dynamic / lottery / rpa_action ...）"
+    )
     comments: list[CommentItem] = Field(
         default_factory=list,
         description="该类型最新根评论（只含根评论，不含楼中楼子评论）",
@@ -235,7 +246,8 @@ class CommentLatestResp(SQLModel):
     """首页最新评论（按资源类型分组展示）。"""
 
     groups: list[CommentLatestGroup] = Field(
-        default_factory=list, description="各资源类型下的最新根评论分组，仅有数据的类型才会出现"
+        default_factory=list,
+        description="各资源类型下的最新根评论分组，仅有数据的类型才会出现",
     )
 
 
@@ -246,13 +258,13 @@ class CommentLatestResp(SQLModel):
 class CommentActionReq(SQLModel):
     """点赞 / 点踩 / 取消。"""
 
-    rpid: str = Field(description="评论id（字符串）")
+    rpid: StrInt = Field(description="评论id（雪花ID，前端传字符串，后端归一为 int）")
     action: CommentActionEnum = Field(description="0取消 / 1点赞 / 2点踩")
 
 
 @auto_str
 class CommentActionResp(SQLModel):
-    rpid: str
+    rpid: int
     action: CommentActionEnum = CommentActionEnum.NONE
     like_count: int = 0
     hate_count: int = 0
@@ -265,33 +277,43 @@ class CommentActionResp(SQLModel):
 class CommentReportReq(SQLModel):
     """举报评论。"""
 
-    rpid: str = Field(description="被举报评论id（字符串）")
-    reasonType: MomentReportReasonEnum = Field(description="举报原因类型（复用 MomentReportReasonEnum）")
-    reasonDesc: str | None = Field(default=None, max_length=500, description="补充描述（选填）")
+    rpid: StrInt = Field(description="被举报评论id（前端传字符串，后端归一为 int）")
+    reasonType: MomentReportReasonEnum = Field(
+        description="举报原因类型（复用 MomentReportReasonEnum）"
+    )
+    reasonDesc: str | None = Field(
+        default=None, max_length=500, description="补充描述（选填）"
+    )
 
 
 @auto_str
 class CommentReportResp(SQLModel):
     """举报评论响应。"""
 
-    rpid: str = Field(description="被举报评论id（字符串）")
-    reported: bool = Field(default=False, description="本次是否新增举报（True=首次，False=当日/重复已报）")
-    switched_to_auditing: bool = Field(default=False, description="本次举报后是否已触发转审核（state→auditing）")
+    rpid: int = Field(description="被举报评论id（雪花ID；字符串版见 rpid_str）")
+    reported: bool = Field(
+        default=False, description="本次是否新增举报（True=首次，False=当日/重复已报）"
+    )
+    switched_to_auditing: bool = Field(
+        default=False, description="本次举报后是否已触发转审核（state→auditing）"
+    )
 
 
 @auto_str
 class CommentTopReq(SQLModel):
     """置顶 / 取消置顶（内容作者或管理员）。"""
 
-    oid: str = Field(description="业务实体id（字符串）")
+    oid: StrInt = Field(description="业务实体id（前端传字符串，后端归一为 int）")
     type: InteractionBizTypeEnum = Field(description="业务实体类型")
-    rpid: str = Field(description="要置顶 / 取消置顶的评论id（字符串，必须是根评论）")
+    rpid: StrInt = Field(description="要置顶 / 取消置顶的评论id，必须是根评论")
     top: bool = Field(default=True, description="True 置顶 / False 取消置顶")
 
 
 @auto_str
 class CommentTopResp(SQLModel):
-    top_rpid: str | None = Field(default=None, description="当前置顶评论id")
+    top_rpid: int | None = Field(
+        default=None, description="当前置顶评论id（字符串版见 top_rpid_str）"
+    )
     success: bool = True
 
 
@@ -299,7 +321,7 @@ class CommentTopResp(SQLModel):
 class CommentAuditReq(SQLModel):
     """管理端人工审核 / 上下架。"""
 
-    rpid: str = Field(description="待处理评论id（字符串）")
+    rpid: StrInt = Field(description="待处理评论id（前端传字符串，后端归一为 int）")
     # 通过 / 驳回 / 下架 / 恢复
     op: str = Field(description="pass | reject | hidden | restore")
     note: str | None = Field(default=None, max_length=256, description="审核备注")
@@ -331,15 +353,15 @@ class CommentBulkAuditResp(SQLModel):
 
 
 @auto_str
-class CommentAuditItem(SQLModel, VisibilityMixin):
+class CommentAuditItem(SQLModel):
     """审核队列中的一条评论。
 
     原始 IP 属明文信息（决策 C3：出参打码、管理员明文），以 ``Private(admin_only=True)``
     标记，非管理员视角下由序列化器自动剥离。
     """
 
-    rpid: str
-    oid: str
+    rpid: int
+    oid: int
     type: InteractionBizTypeEnum
     mid: int
     message: str
@@ -355,7 +377,8 @@ class CommentAuditItem(SQLModel, VisibilityMixin):
     )
     # 管理端审核视角：可用**私有**简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色），便于溯源
     member: UserBriefOut | None = Field(
-        default=None, description="发布者信息（管理端：含私有字段），装配时直连 pptr 只读取回"
+        default=None,
+        description="发布者信息（管理端：含私有字段），装配时直连 pptr 只读取回",
     )
 
 
@@ -377,9 +400,9 @@ class CommentAuditListResp(SQLModel):
 class CommentSourceResp(SQLModel):
     """一条评论的内容来源详情（管理端「内容来源」点击时按需拉取）。"""
 
-    rpid: str
-    root: str = "0"
-    parent: str = "0"
+    rpid: int
+    root: int = 0
+    parent: int = 0
     state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     source: AuditSourceInfo
     subject_state: CommentSubjectStateEnum | None = Field(
@@ -391,7 +414,7 @@ class CommentSourceResp(SQLModel):
 
 @auto_str
 class CommentAuditResp(SQLModel):
-    rpid: str
+    rpid: int
     state: ResourceAuditStatusEnum
 
 

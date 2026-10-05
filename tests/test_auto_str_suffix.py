@@ -1,7 +1,7 @@
 """``@auto_str`` / ``AutoStrMixin`` 字符串版 ID 字段回归测试。
 
 覆盖点：
-1. 默认后缀仍为 ``Str``；``suffix="_str"`` 可切 snake_case；
+1. 默认后缀为 ``_str``（``mid`` -> ``mid_str``）；``suffix="Str"`` 可切 camelCase；
 2. 非 ID 数值字段（like_count）不派生；
 3. 已声明的同名字段（如手写 ``dynIdStr: str``）不被 computed_field 覆盖；
 4. 类体里手写的 ``@computed_field`` 在后置注入 + 重建后不丢失；
@@ -22,20 +22,20 @@ SNOWFLAKE = 1342368973191234567  # 19 位，超过 JS Number 安全整数
 
 @auto_str
 class _DefaultSuffixModel(SQLModel):
-    """不传 suffix：沿用默认 Str 后缀。"""
+    """不传 suffix：沿用默认 ``_str`` 后缀。"""
 
     mid: int
     like_count: int
 
 
-@auto_str(suffix="_str")
-class _SnakeSuffixModel(SQLModel):
+@auto_str(suffix="Str")
+class _CamelSuffixModel(SQLModel):
     mid: int
     like_count: int
 
 
 class _ClassAttrSuffixModel(SQLModel):
-    _auto_str_suffix: ClassVar[str] = "_str"
+    _auto_str_suffix: ClassVar[str] = "Str"
 
     mid: int
 
@@ -70,29 +70,29 @@ class _MarkedModel(SQLModel):
     some_code: SnowflakeInt
 
 
-def test_default_suffix_is_camel_str():
+def test_default_suffix_is_snake_str():
     dumped = _DefaultSuffixModel(mid=SNOWFLAKE, like_count=3).model_dump()
-    assert dumped["midStr"] == str(SNOWFLAKE)
-    assert "mid_str" not in dumped
-    # 非 ID 数值字段不派生
-    assert "like_countStr" not in dumped
-
-
-def test_custom_suffix_is_snake_str():
-    dumped = _SnakeSuffixModel(mid=SNOWFLAKE, like_count=3).model_dump()
     assert dumped["mid_str"] == str(SNOWFLAKE)
     assert "midStr" not in dumped
+    # 非 ID 数值字段不派生
+    assert "like_count_str" not in dumped
+
+
+def test_custom_suffix_is_camel_str():
+    dumped = _CamelSuffixModel(mid=SNOWFLAKE, like_count=3).model_dump()
+    assert dumped["midStr"] == str(SNOWFLAKE)
+    assert "mid_str" not in dumped
 
 
 def test_class_attr_suffix():
     dumped = _ClassAttrSuffixModel(mid=SNOWFLAKE).model_dump()
-    assert dumped["mid_str"] == str(SNOWFLAKE)
+    assert dumped["midStr"] == str(SNOWFLAKE)
 
 
 def test_custom_suffix_visible_in_openapi_serialization_schema():
-    props = _SnakeSuffixModel.model_json_schema(mode="serialization")["properties"]
-    assert "mid_str" in props
-    assert "midStr" not in props
+    props = _CamelSuffixModel.model_json_schema(mode="serialization")["properties"]
+    assert "midStr" in props
+    assert "mid_str" not in props
 
 
 def test_declared_field_not_overridden():
@@ -106,7 +106,7 @@ def test_manual_computed_field_preserved():
     """回归：DecoratorInfos 重建只能扫到后置注入的 proxy，类体手写的会丢。"""
     dumped = _ManualComputedFieldModel(mid=SNOWFLAKE).model_dump()
     assert dumped["business_name"] == "business"
-    assert dumped["midStr"] == str(SNOWFLAKE)
+    assert dumped["mid_str"] == str(SNOWFLAKE)
 
 
 @auto_str
@@ -117,26 +117,28 @@ class _OptionalSnowflakeModel(SQLModel):
 
 
 def test_optional_str_int_derives_nullable_str():
-    assert _OptionalSnowflakeModel(bizId=None).model_dump()["bizIdStr"] is None
+    assert _OptionalSnowflakeModel(bizId=None).model_dump()["bizId_str"] is None
     dumped = _OptionalSnowflakeModel(bizId=SNOWFLAKE).model_dump()
-    assert dumped["bizIdStr"] == str(SNOWFLAKE)
+    assert dumped["bizId_str"] == str(SNOWFLAKE)
 
-    prop = _OptionalSnowflakeModel.model_json_schema(mode="serialization")["properties"]["bizIdStr"]
+    prop = _OptionalSnowflakeModel.model_json_schema(mode="serialization")[
+        "properties"
+    ]["bizId_str"]
     assert {"string", "null"} <= {item["type"] for item in prop["anyOf"]}
 
 
 def test_snowflake_marker():
     dumped = _MarkedModel(some_code=SNOWFLAKE).model_dump()
-    assert dumped["some_codeStr"] == str(SNOWFLAKE)
+    assert dumped["some_code_str"] == str(SNOWFLAKE)
 
 
 def test_legacy_mixin_keeps_working():
     class Legacy(SQLModel, AutoStrMixin):
-        _auto_str_suffix: ClassVar[str] = "_str"
+        _auto_str_suffix: ClassVar[str] = "Str"
 
         mid: int
 
-    assert Legacy(mid=SNOWFLAKE).model_dump()["mid_str"] == str(SNOWFLAKE)
+    assert Legacy(mid=SNOWFLAKE).model_dump()["midStr"] == str(SNOWFLAKE)
 
 
 def test_admin_status_response_uses_snake_suffix():

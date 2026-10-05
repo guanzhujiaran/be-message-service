@@ -75,9 +75,7 @@ def _target_condition(user: AuthInfo):
         # 指定 mid 列表（逗号分隔）
         and_(
             table.target_type == NotifyTargetTypeEnum.CUSTOM,
-            func.find_in_set(
-                str(user.mid), func.replace(table.target_value, " ", "")
-            )
+            func.find_in_set(str(user.mid), func.replace(table.target_value, " ", ""))
             > 0,
         ),
     ]
@@ -127,7 +125,9 @@ class NotifyService:
             target_value=req.target_value,
             level=req.level,
             status=(
-                NotifyStatusEnum.PUBLISHED if req.publish_now else NotifyStatusEnum.DRAFT
+                NotifyStatusEnum.PUBLISHED
+                if req.publish_now
+                else NotifyStatusEnum.DRAFT
             ),
             # 用数据库时钟，与 _visible_condition 的 `publish_at <= now()` 同源，
             # 避免服务侧 datetime.now() 与 DB now() 的亚秒偏移导致刚发布即被判不可见。
@@ -407,7 +407,11 @@ class NotifyService:
         await NotifyService._mark_read_ids(session, user.mid, [i.id for i in items])
 
         # 推进服务端游标（只增不减，避免并发拉取导致游标回退）
-        new_cursor = max([effective_cursor, *[i.id for i in items]]) if items else effective_cursor
+        new_cursor = (
+            max([effective_cursor, *[i.id for i in items]])
+            if items
+            else effective_cursor
+        )
         cursor_row.last_notify_id = max(cursor_row.last_notify_id, new_cursor)
         cursor_row.last_pull_at = datetime.now()
         session.add(cursor_row)
@@ -496,7 +500,10 @@ class NotifyService:
             .where(
                 _visible_condition(),
                 _target_condition(user),
-                or_(state.id.is_(None), and_(state.is_read == False, state.is_deleted == False)),
+                or_(
+                    state.id.is_(None),
+                    and_(state.is_read == False, state.is_deleted == False),
+                ),
             )
         )
         return int((await session.exec(stmt)).one() or 0)
@@ -615,9 +622,11 @@ class NotifyService:
                     mids.append(int(part))
             return mids[:limit]
 
-        stmt = select(UserMessageSetting.mid).where(
-            UserMessageSetting.recv_notify == True
-        ).limit(limit)
+        stmt = (
+            select(UserMessageSetting.mid)
+            .where(UserMessageSetting.recv_notify == True)
+            .limit(limit)
+        )
         return [int(m) for m in (await session.exec(stmt)).all()]
 
     # ==================== 内部方法 ====================
@@ -649,7 +658,10 @@ class NotifyService:
         stmt = select(
             NotifyState.notify_id, NotifyState.is_read, NotifyState.read_at
         ).where(NotifyState.mid == mid, NotifyState.notify_id.in_(notify_ids))  # type: ignore[union-attr]
-        return {nid: (bool(is_read), read_at) for nid, is_read, read_at in (await session.exec(stmt)).all()}
+        return {
+            nid: (bool(is_read), read_at)
+            for nid, is_read, read_at in (await session.exec(stmt)).all()
+        }
 
     @staticmethod
     def _to_admin_item(row: NotifyMessage) -> NotifyAdminItem:

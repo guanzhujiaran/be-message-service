@@ -3,6 +3,7 @@
 流程：拉真实动态/话题 → 建话题（幂等）→ 灌动态（点赞/浏览/评论套件）→
 lottery 评论套件 → pptr 用户池批量互发私信。
 """
+
 import argparse
 import asyncio
 import sys
@@ -164,4 +165,6 @@ async def run_bulk(args: argparse.Namespace) -> None:
         else:
             logger.warning("无可用用户池，跳过大数据灌数私信")
 
-    logger.info("灌数完成！浏览计数由热路径原子 ±1 维护（2.42.0 起对账脚本已移除，浏览明细每用户每资源一行）。")
+    logger.info(
+        "灌数完成！浏览计数由热路径原子 ±1 维护（2.42.0 起对账脚本已移除，浏览明细每用户每资源一行）。"
+    )

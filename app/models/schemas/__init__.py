@@ -64,6 +64,22 @@ from app.models.schemas.dm import (
     DmTopReq,
     DmTopResp,
 )
+from app.models.schemas.event import (
+    EventAggregateItem,
+    EventAggregateResp,
+    EventItem,
+    EventListResp,
+    EventMsgfeedContent,
+    EventMsgfeedCursor,
+    EventMsgfeedItem,
+    EventMsgfeedSection,
+    EventReadReq,
+    EventReadResp,
+    EventReportReq,
+    EventReportResp,
+    EventUnreadResp,
+    EventUserBrief,
+)
 from app.models.schemas.favorite import (
     FavoriteAddReq,
     FavoriteAddResp,
@@ -87,23 +103,6 @@ from app.models.schemas.folder_cover_audit import (
     FolderCoverAuditMineResp,
     FolderCoverAuditRejectReq,
 )
-from app.models.schemas.interaction import InteractionStatusItem, InteractionStatusResp
-from app.models.schemas.event import (
-    EventAggregateItem,
-    EventAggregateResp,
-    EventItem,
-    EventListResp,
-    EventMsgfeedContent,
-    EventMsgfeedCursor,
-    EventMsgfeedItem,
-    EventMsgfeedSection,
-    EventReadReq,
-    EventReadResp,
-    EventReportReq,
-    EventReportResp,
-    EventUnreadResp,
-    EventUserBrief,
-)
 from app.models.schemas.follow import (
     BlockReq,
     FollowCountResp,
@@ -113,6 +112,7 @@ from app.models.schemas.follow import (
     FollowRelationResp,
     FollowReq,
 )
+from app.models.schemas.interaction import InteractionStatusItem, InteractionStatusResp
 from app.models.schemas.mq import (
     DmContentPayload,
     DmNotifyPayload,
@@ -134,10 +134,31 @@ from app.models.schemas.notify import (
     SystemNotifyItem,
     SystemNotifyListResp,
 )
+from app.models.schemas.report import (
+    ReportCreateReq,
+    ReportItem,
+    ReportListResp,
+    ReportReviewReq,
+)
 from app.models.schemas.setting import (
     MessageSettingResp,
     MessageSettingUpdateReq,
     UserActivityResp,
+)
+from app.models.schemas.space import (
+    SpaceFollowStat,
+    SpaceInfoResp,
+    SpaceOfficial,
+    SpacePrivacyFlags,
+    SpacePrivacyUpdateReq,
+    SpaceTimelineItem,
+    SpaceTimelineResp,
+    SpaceUpStat,
+    SpaceViewHistoryItem,
+    SpaceViewHistoryResp,
+    SpaceVip,
+    SpaceVipLabel,
+    SpaceVipWrap,
 )
 from app.models.schemas.sys_config import (
     CommentRateLimitConfig,
@@ -146,27 +167,8 @@ from app.models.schemas.sys_config import (
     SysConfigListResp,
     SysConfigUpdateReq,
 )
-from app.models.schemas.space import (
-    SpaceFollowStat,
-    SpaceInfoResp,
-    SpaceOfficial,
-    SpaceUpStat,
-    SpaceVip,
-    SpaceVipLabel,
-    SpaceVipWrap,
-)
-from app.models.schemas.report import (
-    ReportCreateReq,
-    ReportItem,
-    ReportListResp,
-    ReportReviewReq,
-)
 from app.models.schemas.user_brief import (
     UserBriefOut,
-)
-from app.models.schemas.visibility import (
-    Private,
-    VisibilityMixin,
 )
 from app.models.schemas.user_records import (
     UserActLogItem,
@@ -315,7 +317,13 @@ __all__ = [
     "SpaceFollowStat",
     "SpaceInfoResp",
     "SpaceOfficial",
+    "SpacePrivacyFlags",
+    "SpacePrivacyUpdateReq",
+    "SpaceTimelineItem",
+    "SpaceTimelineResp",
     "SpaceUpStat",
+    "SpaceViewHistoryItem",
+    "SpaceViewHistoryResp",
     "SpaceVip",
     "SpaceVipLabel",
     "SpaceVipWrap",
@@ -328,9 +336,6 @@ __all__ = [
     "UserActLogItem",
     # 用户展示简档：单一输出模型（§5.12）
     "UserBriefOut",
-    # 字段级可见性：标记 + 序列化期裁剪 mixin（§5.12）
-    "Private",
-    "VisibilityMixin",
     "UserActLogListResp",
     "UserActivityResp",
     "UserExpRecordItem",

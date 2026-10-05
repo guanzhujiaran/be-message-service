@@ -149,7 +149,9 @@ async def audit_queue(
             try:
                 states = [ResourceAuditStatusEnum(int(x)) for x in state]
             except (ValueError, KeyError):
-                return StandardResponse(code=400, msg="state 取值非法（仅接受状态数值）")
+                return StandardResponse(
+                    code=400, msg="state 取值非法（仅接受状态数值）"
+                )
         else:
             states = _ROOT_DEFAULT_STATES
     else:

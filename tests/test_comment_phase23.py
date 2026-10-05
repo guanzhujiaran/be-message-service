@@ -20,7 +20,7 @@ from app.models.db import (
     CommentIndex,
     CommentSubject,
     TMoment,
-    )
+)
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
@@ -103,14 +103,26 @@ def _next_oid() -> int:
 
 async def _cleanup(oid: int, mids: set[int]) -> None:
     async with new_session() as s:
-        await s.exec(text(f"DELETE FROM msg_comment_action WHERE rpid IN (SELECT rpid FROM msg_comment_index WHERE oid = {oid})"))
+        await s.exec(
+            text(
+                f"DELETE FROM msg_comment_action WHERE rpid IN (SELECT rpid FROM msg_comment_index WHERE oid = {oid})"
+            )
+        )
         await s.exec(text(f"DELETE FROM msg_comment_at WHERE oid = {oid}"))
-        await s.exec(text(f"DELETE FROM msg_comment_content WHERE rpid IN (SELECT rpid FROM msg_comment_index WHERE oid = {oid})"))
+        await s.exec(
+            text(
+                f"DELETE FROM msg_comment_content WHERE rpid IN (SELECT rpid FROM msg_comment_index WHERE oid = {oid})"
+            )
+        )
         await s.exec(text(f"DELETE FROM msg_comment_index WHERE oid = {oid}"))
         await s.exec(text(f"DELETE FROM msg_comment_subject WHERE oid = {oid}"))
         if mids:
             placeholders = ",".join(str(m) for m in mids)
-            await s.exec(text(f"DELETE FROM msg_event WHERE mid IN ({placeholders}) OR actor_mid IN ({placeholders})"))
+            await s.exec(
+                text(
+                    f"DELETE FROM msg_event WHERE mid IN ({placeholders}) OR actor_mid IN ({placeholders})"
+                )
+            )
         # 测试挂载的真实动态行（子表由 FK ON DELETE CASCADE 级联清理）
         await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {oid}"))
         await s.commit()
@@ -155,9 +167,7 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
     ``MomentStatService``），而测试 oid 为虚构值、无真实 `TMoment` 宿主行。
     """
     row = (
-        await session.exec(
-            select(CommentIndex).where(col(CommentIndex.rpid) == rpid)
-        )
+        await session.exec(select(CommentIndex).where(col(CommentIndex.rpid) == rpid))
     ).one()
     if row.auditStatus is not ResourceAuditStatusEnum.AUDITING:
         return
@@ -179,7 +189,18 @@ async def _pass_audit(session, rpid: int, oid: int, *, is_root: bool = False) ->
     await session.commit()
 
 
-async def _add(session, mid, oid, *, message="测试评论", up_mid=0, root="0", parent="0", at_mids=None, uname=None):
+async def _add(
+    session,
+    mid,
+    oid,
+    *,
+    message="测试评论",
+    up_mid=0,
+    root="0",
+    parent="0",
+    at_mids=None,
+    uname=None,
+):
     rpid = (
         await CommentService.add(
             session,
@@ -214,24 +235,44 @@ async def test_like_hate_idempotent_and_counts() -> None:
 
         async with new_session() as s:
             # 点赞
-            r1 = await CommentActionService.action(s, _VIEWER, int(rpid), CommentActionEnum.LIKE)
+            r1 = await CommentActionService.action(
+                s, _VIEWER, int(rpid), CommentActionEnum.LIKE
+            )
             assert r1.like_count == 1 and r1.action is CommentActionEnum.LIKE
             # 重复点赞不重复计数
-            r2 = await CommentActionService.action(s, _VIEWER, int(rpid), CommentActionEnum.LIKE)
+            r2 = await CommentActionService.action(
+                s, _VIEWER, int(rpid), CommentActionEnum.LIKE
+            )
             assert r2.like_count == 1
             # 热度应随点赞上升
-            row = (await s.exec(select(CommentIndex).where(CommentIndex.rpid == int(rpid)))).one()
+            row = (
+                await s.exec(select(CommentIndex).where(CommentIndex.rpid == int(rpid)))
+            ).one()
             assert row.hot_score > 0, "点赞后热度分应 > 0"
 
             # 赞 → 踩：like 归零、hate +1
-            r3 = await CommentActionService.action(s, _VIEWER, int(rpid), CommentActionEnum.HATE)
+            r3 = await CommentActionService.action(
+                s, _VIEWER, int(rpid), CommentActionEnum.HATE
+            )
             assert r3.like_count == 0 and r3.hate_count == 1
             # 取消：全部归零
-            r4 = await CommentActionService.action(s, _VIEWER, int(rpid), CommentActionEnum.NONE)
-            assert r4.like_count == 0 and r4.hate_count == 0 and r4.action is CommentActionEnum.NONE
+            r4 = await CommentActionService.action(
+                s, _VIEWER, int(rpid), CommentActionEnum.NONE
+            )
+            assert (
+                r4.like_count == 0
+                and r4.hate_count == 0
+                and r4.action is CommentActionEnum.NONE
+            )
 
             # 互动态持久化：重新取 action 行
-            act = (await s.exec(select(CommentAction).where(CommentAction.rpid == int(rpid), CommentAction.mid == _VIEWER))).one_or_none()
+            act = (
+                await s.exec(
+                    select(CommentAction).where(
+                        CommentAction.rpid == int(rpid), CommentAction.mid == _VIEWER
+                    )
+                )
+            ).one_or_none()
             assert act is None or act.action is CommentActionEnum.NONE
     finally:
         await _cleanup(oid, {_AUTHOR, _VIEWER})
@@ -246,18 +287,29 @@ async def test_sub_preview_and_reply_list() -> None:
             root = await _add(s, _AUTHOR, oid)
             # 发 5 条楼中楼
             for i in range(5):
-                await _add(s, _VIEWER + i, oid, message=f"回复{i}", root=root, parent=root)
+                await _add(
+                    s, _VIEWER + i, oid, message=f"回复{i}", root=root, parent=root
+                )
         assert preview == 3, "预览条数配置应保持 3"
 
         async with new_session() as s:
-            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            listing = await CommentReadService.list_main(
+                s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None
+            )
             assert len(listing.items) == 1
             root_item = listing.items[0]
             assert len(root_item.replies) == preview, "预览应截断到 preview_count"
             assert root_item.replies[0].message == "回复0"
 
             # 展开接口：total=5，分页取前 2 条
-            sub = await CommentReadService.get_sub_list(s, int(root), oid, InteractionBizTypeEnum.DYNAMIC, page_num=1, page_size=2)
+            sub = await CommentReadService.get_sub_list(
+                s,
+                int(root),
+                oid,
+                InteractionBizTypeEnum.DYNAMIC,
+                page_num=1,
+                page_size=2,
+            )
             assert sub.total == 5
             assert len(sub.items) == 2
     finally:
@@ -273,17 +325,27 @@ async def test_top_pin_permission() -> None:
 
         # 陌生人无权置顶
         async with new_session() as s:
-            assert not await CommentService.set_top(s, _STRANGER, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=True)
+            assert not await CommentService.set_top(
+                s, _STRANGER, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=True
+            )
         # UP 主置顶
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=True)
-            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            assert await CommentService.set_top(
+                s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=True
+            )
+            listing = await CommentReadService.list_main(
+                s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None
+            )
             assert listing.top is not None and listing.top.rpid == root
             assert listing.top.is_top is True
         # UP 主取消置顶
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=False)
-            listing2 = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            assert await CommentService.set_top(
+                s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root), top=False
+            )
+            listing2 = await CommentReadService.list_main(
+                s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None
+            )
             assert listing2.top is None
     finally:
         await _cleanup(oid, {_AUTHOR, _UP, _STRANGER})
@@ -304,19 +366,29 @@ async def test_top_unpin_other_is_noop() -> None:
             root_b = await _add(s, _VIEWER, oid, message="置顶候选B", up_mid=_UP)
 
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_a), top=True)
+            assert await CommentService.set_top(
+                s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_a), top=True
+            )
 
         # 对未置顶的 B 取消置顶：幂等 no-op，A 的置顶与 TOP 位都必须原样保留
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_b), top=False)
-            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            assert await CommentService.set_top(
+                s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_b), top=False
+            )
+            listing = await CommentReadService.list_main(
+                s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None
+            )
             assert listing.top is not None and listing.top.rpid == root_a
             assert listing.top.is_top is True
 
         # 互斥覆盖：改置顶 B，A 的 TOP 位应被清掉并回到普通列表
         async with new_session() as s:
-            assert await CommentService.set_top(s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_b), top=True)
-            listing2 = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            assert await CommentService.set_top(
+                s, _UP, oid, InteractionBizTypeEnum.DYNAMIC, int(root_b), top=True
+            )
+            listing2 = await CommentReadService.list_main(
+                s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None
+            )
             assert listing2.top is not None and listing2.top.rpid == root_b
             item_a = next(it for it in listing2.items if it.rpid == root_a)
             assert item_a.is_top is False, "旧置顶的 TOP 位应被互斥清掉"
@@ -333,17 +405,33 @@ async def test_at_search() -> None:
     oid = _next_oid()
     try:
         async with new_session() as s:
-            await _add(s, _SEARCH_MID, oid, message="我是被搜索的用户", uname="搜索目标用户ABC")
+            await _add(
+                s, _SEARCH_MID, oid, message="我是被搜索的用户", uname="搜索目标用户ABC"
+            )
 
         # 在 pptr 直接写入可被搜索到的用户资料（TUserInfo + TUserDetail）
         async with new_pptr_session() as ps:
-            await ps.exec(text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": _SEARCH_MID})
-            await ps.exec(text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": _SEARCH_MID})
+            await ps.exec(
+                text('DELETE FROM "TUserDetail" WHERE mid = :m'),
+                params={"m": _SEARCH_MID},
+            )
+            await ps.exec(
+                text('DELETE FROM "TUserInfo" WHERE uid = :m'),
+                params={"m": _SEARCH_MID},
+            )
             # 无 relationship 声明，UoW 无法推断依赖顺序：必须先 flush 父表
             # TUserInfo 让 mid 在当前事务可见，再写 TUserDetail（见 pptr_user.create_user）
-            ps.add(PptrUserInfo(uid=_SEARCH_MID, user_name="搜索目标用户ABC", role="level0"))
+            ps.add(
+                PptrUserInfo(
+                    uid=_SEARCH_MID, user_name="搜索目标用户ABC", role="level0"
+                )
+            )
             await ps.flush()
-            ps.add(PptrUserDetail(mid=_SEARCH_MID, uname="搜索目标用户ABC", sign="", sex=""))
+            ps.add(
+                PptrUserDetail(
+                    mid=_SEARCH_MID, uname="搜索目标用户ABC", sign="", sex=""
+                )
+            )
             await ps.commit()
 
         hits = await PptrUser.search_by_uname("搜索目标", limit=10)
@@ -352,8 +440,14 @@ async def test_at_search() -> None:
         # 清理 pptr 种子数据（硬删，避免污染其它用例）
         try:
             async with new_pptr_session() as ps:
-                await ps.exec(text('DELETE FROM "TUserDetail" WHERE mid = :m'), params={"m": _SEARCH_MID})
-                await ps.exec(text('DELETE FROM "TUserInfo" WHERE uid = :m'), params={"m": _SEARCH_MID})
+                await ps.exec(
+                    text('DELETE FROM "TUserDetail" WHERE mid = :m'),
+                    params={"m": _SEARCH_MID},
+                )
+                await ps.exec(
+                    text('DELETE FROM "TUserInfo" WHERE uid = :m'),
+                    params={"m": _SEARCH_MID},
+                )
                 await ps.commit()
         except Exception:  # noqa: BLE001
             pass
@@ -369,7 +463,9 @@ async def test_admin_audit_plaintext_ip_stats() -> None:
 
         async with new_session() as s:
             # 驳回
-            assert await CommentAdminService.set_state(s, int(rpid), ResourceAuditStatusEnum.REJECTED)
+            assert await CommentAdminService.set_state(
+                s, int(rpid), ResourceAuditStatusEnum.REJECTED
+            )
             item = await CommentAdminService.get_audit_item(s, int(rpid))
             assert item is not None and item.state is ResourceAuditStatusEnum.REJECTED
             # 明文 IP 仅管理端可见
@@ -417,13 +513,21 @@ async def test_sensitive_word_audit() -> None:
     try:
         async with new_session() as s:
             resp = await CommentService.add(
-                s, _AUTHOR, CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.DYNAMIC, message="这是诈骗内容"),
+                s,
+                _AUTHOR,
+                CommentAddReq(
+                    oid=str(oid),
+                    type=InteractionBizTypeEnum.DYNAMIC,
+                    message="这是诈骗内容",
+                ),
                 uname="u",
             )
             assert resp.state is ResourceAuditStatusEnum.REJECTED
             assert resp.need_audit is True
         async with new_session() as s:
-            listing = await CommentReadService.list_main(s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None)
+            listing = await CommentReadService.list_main(
+                s, oid, InteractionBizTypeEnum.DYNAMIC, viewer_mid=None
+            )
             assert listing.total == 0, "拒审评论不应出现在列表"
             detail = await CommentReadService.get_detail(s, int(resp.rpid))
             assert detail is None, "拒审评论详情不可见"
@@ -451,7 +555,11 @@ async def test_author_sees_own_auditing_comment(
             normal_resp = await CommentService.add(
                 s,
                 _AUTHOR,
-                CommentAddReq(oid=str(oid), type=InteractionBizTypeEnum.LOTTERY, message="一条正常评论"),
+                CommentAddReq(
+                    oid=str(oid),
+                    type=InteractionBizTypeEnum.LOTTERY,
+                    message="一条正常评论",
+                ),
                 uname=f"user{_AUTHOR}",
             )
             assert normal_resp.state is ResourceAuditStatusEnum.NORMAL
@@ -481,7 +589,9 @@ async def test_author_sees_own_auditing_comment(
             assert normal_rpid in rpids, "普通评论应出现在列表"
             assert audit_rpid in rpids, "作者应看到自己审核中的评论"
             audit_item = next(it for it in own.items if it.rpid == audit_rpid)
-            assert audit_item.state is ResourceAuditStatusEnum.AUDITING, "审核中评论应带 auditing 标识"
+            assert audit_item.state is ResourceAuditStatusEnum.AUDITING, (
+                "审核中评论应带 auditing 标识"
+            )
 
         # 他人视角 / 匿名视角：看不到审核中的评论
         async with new_session() as s:
@@ -515,7 +625,9 @@ async def test_author_sees_own_auditing_comment(
         await _cleanup(oid, {_AUTHOR, _VIEWER})
 
 
-async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_interact_notify_only_for_visible_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """D6：互动通知（回复 / @）仅对 NORMAL 可见评论投递。
 
     auditing（审核中，暂不可见）与 rejected / hidden（未通过 / 下架）的评论
@@ -572,8 +684,12 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
                 s, _AUTHOR, _build(root_rpid, "正常回复内容"), uname=f"user{_AUTHOR}"
             )
             assert resp.state is ResourceAuditStatusEnum.NORMAL
-        assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), "NORMAL 应投递回复通知"
-        assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "NORMAL 应投递@通知"
+        assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), (
+            "NORMAL 应投递回复通知"
+        )
+        assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), (
+            "NORMAL 应投递@通知"
+        )
         calls.clear()
 
         # 2) REJECTED 评论（高危词 + 回复 + @）：不投递互动通知
@@ -587,7 +703,10 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
         # 3) AUDITING 评论（疑似词 + 回复 + @）：不投递互动通知
         async with new_session() as s:
             resp = await CommentService.add(
-                s, _AUTHOR, _build(root_rpid, "这个链接加微信看广告"), uname=f"user{_AUTHOR}"
+                s,
+                _AUTHOR,
+                _build(root_rpid, "这个链接加微信看广告"),
+                uname=f"user{_AUTHOR}",
             )
             assert resp.state is ResourceAuditStatusEnum.AUDITING
         assert calls == [], "AUDITING 评论不应投递回复 / @ 通知"
@@ -595,7 +714,9 @@ async def test_interact_notify_only_for_visible_comment(monkeypatch: pytest.Monk
         await _cleanup(oid, {_AUTHOR, _UP})
 
 
-async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_interact_notify_resend_after_approve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """D6 补偿通道：审核通过 / 恢复（非 NORMAL → NORMAL）补发先前跳过的回复 / @ 通知。
 
     auditing 评论发评时不投递互动通知（`msg_comment_at.notified=False`）；
@@ -655,30 +776,46 @@ async def test_interact_notify_resend_after_approve(monkeypatch: pytest.MonkeyPa
         # 2) 管理端审核通过（AUDITING → NORMAL）：补发回复 + @ 通知
         async with new_session() as s:
             ok = await CommentAdminService.set_state(
-                s, rpid, ResourceAuditStatusEnum.NORMAL, note="内容合规", operator_mid=_VIEWER
+                s,
+                rpid,
+                ResourceAuditStatusEnum.NORMAL,
+                note="内容合规",
+                operator_mid=_VIEWER,
             )
             assert ok
-        assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), "审核通过应补发回复通知"
-        assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "审核通过应补发@通知"
+        assert any(r.event_type is InteractionActionTypeEnum.REPLY for r in calls), (
+            "审核通过应补发回复通知"
+        )
+        assert any(r.event_type is InteractionActionTypeEnum.AT for r in calls), (
+            "审核通过应补发@通知"
+        )
         calls.clear()
 
         # 3) 下架后再次恢复 NORMAL：@ 已投递（notified=True）不再重复补发；
         #    回复通知无独立标记字段，会再次调用（EventService dedup_key 幂等兜底，不落重复事件）
         async with new_session() as s:
             await CommentAdminService.set_state(
-                s, rpid, ResourceAuditStatusEnum.HIDDEN, note="违规", operator_mid=_VIEWER
+                s,
+                rpid,
+                ResourceAuditStatusEnum.HIDDEN,
+                note="违规",
+                operator_mid=_VIEWER,
             )
         calls.clear()
         async with new_session() as s:
             await CommentAdminService.set_state(
                 s, rpid, ResourceAuditStatusEnum.NORMAL, operator_mid=_VIEWER
             )
-        assert not any(r.event_type is InteractionActionTypeEnum.AT for r in calls), "已投递的@不应重复补发"
+        assert not any(r.event_type is InteractionActionTypeEnum.AT for r in calls), (
+            "已投递的@不应重复补发"
+        )
     finally:
         await _cleanup(oid, {_AUTHOR, _UP, _VIEWER})
 
 
-async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_at_and_reply_silent_for_blocked_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """2.50.0：黑名单静默——**@ 本身允许**（@ 关系照常落库渲染），但黑名单用户收不到 @ / 回复提醒。
 
     动态 @（`MomentPublishService._notify_at_batch`）与评论 @ / 回复
@@ -701,9 +838,7 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
     async with new_session() as s:
         # 发布者 _AUTHOR 拉黑被 @ 者（任一向拉黑即静默）
         s.add(
-            UserFollow(
-                mid=_AUTHOR, target_mid=blocked, status=FollowStatusEnum.BLOCKED
-            )
+            UserFollow(mid=_AUTHOR, target_mid=blocked, status=FollowStatusEnum.BLOCKED)
         )
         await s.commit()
 
@@ -714,7 +849,9 @@ async def test_at_and_reply_silent_for_blocked_user(monkeypatch: pytest.MonkeyPa
                 s,
                 blocked,
                 CommentAddReq(
-                    oid=str(oid), type=InteractionBizTypeEnum.LOTTERY, message="被@者的根评论"
+                    oid=str(oid),
+                    type=InteractionBizTypeEnum.LOTTERY,
+                    message="被@者的根评论",
                 ),
                 uname=f"user{blocked}",
             )

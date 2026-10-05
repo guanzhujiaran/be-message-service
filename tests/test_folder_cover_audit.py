@@ -81,7 +81,9 @@ async def _bind_engine_per_test():
             text(f"DELETE FROM TFavoriteFolder WHERE mid IN ({C_MID}, {C_MID2})")
         )
         await s.exec(
-            text(f"DELETE FROM msg_notify WHERE target_value IN ('{C_MID}', '{C_MID2}')")
+            text(
+                f"DELETE FROM msg_notify WHERE target_value IN ('{C_MID}', '{C_MID2}')"
+            )
         )
         await s.commit()
     yield
@@ -93,7 +95,9 @@ async def _bind_engine_per_test():
             text(f"DELETE FROM TFavoriteFolder WHERE mid IN ({C_MID}, {C_MID2})")
         )
         await s.exec(
-            text(f"DELETE FROM msg_notify WHERE target_value IN ('{C_MID}', '{C_MID2}')")
+            text(
+                f"DELETE FROM msg_notify WHERE target_value IN ('{C_MID}', '{C_MID2}')"
+            )
         )
         await s.commit()
     await engine.dispose()
@@ -108,7 +112,9 @@ def _ok_verify(monkeypatch):
     async def _fake(url, *, transport=None, label="头像"):
         return True, ""
 
-    monkeypatch.setattr("app.services.interaction_actions.folder.verify_avatar_url", _fake)
+    monkeypatch.setattr(
+        "app.services.interaction_actions.folder.verify_avatar_url", _fake
+    )
 
 
 def _fail_verify(monkeypatch):
@@ -117,7 +123,9 @@ def _fail_verify(monkeypatch):
     async def _fake(url, *, transport=None, label="头像"):
         return False, f"{label}图片不能超过 1MB"
 
-    monkeypatch.setattr("app.services.interaction_actions.folder.verify_avatar_url", _fake)
+    monkeypatch.setattr(
+        "app.services.interaction_actions.folder.verify_avatar_url", _fake
+    )
 
 
 async def _create_folder(s, mid: int, cover_url: str | None = None):
@@ -174,9 +182,7 @@ async def test_create_folder_cover_verify_failure(monkeypatch):
         assert "1MB" in str(ei.value)
         # 校验失败不应残留收藏夹
         rows = (
-            await s.exec(
-                select(TFavoriteFolder).where(TFavoriteFolder.mid == C_MID)
-            )
+            await s.exec(select(TFavoriteFolder).where(TFavoriteFolder.mid == C_MID))
         ).all()
         assert rows == []
 
@@ -249,7 +255,9 @@ async def test_resubmit_overrides_old_pending(monkeypatch):
         ).all()
         assert len(rows) == 2
         pending = [r for r in rows if r.auditStatus is ResourceAuditStatusEnum.AUDITING]
-        rejected = [r for r in rows if r.auditStatus is ResourceAuditStatusEnum.REJECTED]
+        rejected = [
+            r for r in rows if r.auditStatus is ResourceAuditStatusEnum.REJECTED
+        ]
         assert len(pending) == 1
         assert len(rejected) == 1
         assert rejected[0].auditReason == "已重新提交新申请"

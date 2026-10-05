@@ -33,6 +33,7 @@
 保留与原 ``events.py`` 完全一致的公开 API，外部 ``from app.services.message.insite.events
 import <Name>`` 无需改动。
 """
+
 from .base import (
     BaseEvent,
     CommentLocate,

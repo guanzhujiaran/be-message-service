@@ -37,7 +37,7 @@ from app.models.db import (
     CommentReport,
     CommentSubject,
     TMoment,
-    )
+)
 from bili_common.models import (
     InteractionActionTypeEnum,
     InteractionBizTypeEnum,
@@ -72,6 +72,7 @@ def summarize_text(text: str, limit: int = _EXCERPT_LIMIT) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else f"{flat[:limit]}…"
 
+
 # 正文里 @提及的占位符写法：@{114514}
 _AT_PATTERN = re.compile(r"@\{(\d{1,19})\}")
 
@@ -91,6 +92,7 @@ def normalize_at_mentions(message: str, at_name_to_mid: dict[str, int] | None) -
         # 精确替换正文里的 @昵称 文本（昵称可能含特殊字符，用 re.escape）
         message = message.replace(f"@{uname}", f"@{{{int(at_mid)}}}")
     return message
+
 
 # 列表中「对所有人可见」的状态集合
 VISIBLE_STATES: tuple[ResourceAuditStatusEnum, ...] = (ResourceAuditStatusEnum.NORMAL,)
@@ -349,9 +351,7 @@ class CommentService:
         if not message:
             raise ValueError("评论内容不能为空")
         if len(message) > settings.comment_message_max_length:
-            raise ValueError(
-                f"评论内容最长 {settings.comment_message_max_length} 个字"
-            )
+            raise ValueError(f"评论内容最长 {settings.comment_message_max_length} 个字")
 
         # 正文里 @昵称 文本 → 归一化为 @{mid} 占位符存储（对齐 B 站提交模型：
         # 前端传 message 含 @昵称 + at_name_to_mid 映射）
@@ -515,7 +515,10 @@ class CommentService:
             if audit_state == ResourceAuditStatusEnum.REJECTED:
                 reject_reason = audit_result.reason or "评论内容包含违规或敏感词"
                 await CommentService.notify_audit_rejected(
-                    mid, rpid, oid, req.type,
+                    mid,
+                    rpid,
+                    oid,
+                    req.type,
                     reason=reject_reason,
                     excerpt=message,
                 )
@@ -590,7 +593,9 @@ class CommentService:
         独立事务写入，与审核主流程解耦：通知失败不影响审核结果本身。
         """
         source = build_comment_source(oid, InteractionBizTypeEnum(ctype), rpid)
-        source_link = markup_inline_link(source.label, source.url or source.external_url)
+        source_link = markup_inline_link(
+            source.label, source.url or source.external_url
+        )
 
         lines = [f"您在{source_link}发布的评论未通过审核，已被驳回。"]
         if excerpt:
@@ -698,8 +703,10 @@ class CommentService:
             return 0, "评论已删除"
 
         subject = await CommentService.get_subject(session, row.oid, row.type)
-        allowed = is_admin or row.mid == mid or (
-            subject is not None and subject.up_mid and subject.up_mid == mid
+        allowed = (
+            is_admin
+            or row.mid == mid
+            or (subject is not None and subject.up_mid and subject.up_mid == mid)
         )
         if not allowed:
             return 0, "无权删除该评论"
@@ -911,8 +918,10 @@ class CommentService:
 
         # 一级评论：业务来源就是所在顶层资源；楼中楼：业务来源是被回复的评论。
         source_type = (
-            type_ if type_ is not None else InteractionBizTypeEnum.COMMENT
-        ) if root == 0 else InteractionBizTypeEnum.COMMENT
+            (type_ if type_ is not None else InteractionBizTypeEnum.COMMENT)
+            if root == 0
+            else InteractionBizTypeEnum.COMMENT
+        )
         await report_event_weakly(
             EventReportReq(
                 mid=to_mid,

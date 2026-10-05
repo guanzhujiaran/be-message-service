@@ -83,7 +83,9 @@ class OthersLotDynBiz(GenericResourceBiz):
             return {}
 
     @classmethod
-    async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
+    async def batch_get_resources(
+        cls, session, biz_ids, *, actor_mid=None, rpid_map=None
+    ):
         """批量回捞：一次 RPC 按 dynId 装配快照（对齐 LotteryBiz，防 N+1）。"""
         from app.utils.route_target import jump_target_for
 

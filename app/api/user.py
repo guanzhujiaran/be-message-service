@@ -23,9 +23,7 @@ router = APIRouter(prefix="/api/v1/message/admin/user", tags=["message-admin-use
 
 
 def parse_user_search_params(
-    keyword: str = Query(
-        "", description="搜索关键字：昵称 / 注册名 / mid / 邮箱"
-    ),
+    keyword: str = Query("", description="搜索关键字：昵称 / 注册名 / mid / 邮箱"),
     offset: int = Query(0, ge=0, description="分页偏移量（游标），从 0 开始"),
     limit: int = Query(20, ge=1, description="单页条数，默认 20，最大 100"),
 ) -> UserSearchParams:
@@ -44,7 +42,10 @@ def parse_user_search_params(
 )
 async def batch_user_info(
     user: MsgAdminUser,
-    mids: Annotated[list[StrInt], Query(description="要查询的用户 mid 列表，可重复（StrInt 兼容前端 str 传参）")] = [],
+    mids: Annotated[
+        list[StrInt],
+        Query(description="要查询的用户 mid 列表，可重复（StrInt 兼容前端 str 传参）"),
+    ] = [],
 ) -> StandardResponse[list[UserBriefOut]]:
     """按 mid 批量回查用户展示信息（昵称 / 头像 / 等级 / 大会员 / 性别 / 签名）。
 

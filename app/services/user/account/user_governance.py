@@ -64,7 +64,9 @@ class UserGovernanceUser(PptrUser):
             duration_days = None
             banned_until = None
 
-        await self._lift_active(session, mids, services, keep_status=BanStatusEnum.LIFTED)
+        await self._lift_active(
+            session, mids, services, keep_status=BanStatusEnum.LIFTED
+        )
 
         now = datetime.now()
         rows = [
@@ -167,9 +169,7 @@ class UserGovernanceUser(PptrUser):
         total = int(
             (
                 await session.exec(
-                    select(func.count())
-                    .select_from(UserBan)
-                    .where(*conds)
+                    select(func.count()).select_from(UserBan).where(*conds)
                 )
             ).one()
             or 0

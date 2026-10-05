@@ -1,4 +1,5 @@
 """事件相关常量与派生集合（单一真相源旁挂的本地配置）。"""
+
 from __future__ import annotations
 
 from bili_common.models import InteractionBizTypeEnum

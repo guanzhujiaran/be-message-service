@@ -101,14 +101,26 @@ async def _purge_moment_rows_before():
             r[0]
             for r in (
                 await s.exec(
-                    text("SELECT bizId FROM TResourceFeed WHERE bizType = 1 AND mid IN (910001, 910002)")
+                    text(
+                        "SELECT bizId FROM TResourceFeed WHERE bizType = 1 AND mid IN (910001, 910002)"
+                    )
                 )
             ).all()
         }
         for did in dyn_ids:
-            await s.exec(text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {did}"))
-            await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}"))
-            await s.exec(text(f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {did}"))
+            await s.exec(
+                text(
+                    f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {did}"
+                )
+            )
+            await s.exec(
+                text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}")
+            )
+            await s.exec(
+                text(
+                    f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {did}"
+                )
+            )
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
         await s.commit()
     yield
@@ -191,12 +203,18 @@ def test_create_check_rejected_scene():
 async def _cleanup(moment_ids: list[int]) -> None:
     async with new_session() as s:
         for did in moment_ids:
-            await s.exec(text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {did}"))
+            await s.exec(
+                text(
+                    f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {did}"
+                )
+            )
             await s.exec(
                 text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}")
             )
             await s.exec(
-                text(f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {did}")
+                text(
+                    f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {did}"
+                )
             )
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
         await s.commit()
@@ -282,7 +300,10 @@ async def test_create_forward_requires_normal_src():
     async with new_session() as s:
         # 源动态是 auditing（未通过）→ 创建转发应拒绝
         src = await _seed_dynamic(
-            s, D_MID2, MomentTypeEnum.WORD, audit_status=ResourceAuditStatusEnum.AUDITING
+            s,
+            D_MID2,
+            MomentTypeEnum.WORD,
+            audit_status=ResourceAuditStatusEnum.AUDITING,
         )
         req = MomentCreateReq(
             scene="FORWARD",
@@ -330,11 +351,11 @@ async def test_create_forward_ok_and_no_repost_incr():
 async def test_remove_normal_forward_decrs_src():
     async with new_session() as s:
         src = await _seed_dynamic(s, D_MID2, MomentTypeEnum.WORD)
-        fwd = await _seed_dynamic(
-            s, D_MID, MomentTypeEnum.FORWARD, repost_src=src
-        )
+        fwd = await _seed_dynamic(s, D_MID, MomentTypeEnum.FORWARD, repost_src=src)
         await s.exec(
-            text(f"UPDATE TInteractionStat SET repostCount = 1 WHERE bizType = 1 AND bizId = {src}")
+            text(
+                f"UPDATE TInteractionStat SET repostCount = 1 WHERE bizType = 1 AND bizId = {src}"
+            )
         )
         await s.commit()
 
@@ -351,9 +372,7 @@ async def test_remove_normal_forward_decrs_src():
         ).one()
         assert src_stat.repostCount == 0
         # 软删标记
-        fwd_row = (
-            await s.exec(select(TMoment).where(TMoment.dynId == fwd))
-        ).one()
+        fwd_row = (await s.exec(select(TMoment).where(TMoment.dynId == fwd))).one()
         assert fwd_row.deletedAt is not None
         await _cleanup([src, fwd])
 
@@ -364,7 +383,9 @@ async def test_top_requires_normal():
             s, D_MID, MomentTypeEnum.WORD, audit_status=ResourceAuditStatusEnum.AUDITING
         )
         with pytest.raises(ValueError):
-            await MomentPublishService.top(s, D_MID, MomentTopReq(dynId=dyn), untop=False)
+            await MomentPublishService.top(
+                s, D_MID, MomentTopReq(dynId=dyn), untop=False
+            )
         await _cleanup([dyn])
 
 

@@ -52,7 +52,9 @@ def _normalize(raw: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address
     return addr
 
 
-def extract_client_ip(headers: dict[str, str], peer: str | None = None) -> tuple[str | None, str | None]:
+def extract_client_ip(
+    headers: dict[str, str], peer: str | None = None
+) -> tuple[str | None, str | None]:
     """从请求头 + socket 地址中提取客户端 IP。
 
     Args:

@@ -45,7 +45,9 @@ class LotteryRpcClient:
     async def close(self) -> None:
         await self._client.close()
 
-    async def _check(self, lottery_ids: int | str | list[int] | list[str]) -> CheckLotteryExistRpcResult | None:
+    async def _check(
+        self, lottery_ids: int | str | list[int] | list[str]
+    ) -> CheckLotteryExistRpcResult | None:
         """调 check_lottery_exist RPC，返回解析后的结果；失败/未连接返回 None（弱依赖降级）。
 
         `lottery_ids` 为 int/str 时按单个 ID 处理（统一 `int()` 转换，防止字符串被
@@ -118,7 +120,7 @@ class LotteryRpcClient:
 
         调用方为 `GET /community/interaction/status/{bizId}` 的浏览投递前校验
         （纯读的批量 status 接口不再校验，见计划书 §5.11）。
-        
+
 
         Returns:
             ``set[存在的 lottery_id]``：RPC 成功（缺失的不在集合内）；
@@ -132,7 +134,9 @@ class LotteryRpcClient:
             return None
         return {item.lottery_id for item in result.items if item.exists}
 
-    async def get_lottery_details(self, lottery_ids: list[int]) -> dict[int, dict[str, str | None]]:
+    async def get_lottery_details(
+        self, lottery_ids: list[int]
+    ) -> dict[int, dict[str, str | None]]:
         """批量实时获取 lottery attach 卡片详情（2.20.1，Feed 页一次 RPC）。
 
         Returns:
@@ -154,7 +158,6 @@ class LotteryRpcClient:
                 "jumpUrl": item.jumpUrl or None,
             }
         return details
-
 
     # ==================== 第三方抽奖动态（2.61.0）====================
 
@@ -186,19 +189,25 @@ class LotteryRpcClient:
             logger.warning(f"[LotteryRpcClient] check_others_lot_dyn_exist 超时: {ids}")
             return None
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[LotteryRpcClient] check_others_lot_dyn_exist 调用失败: {e}")
+            logger.warning(
+                f"[LotteryRpcClient] check_others_lot_dyn_exist 调用失败: {e}"
+            )
             return None
         try:
             resp = StandardResponse.model_validate(raw)
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[LotteryRpcClient] check_others_lot_dyn_exist 响应解析失败: {e}")
+            logger.warning(
+                f"[LotteryRpcClient] check_others_lot_dyn_exist 响应解析失败: {e}"
+            )
             return None
         if resp.code != 0 or resp.data is None:
             return None
         try:
             return CheckOthersLotDynExistRpcResult.model_validate(resp.data)
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[LotteryRpcClient] check_others_lot_dyn_exist 结果解析失败: {e}")
+            logger.warning(
+                f"[LotteryRpcClient] check_others_lot_dyn_exist 结果解析失败: {e}"
+            )
             return None
 
     async def others_lot_dyn_exists(self, dyn_id: int) -> bool:
@@ -206,7 +215,9 @@ class LotteryRpcClient:
         result = await self._check_others(dyn_id)
         return bool(result and result.exists)
 
-    async def get_existing_others_lot_dyn_ids(self, dyn_ids: list[int]) -> set[int] | None:
+    async def get_existing_others_lot_dyn_ids(
+        self, dyn_ids: list[int]
+    ) -> set[int] | None:
         """批量校验第三方抽奖动态是否存在（2.63.0 起仅服务浏览计数准入）。
 
         Returns:

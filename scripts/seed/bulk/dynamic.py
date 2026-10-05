@@ -1,4 +1,5 @@
 """大数据灌数：单条动态（创建 → 审核 → 按分布点赞/浏览 + 评论套件）。"""
+
 import asyncio
 from itertools import cycle
 
@@ -45,7 +46,9 @@ async def _seed_dynamic(
             if len(content) <= _BULK_AT_CONTENT_MAXLEN:
                 nodes.extend(_at_nodes(_at_targets_deterministic(user_pool, author)))
             # 话题：轮遍挂载（非概率）
-            topic_id = _rr.pick(topic_ids) if topic_ids and _rr.pick(range(2)) == 0 else None
+            topic_id = (
+                _rr.pick(topic_ids) if topic_ids and _rr.pick(range(2)) == 0 else None
+            )
             new_dyn_id = await client.create_dynamic(
                 author, scene="WORD", content=nodes, topic_id=topic_id
             )

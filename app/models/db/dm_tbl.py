@@ -58,7 +58,9 @@ class DmSession(TimestampMixin, table=True):
     )
 
     talker_name: str | None = Field(default=None, max_length=64, description="对方昵称")
-    talker_avatar: str | None = Field(default=None, max_length=512, description="对方头像")
+    talker_avatar: str | None = Field(
+        default=None, max_length=512, description="对方头像"
+    )
 
     # ---- 最后一条消息快照（会话列表直接展示，避免回查消息表）----
     last_msgkey: int | None = Field(
@@ -86,9 +88,14 @@ class DmSession(TimestampMixin, table=True):
         index=True,
         description="会话关系：normal / stranger",
     )
-    is_top: bool = Field(default=False, description="是否置顶（[兼容] 2.59.0 起不再作为权威，由 top_ts 推导，保留列）")
+    is_top: bool = Field(
+        default=False,
+        description="是否置顶（[兼容] 2.59.0 起不再作为权威，由 top_ts 推导，保留列）",
+    )
     top_ts: int = Field(
-        default=0, sa_type=BIGINT, description="置顶时间戳(毫秒)，0=未置顶；会话置顶唯一真相源（2.59.0）"
+        default=0,
+        sa_type=BIGINT,
+        description="置顶时间戳(毫秒)，0=未置顶；会话置顶唯一真相源（2.59.0）",
     )
     is_muted: bool = Field(default=False, description="是否免打扰")
     is_deleted: bool = Field(default=False, index=True, description="是否已删除会话")
@@ -109,10 +116,14 @@ class DmMessageIndex(TimestampMixin, table=True):
 
     owner_mid: int = Field(sa_type=BIGINT, index=True, description="该行归属者mid")
     talker_mid: int = Field(sa_type=BIGINT, description="对话方mid")
-    session_key: str = Field(max_length=64, index=True, description="会话键：小mid_大mid")
+    session_key: str = Field(
+        max_length=64, index=True, description="会话键：小mid_大mid"
+    )
 
     msgkey: int = Field(
-        sa_type=BIGINT, index=True, description="消息全局唯一键（内嵌时间戳，用于分库分表路由）"
+        sa_type=BIGINT,
+        index=True,
+        description="消息全局唯一键（内嵌时间戳，用于分库分表路由）",
     )
     sender_uid: int = Field(sa_type=BIGINT, description="发送者mid")
     msg_type: DmMsgTypeEnum = Field(
@@ -174,7 +185,9 @@ class DmContentDeadLetter(TimestampMixin, table=True):
     content: str | None = Field(default=None, description="待补写的正文")
     msg_ts: int = Field(sa_type=BIGINT)
     retry_count: int = Field(default=0, index=True, description="已重试次数")
-    last_error: str | None = Field(default=None, max_length=512, description="最后一次错误")
+    last_error: str | None = Field(
+        default=None, max_length=512, description="最后一次错误"
+    )
     resolved: bool = Field(default=False, index=True, description="是否已补写成功")
 
 

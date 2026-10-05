@@ -52,7 +52,9 @@ class RpaRpcClient:
     async def close(self) -> None:
         await self._client.close()
 
-    async def get_resource_detail(self, biz_type: str, biz_id: int) -> GetResourceDetailResult | None:
+    async def get_resource_detail(
+        self, biz_type: str, biz_id: int
+    ) -> GetResourceDetailResult | None:
         """获取 RPA 资源详情（弱依赖：失败返回 None，不抛错）。
 
         Returns:
@@ -66,7 +68,9 @@ class RpaRpcClient:
                 return None
             raw = await self._client.call(routing_key, payload, timeout=5.0)
         except TimeoutError:
-            logger.warning(f"[RpaRpcClient] get_resource_detail 超时: {biz_type}/{biz_id}")
+            logger.warning(
+                f"[RpaRpcClient] get_resource_detail 超时: {biz_type}/{biz_id}"
+            )
             return None
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[RpaRpcClient] get_resource_detail 调用失败: {e}")
@@ -79,7 +83,6 @@ class RpaRpcClient:
         if resp.code != 0 or resp.data is None:
             return None
         return GetResourceDetailResult.model_validate(resp.data)
-
 
     async def hide_resource(
         self,
@@ -123,9 +126,7 @@ class RpaRpcClient:
             return False
         result = HideResourceResult.model_validate(resp.data)
         if not result.success:
-            logger.warning(
-                f"[RpaRpcClient] hide_resource 处置失败: {result.message}"
-            )
+            logger.warning(f"[RpaRpcClient] hide_resource 处置失败: {result.message}")
         return result.success
 
     async def review_resource(
@@ -169,7 +170,6 @@ class RpaRpcClient:
             logger.warning(f"[RpaRpcClient] review_resource 业务失败: {resp.msg}")
             return None
         return ReviewResourceResult.model_validate(resp.data)
-
 
     async def create_tag(
         self, *, name: str, color: str, created_mid: int
@@ -300,7 +300,9 @@ class RpaRpcClient:
         ).model_dump()
         try:
             if not self._client.connected:
-                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 list_tags_by_target")
+                logger.warning(
+                    "[RpaRpcClient] RPA RPC 未连接，跳过 list_tags_by_target"
+                )
                 return None
             raw = await self._client.call(routing_key, payload, timeout=5.0)
         except TimeoutError:

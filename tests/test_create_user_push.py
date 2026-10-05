@@ -85,7 +85,9 @@ def test_rpc_create_user_push_only_when_created():
             "app.mq.rpc_pptr_user.PptrUser.create",
             new=AsyncMock(return_value=(12345, False)),
         ),
-        patch("app.mq.rpc_pptr_user._push_new_user_notify", new=AsyncMock()) as mock_push,
+        patch(
+            "app.mq.rpc_pptr_user._push_new_user_notify", new=AsyncMock()
+        ) as mock_push,
     ):
         asyncio.run(rpc_create_user(params))
     mock_push.assert_not_awaited()
@@ -96,7 +98,9 @@ def test_rpc_create_user_push_only_when_created():
             "app.mq.rpc_pptr_user.PptrUser.create",
             new=AsyncMock(return_value=(12345, True)),
         ),
-        patch("app.mq.rpc_pptr_user._push_new_user_notify", new=AsyncMock()) as mock_push,
+        patch(
+            "app.mq.rpc_pptr_user._push_new_user_notify", new=AsyncMock()
+        ) as mock_push,
     ):
         resp = asyncio.run(rpc_create_user(params))
     mock_push.assert_awaited_once()

@@ -19,6 +19,7 @@ from sqlmodel import Field, SQLModel
 from app.models.biz_type import source_type_label
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.base import auto_str
+from app.models.str_int import StrInt
 
 # business（= source_type）的文字名称不再在本模块维护：
 # 展示名统一由 `app.models.biz_type.source_type_label()` 供给——
@@ -27,6 +28,7 @@ from app.models.schemas.base import auto_str
 _DEFAULT_BUSINESS_NAME = "其他"
 
 
+@auto_str
 class EventUserBrief(SQLModel):
     """事件触发者 / 互动用户简况。
 
@@ -52,8 +54,12 @@ class EventReportReq(SQLModel):
     - `content` 仅承载事件自身正文（如回复正文 / @上下文 / 审核驳回原因），与原资源快照区分。
     """
 
-    mid: int = Field(description="接收提醒的用户mid")
-    event_type: InteractionActionTypeEnum = Field(description="事件类型：like / reply / at")
+    mid: StrInt = Field(
+        description="接收提醒的用户mid（雪花ID，前端传字符串，后端归一为 int）"
+    )
+    event_type: InteractionActionTypeEnum = Field(
+        description="事件类型：like / reply / at"
+    )
     source_type: InteractionBizTypeEnum = Field(
         description="来源实体类型（必填：无对应资源时禁止落库）"
     )
@@ -90,7 +96,8 @@ class EventItem(SQLModel):
     source_type: InteractionBizTypeEnum
     source_id: str
     biz_id: str | None = Field(
-        default=None, description="业务资源id（如评论rpid），与 source_type 共同唯一定位原资源"
+        default=None,
+        description="业务资源id（如评论rpid），与 source_type 共同唯一定位原资源",
     )
     title: str | None = None
     image: str | None = None
@@ -124,7 +131,8 @@ class EventAggregateItem(SQLModel):
     count: int = Field(default=0, description="该分组下的事件总数")
     unread_count: int = Field(default=0, description="该分组下的未读数")
     actors: list[EventUserBrief] = Field(
-        default_factory=list, description="最近的若干触发者（用于头像堆叠展示），仅含 mid，昵称 / 头像读取时回查"
+        default_factory=list,
+        description="最近的若干触发者（用于头像堆叠展示），仅含 mid，昵称 / 头像读取时回查",
     )
     latest_event_id: int = Field(default=0, description="分组内最新事件id")
     latest_desc: str | None = Field(default=None, description="分组内最新事件内容")
@@ -153,10 +161,10 @@ class EventMsgfeedContent(SQLModel):
     type: int
     business: int = 0
     resource_type: int = 0
-    resource_id: str = ""
-    root_id: str = ""
-    source_id: str = ""
-    target_id: str = ""
+    resource_id: int = 0
+    root_id: int = 0
+    source_id: int = 0
+    target_id: int = 0
     title: str = ""
     desc: str = ""
     image: str = ""
@@ -174,7 +182,9 @@ class EventMsgfeedContent(SQLModel):
     # 触发评论是否处于「非正常状态」（被删 / 未过审 / 驳回 / 下架 / 待审）：
     # True 时 source_content / target_content 为空，前端展示「该评论已被删除」占位。
     comment_deleted: bool = False
-    jump_target: str = ""  # 后端下发的跳转目标 route:{name}?{query}（前端只 router.push）
+    jump_target: str = (
+        ""  # 后端下发的跳转目标 route:{name}?{query}（前端只 router.push）
+    )
     resource_deleted: bool = False  # 顶层资源是否已删除/不存在（前端展示占位且不跳转）
     ctime: int
 
@@ -235,10 +245,12 @@ class EventListResp(SQLModel):
     latest: EventMsgfeedSection
     total: EventMsgfeedSection
     total_count: int = Field(
-        default=0, description="当前筛选条件下聚合卡片（分组）总数（与单页 items 长度无关）"
+        default=0,
+        description="当前筛选条件下聚合卡片（分组）总数（与单页 items 长度无关）",
     )
     unread_count: int = Field(
-        default=0, description="当前 event_type 下未读事件总数，对齐 GET /unread 的对应字段"
+        default=0,
+        description="当前 event_type 下未读事件总数，对齐 GET /unread 的对应字段",
     )
 
 
@@ -267,7 +279,8 @@ class EventReadReq(SQLModel):
     source_type: InteractionBizTypeEnum | None = None
     source_id: str | None = None
     read_before: datetime | None = Field(
-        default=None, description="标记该时间戳（含）之前的全部消息为已读；不传则按其它条件标记"
+        default=None,
+        description="标记该时间戳（含）之前的全部消息为已读；不传则按其它条件标记",
     )
 
 

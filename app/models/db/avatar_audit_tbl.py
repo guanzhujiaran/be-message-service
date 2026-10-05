@@ -28,23 +28,46 @@ class TUserAvatarAudit(TimestampMixin, table=True):
     __tablename__ = "TUserAvatarAudit"
     __table_args__ = (
         PrimaryKeyConstraint("pk", name="TUserAvatarAudit_pkey"),
-        Index("idx_avatar_audit_status_created", "auditStatus", text("created_at DESC")),
+        Index(
+            "idx_avatar_audit_status_created", "auditStatus", text("created_at DESC")
+        ),
         Index("idx_avatar_audit_mid_created", "mid", text("created_at DESC")),
-        {"extend_existing": True, "comment": "头像更换审核：pending/approved/rejected，通过后写入公开头像"},
+        {
+            "extend_existing": True,
+            "comment": "头像更换审核：pending/approved/rejected，通过后写入公开头像",
+        },
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
+    pk: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": True},
+    )
     # mid 仅存 BIGINT，不建跨库 FK（用户主数据在 pptr Postgres）
-    mid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="申请更换头像的用户 UID")
-    oldAvatar: str | None = Field(default=None, max_length=1024, description="提交时的旧头像 URL（用于对比/追溯）")
-    newAvatar: str = Field(default=None, nullable=False, max_length=1024, description="申请的新头像 URL")
+    mid: int = Field(
+        default=None,
+        nullable=False,
+        sa_type=BIGINT,
+        description="申请更换头像的用户 UID",
+    )
+    oldAvatar: str | None = Field(
+        default=None, max_length=1024, description="提交时的旧头像 URL（用于对比/追溯）"
+    )
+    newAvatar: str = Field(
+        default=None, nullable=False, max_length=1024, description="申请的新头像 URL"
+    )
     auditStatus: ResourceAuditStatusEnum = Field(
         default=ResourceAuditStatusEnum.AUDITING,
         sa_type=SAEnum(ResourceAuditStatusEnum),
         description="审核状态：pending/approved/rejected",
     )
-    auditOperatorMid: int | None = Field(default=None, sa_type=BIGINT, description="审核人 MID（admin）")
-    auditReason: str | None = Field(default=None, max_length=500, description="驳回原因 / 备注（驳回时填写）")
+    auditOperatorMid: int | None = Field(
+        default=None, sa_type=BIGINT, description="审核人 MID（admin）"
+    )
+    auditReason: str | None = Field(
+        default=None, max_length=500, description="驳回原因 / 备注（驳回时填写）"
+    )
     auditedAt: datetime | None = Field(default=None, description="审核时间")
 
 

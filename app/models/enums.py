@@ -5,10 +5,12 @@
 （新增枚举值需要 DDL，这是原生 ENUM 的固有代价）。对外接口层（@auto_str / pydantic）
 序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
+
 from enum import Enum
 
 from bili_common.models import IntEnumAutoDoc
 from bili_common.models.notify import NotifyLevelEnum, NotifyTargetTypeEnum
+
 # 举报相关枚举（原因 / 审核状态）统一收口到 bili-common，be-message 侧直接复用，不再重定义：
 from bili_common.models.report import ReportReasonEnum, ReportAuditStatusEnum
 

@@ -36,22 +36,45 @@ class TFolderCoverAudit(TimestampMixin, table=True):
             text("created_at DESC"),
         ),
         Index("idx_folder_cover_audit_folder_status", "folderId", "auditStatus"),
-        {"extend_existing": True, "comment": "收藏夹封面审核：pending/approved/rejected，通过后写入 cover_url"},
+        {
+            "extend_existing": True,
+            "comment": "收藏夹封面审核：pending/approved/rejected，通过后写入 cover_url",
+        },
     )
 
-    pk: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": True})
-    folderId: int = Field(default=None, nullable=False, sa_type=BIGINT, description="所属收藏夹 id（雪花 ID，仅存 ID 不建跨表 FK）")
+    pk: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": True},
+    )
+    folderId: int = Field(
+        default=None,
+        nullable=False,
+        sa_type=BIGINT,
+        description="所属收藏夹 id（雪花 ID，仅存 ID 不建跨表 FK）",
+    )
     # mid 仅存 BIGINT，不建跨库 FK（用户主数据在 pptr Postgres）
-    mid: int = Field(default=None, nullable=False, sa_type=BIGINT, description="提交封面的用户 UID")
-    oldCover: str | None = Field(default=None, max_length=1024, description="提交时的旧封面 URL（用于对比/追溯）")
-    newCover: str = Field(default=None, nullable=False, max_length=1024, description="申请的新封面 URL")
+    mid: int = Field(
+        default=None, nullable=False, sa_type=BIGINT, description="提交封面的用户 UID"
+    )
+    oldCover: str | None = Field(
+        default=None, max_length=1024, description="提交时的旧封面 URL（用于对比/追溯）"
+    )
+    newCover: str = Field(
+        default=None, nullable=False, max_length=1024, description="申请的新封面 URL"
+    )
     auditStatus: ResourceAuditStatusEnum = Field(
         default=ResourceAuditStatusEnum.AUDITING,
         sa_type=SAEnum(ResourceAuditStatusEnum),
         description="审核状态：pending/approved/rejected",
     )
-    auditOperatorMid: int | None = Field(default=None, sa_type=BIGINT, description="审核人 MID（admin）")
-    auditReason: str | None = Field(default=None, max_length=500, description="驳回原因 / 备注（驳回时填写）")
+    auditOperatorMid: int | None = Field(
+        default=None, sa_type=BIGINT, description="审核人 MID（admin）"
+    )
+    auditReason: str | None = Field(
+        default=None, max_length=500, description="驳回原因 / 备注（驳回时填写）"
+    )
     auditedAt: datetime | None = Field(default=None, description="审核时间")
 
 

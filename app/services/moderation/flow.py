@@ -15,6 +15,7 @@
 
 本文件纯新增、自包含，不依赖具体业务表；供接入具体资源时复用。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -50,7 +51,9 @@ class AuditFlow:
     machine: type[AuditStateMachine]
     state_attr: str
     affects_primary: bool = False
-    when_primary: Mapping[ResourceAuditStatusEnum, ResourceAuditStatusEnum] | None = None
+    when_primary: Mapping[ResourceAuditStatusEnum, ResourceAuditStatusEnum] | None = (
+        None
+    )
 
 
 class PrimaryProvider(ABC):
@@ -61,7 +64,9 @@ class PrimaryProvider(ABC):
     """
 
     @abstractmethod
-    async def derive(self, flow_states: dict[str, ResourceAuditStatusEnum]) -> ResourceAuditStatusEnum:
+    async def derive(
+        self, flow_states: dict[str, ResourceAuditStatusEnum]
+    ) -> ResourceAuditStatusEnum:
         """从 ``{flow_name: 环节当前态}`` 推导主状态。"""
 
 
@@ -167,7 +172,9 @@ class AuditFlowOrchestrator:
         if primary is not None:
             setattr(self.primary, self.primary_attr, primary)
 
-    async def derive_primary(self, flow_states: dict[str, ResourceAuditStatusEnum]) -> ResourceAuditStatusEnum:
+    async def derive_primary(
+        self, flow_states: dict[str, ResourceAuditStatusEnum]
+    ) -> ResourceAuditStatusEnum:
         """（可选）用主状态推导策略反推主状态（供复杂跨环节规则）。"""
         if self.provider is None:
             raise RuntimeError("未注入 PrimaryProvider，无法推导主状态")

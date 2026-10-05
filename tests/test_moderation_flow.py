@@ -8,6 +8,7 @@
 - 未知环节抛 `KeyError`；
 - 环节非法流转仍抛 `StateTransitionError`。
 """
+
 import pytest
 
 from app.services.moderation.flow import AuditFlow, AuditFlowOrchestrator, _PrimaryRow
@@ -46,18 +47,50 @@ def _make_flow_machine(transitions) -> type[AuditStateMachine]:
 
 # 人工内容审核环节：AUDITING -> NORMAL(通过) / REJECTED(驳回)；REJECTED -> NORMAL(重审)
 _CONTENT_TRANSITIONS = (
-    Transition(ResourceAuditStatusEnum.AUDITING, ModerationAction.APPROVE, ResourceAuditStatusEnum.NORMAL),
-    Transition(ResourceAuditStatusEnum.AUDITING, ModerationAction.REJECT, ResourceAuditStatusEnum.REJECTED),
-    Transition(ResourceAuditStatusEnum.REJECTED, ModerationAction.APPROVE, ResourceAuditStatusEnum.NORMAL),
-    Transition(ResourceAuditStatusEnum.NORMAL, ModerationAction.REJECT, ResourceAuditStatusEnum.REJECTED),
-    Transition(ResourceAuditStatusEnum.NORMAL, ModerationAction.HIDE, ResourceAuditStatusEnum.HIDDEN),
-    Transition(ResourceAuditStatusEnum.AUDITING, ModerationAction.HIDE, ResourceAuditStatusEnum.HIDDEN),
+    Transition(
+        ResourceAuditStatusEnum.AUDITING,
+        ModerationAction.APPROVE,
+        ResourceAuditStatusEnum.NORMAL,
+    ),
+    Transition(
+        ResourceAuditStatusEnum.AUDITING,
+        ModerationAction.REJECT,
+        ResourceAuditStatusEnum.REJECTED,
+    ),
+    Transition(
+        ResourceAuditStatusEnum.REJECTED,
+        ModerationAction.APPROVE,
+        ResourceAuditStatusEnum.NORMAL,
+    ),
+    Transition(
+        ResourceAuditStatusEnum.NORMAL,
+        ModerationAction.REJECT,
+        ResourceAuditStatusEnum.REJECTED,
+    ),
+    Transition(
+        ResourceAuditStatusEnum.NORMAL,
+        ModerationAction.HIDE,
+        ResourceAuditStatusEnum.HIDDEN,
+    ),
+    Transition(
+        ResourceAuditStatusEnum.AUDITING,
+        ModerationAction.HIDE,
+        ResourceAuditStatusEnum.HIDDEN,
+    ),
 )
 
 # 举报处置环节（独立单，不影响资源可见性主状态）：PENDING(用 AUDITING 表达待审) 与资源解耦
 _REPORT_TRANSITIONS = (
-    Transition(ResourceAuditStatusEnum.AUDITING, ModerationAction.APPROVE, ResourceAuditStatusEnum.NORMAL),
-    Transition(ResourceAuditStatusEnum.AUDITING, ModerationAction.REJECT, ResourceAuditStatusEnum.REJECTED),
+    Transition(
+        ResourceAuditStatusEnum.AUDITING,
+        ModerationAction.APPROVE,
+        ResourceAuditStatusEnum.NORMAL,
+    ),
+    Transition(
+        ResourceAuditStatusEnum.AUDITING,
+        ModerationAction.REJECT,
+        ResourceAuditStatusEnum.REJECTED,
+    ),
 )
 
 _ContentMachine = _make_flow_machine(_CONTENT_TRANSITIONS)
@@ -77,7 +110,9 @@ def _make_orchestrator(primary, content_affects=True, report_affects=False):
     """默认编排器：内容环节联动主状态，举报环节不联动（模拟资源的多环节）。"""
     flows = [
         AuditFlow(
-            "content_manual", _ContentMachine, "auditStatus",
+            "content_manual",
+            _ContentMachine,
+            "auditStatus",
             affects_primary=content_affects,
             when_primary={
                 ResourceAuditStatusEnum.NORMAL: ResourceAuditStatusEnum.NORMAL,
@@ -85,7 +120,9 @@ def _make_orchestrator(primary, content_affects=True, report_affects=False):
                 ResourceAuditStatusEnum.HIDDEN: ResourceAuditStatusEnum.HIDDEN,
             },
         ),
-        AuditFlow("report", _ReportMachine, "reportStatus", affects_primary=report_affects),
+        AuditFlow(
+            "report", _ReportMachine, "reportStatus", affects_primary=report_affects
+        ),
     ]
     return AuditFlowOrchestrator(primary=primary, flows=flows)
 
@@ -97,16 +134,22 @@ async def test_resource_has_multiple_independent_flows(session):
 
     # 内容环节：审核通过
     content_row = _FlowRow("auditStatus", ResourceAuditStatusEnum.AUDITING)
-    await orch.run_flow(session, content_row, "content_manual",
-                        action=ModerationAction.APPROVE, actor_mid=1)
+    await orch.run_flow(
+        session,
+        content_row,
+        "content_manual",
+        action=ModerationAction.APPROVE,
+        actor_mid=1,
+    )
     assert getattr(content_row, "auditStatus") is ResourceAuditStatusEnum.NORMAL
     # 主状态联动为 NORMAL
     assert primary.auditStatus is ResourceAuditStatusEnum.NORMAL
 
     # 举报环节（独立，affects_primary=False）：单独流转不影响主状态
     report_row = _FlowRow("reportStatus", ResourceAuditStatusEnum.AUDITING)
-    await orch.run_flow(session, report_row, "report",
-                        action=ModerationAction.REJECT, actor_mid=2)
+    await orch.run_flow(
+        session, report_row, "report", action=ModerationAction.REJECT, actor_mid=2
+    )
     assert getattr(report_row, "reportStatus") is ResourceAuditStatusEnum.REJECTED
     # 主状态仍为 NORMAL，未被举报驳回覆盖
     assert primary.auditStatus is ResourceAuditStatusEnum.NORMAL
@@ -118,8 +161,14 @@ async def test_affects_primary_linked_via_when_primary(session):
     orch = _make_orchestrator(primary)
 
     content_row = _FlowRow("auditStatus", ResourceAuditStatusEnum.AUDITING)
-    await orch.run_flow(session, content_row, "content_manual",
-                        action=ModerationAction.REJECT, actor_mid=1, reason="违规")
+    await orch.run_flow(
+        session,
+        content_row,
+        "content_manual",
+        action=ModerationAction.REJECT,
+        actor_mid=1,
+        reason="违规",
+    )
     # 内容环节 REJECTED -> 主 REJECTED
     assert primary.auditStatus is ResourceAuditStatusEnum.REJECTED
 
@@ -131,8 +180,13 @@ async def test_primary_only_written_by_orchestrator_single_entry(session):
 
     # 内容环节机器 run 前，其 state_attr 被编排器临时指到环节记录上，不碰主对象
     content_row = _FlowRow("auditStatus", ResourceAuditStatusEnum.AUDITING)
-    await orch.run_flow(session, content_row, "content_manual",
-                        action=ModerationAction.HIDE, actor_mid=1)
+    await orch.run_flow(
+        session,
+        content_row,
+        "content_manual",
+        action=ModerationAction.HIDE,
+        actor_mid=1,
+    )
     assert primary.auditStatus is ResourceAuditStatusEnum.HIDDEN
 
 
@@ -140,8 +194,13 @@ async def test_unknown_flow_raises(session):
     primary = _resource(ResourceAuditStatusEnum.AUDITING)
     orch = _make_orchestrator(primary)
     with pytest.raises(KeyError):
-        await orch.run_flow(session, _FlowRow("x", ResourceAuditStatusEnum.AUDITING), "nope",
-                            action=ModerationAction.APPROVE, actor_mid=1)
+        await orch.run_flow(
+            session,
+            _FlowRow("x", ResourceAuditStatusEnum.AUDITING),
+            "nope",
+            action=ModerationAction.APPROVE,
+            actor_mid=1,
+        )
 
 
 async def test_illegal_flow_transition_raises_and_primary_unchanged(session):
@@ -152,8 +211,9 @@ async def test_illegal_flow_transition_raises_and_primary_unchanged(session):
     # 举报环节从 REJECTED 无法 APPROVE（_REPORT_TRANSITIONS 无 REJECTED->NORMAL）
     report_row = _FlowRow("reportStatus", ResourceAuditStatusEnum.REJECTED)
     with pytest.raises(StateTransitionError):
-        await orch.run_flow(session, report_row, "report",
-                            action=ModerationAction.APPROVE, actor_mid=1)
+        await orch.run_flow(
+            session, report_row, "report", action=ModerationAction.APPROVE, actor_mid=1
+        )
     assert primary.auditStatus is ResourceAuditStatusEnum.NORMAL
 
 

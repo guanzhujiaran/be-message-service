@@ -25,6 +25,7 @@ Revises: 1cb38c34aef9
 Create Date: 2026-09-20 13:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -73,7 +74,9 @@ def _read_enum_column(bind, table: str, column: str):
     return row
 
 
-def _alter_enum_column(bind, table: str, column: str, new_type: str, nullable: str, default) -> None:
+def _alter_enum_column(
+    bind, table: str, column: str, new_type: str, nullable: str, default
+) -> None:
     """按现有列的 NULL / DEFAULT 约束改写列类型（原生 SQL，避免 alembic 想当然地变更约束）。"""
     null_sql = "" if nullable == "YES" else " NOT NULL"
     if default is None:
@@ -114,7 +117,9 @@ def _remove_member(bind, table: str, column: str, member: str) -> None:
         return
     if f"'{member}'" not in column_type:
         return
-    parts = [p for p in column_type[len("enum(") : -1].split(",") if p.strip("'") != member]
+    parts = [
+        p for p in column_type[len("enum(") : -1].split(",") if p.strip("'") != member
+    ]
     if not parts:
         return
     new_type = f"enum({','.join(parts)})"

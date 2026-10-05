@@ -5,14 +5,21 @@
 - `msg_user_setting`(mid)：消息设置；
 - `msg_user_activity`(mid)：活跃度；
 - `msg_user_ban`(mid/operator_mid)：封禁关系（被禁者 / 操作者双向）；
-- `msg_admin`(mid/granted_by)：管理端授权（被授权人 / 授予人双向）。
+- `msg_admin`(mid/granted_by)：管理端授权（被授权人 / 授予人双向）；
+- `TUserSpacePrivacy`(mid)：空间对外可见性设置（2.58.0；注销后不留可见性偏好）。
 """
 
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, delete
 
-from app.models.db import MessageAdmin, UserActivity, UserBan, UserMessageSetting
+from app.models.db import (
+    MessageAdmin,
+    TUserSpacePrivacy,
+    UserActivity,
+    UserBan,
+    UserMessageSetting,
+)
 
 
 class CleanupMiscService:
@@ -25,6 +32,9 @@ class CleanupMiscService:
             delete(UserMessageSetting).where(col(UserMessageSetting.mid) == uid)
         )
         await session.exec(delete(UserActivity).where(col(UserActivity.mid) == uid))
+        await session.exec(
+            delete(TUserSpacePrivacy).where(col(TUserSpacePrivacy.mid) == uid)
+        )
         await session.exec(
             delete(UserBan).where(
                 or_(col(UserBan.mid) == uid, col(UserBan.operator_mid) == uid)

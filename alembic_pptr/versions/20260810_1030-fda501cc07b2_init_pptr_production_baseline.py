@@ -1,10 +1,11 @@
 """init_pptr_production_baseline
 
 Revision ID: fda501cc07b2
-Revises: 
+Revises:
 Create Date: 2026-08-10 10:30:53.817278
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -13,7 +14,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'fda501cc07b2'
+revision: str = "fda501cc07b2"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -11,17 +11,23 @@ from sqlmodel import Field, SQLModel
 
 
 from app.models.schemas.base import auto_str
+
+
 @auto_str
 class FolderCoverAuditItem(SQLModel):
     """管理端待审核队列中的单条封面申请（含作者昵称，来自 pptr 回查）。"""
 
     pk: int = Field(description="审核记录主键")
-    folderId: str = Field(description="所属收藏夹 id（字符串）")
+    folderId: int = Field(
+        description="所属收藏夹 id（雪花ID；字符串版见 folderId_str）"
+    )
     mid: int = Field(description="提交封面的用户 UID")
     authorName: str | None = Field(default=None, description="提交者昵称（pptr 回查）")
     oldCover: str | None = Field(default=None, description="旧封面 URL")
     newCover: str = Field(description="申请的新封面 URL")
-    auditStatus: str = Field(description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回")
+    auditStatus: str = Field(
+        description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回"
+    )
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
 
 
@@ -57,11 +63,17 @@ class FolderCoverAuditMineResp(SQLModel):
     """用户侧「某收藏夹封面审核状态」响应（无记录时接口返回 data=null）。"""
 
     pk: int = Field(description="审核记录主键")
-    folderId: str = Field(description="所属收藏夹 id（字符串）")
+    folderId: int = Field(
+        description="所属收藏夹 id（雪花ID；字符串版见 folderId_str）"
+    )
     newCover: str = Field(description="申请的新封面 URL")
     oldCover: str | None = Field(default=None, description="旧封面 URL")
-    auditStatus: str = Field(description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回")
-    auditReason: str | None = Field(default=None, description="驳回原因（REJECTED 时有值）")
+    auditStatus: str = Field(
+        description="审核状态（统一枚举 .name）：AUDITING=待审 / NORMAL=已通过 / REJECTED=已驳回"
+    )
+    auditReason: str | None = Field(
+        default=None, description="驳回原因（REJECTED 时有值）"
+    )
     createdAt: str | None = Field(default=None, description="提交时间（ISO）")
     auditedAt: str | None = Field(default=None, description="审核时间（ISO）")
 

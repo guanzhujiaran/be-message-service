@@ -156,9 +156,7 @@ class CommentActionService:
         async with new_session() as ns:
             content = (
                 await ns.exec(
-                    select(CommentContent).where(
-                        col(CommentContent.rpid) == row.rpid
-                    )
+                    select(CommentContent).where(col(CommentContent.rpid) == row.rpid)
                 )
             ).one_or_none()
         await report_event_weakly(

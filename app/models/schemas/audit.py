@@ -19,6 +19,8 @@ from sqlmodel import Field, SQLModel
 
 
 from app.models.schemas.base import auto_str
+
+
 @auto_str
 class AuditSourceInfo(SQLModel):
     """审核项的内容来源（供管理端点击直达原始内容）。"""
@@ -85,11 +87,15 @@ class AuditTypeCountRow(SQLModel):
     路由配 `response_model_exclude_none=True` 后 None 列不出现在响应里。
     """
 
-    type: str = Field(default="", description="子类型名（无子类型的域该行为空行/不产出）")
+    type: str = Field(
+        default="", description="子类型名（无子类型的域该行为空行/不产出）"
+    )
     total: int = 0
     auditing: int | None = Field(default=None, description="审核中（资源审核域）")
     normal: int | None = Field(default=None, description="已过审（资源审核域）")
-    rejected: int | None = Field(default=None, description="已驳回（资源审核域 / 举报驳回）")
+    rejected: int | None = Field(
+        default=None, description="已驳回（资源审核域 / 举报驳回）"
+    )
     hidden: int | None = Field(default=None, description="已下架（资源审核域）")
     deleted: int | None = Field(default=None, description="软删（当前仅评论域表达）")
     pending: int | None = Field(default=None, description="待处理（举报域）")
@@ -108,7 +114,8 @@ class AuditStatisticsResp(SQLModel):
     total: int = 0
     byStatus: dict[str, int] = Field(default_factory=dict)
     byType: list[AuditTypeCountRow] | None = Field(
-        default=None, description="按子类型分组明细；无子类型维度的域为 None（响应中省略）"
+        default=None,
+        description="按子类型分组明细；无子类型维度的域为 None（响应中省略）",
     )
 
 

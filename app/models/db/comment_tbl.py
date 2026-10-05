@@ -39,7 +39,6 @@ from app.models.enums import (
 )
 
 
-
 class CommentSubject(TimestampMixin, table=True):
     """评论区（一个业务实体对应一个评论区）。"""
 
@@ -119,7 +118,10 @@ class CommentIndex(TimestampMixin, table=True):
 
     # ---- 树形关系（对齐 B 站语义）----
     root: int = Field(
-        default=0, sa_type=BIGINT, index=True, description="根评论rpid；0 表示自己就是一级评论"
+        default=0,
+        sa_type=BIGINT,
+        index=True,
+        description="根评论rpid；0 表示自己就是一级评论",
     )
     parent: int = Field(
         default=0, sa_type=BIGINT, description="直接父评论rpid；0 表示一级评论"
@@ -152,7 +154,8 @@ class CommentIndex(TimestampMixin, table=True):
         description="评论审核状态，决定可见性（对齐统一审核态）",
     )
     attr: int = Field(
-        default=0, description="位图标记：1置顶 / 2精选 / 4UP主赞过（见 CommentAttrBit）"
+        default=0,
+        description="位图标记：1置顶 / 2精选 / 4UP主赞过（见 CommentAttrBit）",
     )
 
 
@@ -196,7 +199,9 @@ class CommentContent(TimestampMixin, table=True):
     )
     # ---- IP 属地（服务端 GeoIP 解析，随评论发布时保存，供前端展示）----
     ip_location: str | None = Field(
-        default=None, max_length=64, description="IP 属地（国家/省/城市，如「浙江 杭州」）"
+        default=None,
+        max_length=64,
+        description="IP 属地（国家/省/城市，如「浙江 杭州」）",
     )
     ip_isp: str | None = Field(
         default=None, max_length=128, description="IP 运营商 ISP"
@@ -269,11 +274,16 @@ class CommentReport(ReportBase, table=True):
     __tablename__ = "msg_comment_report"
     __table_args__ = (
         UniqueConstraint(
-            "reportMid", "bizType", "bizId",
+            "reportMid",
+            "bizType",
+            "bizId",
             name="uq_comment_report_report_mid_biz_type_biz_id",
         ),
         Index("idx_comment_report_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "评论举报表：bizType=comment，bizId=rpid（继承 ReportBase）"},
+        {
+            "extend_existing": True,
+            "comment": "评论举报表：bizType=comment，bizId=rpid（继承 ReportBase）",
+        },
     )
 
 

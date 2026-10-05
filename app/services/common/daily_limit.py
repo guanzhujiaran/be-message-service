@@ -53,11 +53,15 @@ async def count_created_today(
     if created_column is None:
         created_column = getattr(model, "created_at")
     start, end = _today_window()
-    stmt = select(func.count()).select_from(model).where(
-        col(author_column) == author_mid,
-        col(created_column) >= start,
-        col(created_column) < end,
-        *extra_conditions,
+    stmt = (
+        select(func.count())
+        .select_from(model)
+        .where(
+            col(author_column) == author_mid,
+            col(created_column) >= start,
+            col(created_column) < end,
+            *extra_conditions,
+        )
     )
     result = await session.exec(stmt)
     return int(result.one() or 0)

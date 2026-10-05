@@ -4,6 +4,7 @@
 ``POST /create``(scene=FORWARD) 独立分支（支持挂话题）、以及转发语 @（详情回显 +
 AT 事件断言）与源动态 ``repostCount +1`` 状态机校验。
 """
+
 import asyncio
 from itertools import cycle
 
@@ -77,10 +78,14 @@ async def seed_moment(
             # 正文末尾追加 @（不 @ 自己），覆盖动态 @ 落库 + 事件通知链路
             at_targets = _rr_at_targets(author_mid)
             # 话题：轮流挂载（topic_ids 非空时每 2 条带 1 个话题，避免全部/全不带）
-            topic_id = _rr.pick(topic_ids) if (topic_ids and _rr.pick(range(2)) == 0) else None
+            topic_id = (
+                _rr.pick(topic_ids) if (topic_ids and _rr.pick(range(2)) == 0) else None
+            )
 
             # 1) 发布（正文图轮遍 _IMG_URLS，非随机 30%）
-            content = _content_nodes(sentence, at_targets, with_image=_rr.pick(range(10)) == 0)
+            content = _content_nodes(
+                sentence, at_targets, with_image=_rr.pick(range(10)) == 0
+            )
             dyn_id = await client.create_dynamic(
                 author_mid,
                 scene="WORD",

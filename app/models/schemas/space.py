@@ -13,6 +13,8 @@ from sqlmodel import Field, SQLModel
 
 
 from app.models.schemas.base import auto_str
+
+
 @auto_str
 class SpaceOfficial(SQLModel):
     """官方认证信息（pptr 无数据源，固定返回空结构）。"""
@@ -74,6 +76,63 @@ class SpaceUpStat(SQLModel):
 
 
 @auto_str
+class SpacePrivacyFlags(SQLModel):
+    """空间对外可见性开关（2.58.0）。
+
+    两类语义，前端消费方式不同：
+
+    - **敏感原文类**（``show_personal_info`` / ``show_login_info``）：后端在
+      `viewer != mid` 且开关关闭时**直接不下发对应字段**（不是null），前端无需
+      区分「无权限」与「无数据」；
+    - **列表/条目类**（``show_follow_list`` / ``show_like_list`` /
+      ``show_fans_list``）：后端在关闭时让该类型内容**整类不出现**。
+
+    ``show_favorites`` 复用既有 `TUserFavoriteSetting.showFavorites`（收藏夹整体
+    对外可见性），不另建列，故一并回显方便设置页统一渲染。
+    """
+
+    show_personal_info: bool = Field(
+        default=False, description="个人资料：性别/生日/邮箱是否对外"
+    )
+    show_login_info: bool = Field(
+        default=False, description="上次登录时间与IP属地是否对外"
+    )
+    show_follow_list: bool = Field(
+        default=False, description="时间线「我关注了谁」条目是否对外"
+    )
+    show_like_list: bool = Field(
+        default=False, description="时间线「我点赞了什么」条目是否对外"
+    )
+    show_fans_list: bool = Field(default=False, description="粉丝列表是否对外")
+    show_favorites: bool = Field(
+        default=True, description="收藏夹是否对外（复用 TUserFavoriteSetting）"
+    )
+
+
+@auto_str
+class SpacePrivacyUpdateReq(SQLModel):
+    """空间可见性开关更新请求（当前登录用户自己的设置，2.58.0）。
+
+    五个开关整体提交（全量覆盖），不做 PATCH 语义 —— 前端设置页一次保存全部开关，
+    避免「部分更新」与「默认值」混淆。
+    """
+
+    show_personal_info: bool = Field(
+        default=False, description="个人资料：性别/生日/邮箱是否对外"
+    )
+    show_login_info: bool = Field(
+        default=False, description="上次登录时间与IP属地是否对外"
+    )
+    show_follow_list: bool = Field(
+        default=False, description="时间线「我关注了谁」条目是否对外"
+    )
+    show_like_list: bool = Field(
+        default=False, description="时间线「我点赞了什么」条目是否对外"
+    )
+    show_fans_list: bool = Field(default=False, description="粉丝列表是否对外")
+
+
+@auto_str
 class SpaceInfoResp(SQLModel):
     """用户空间完整资料（对标 B 站 `/x/space/wbi/acc/info` 的 data）。
 
@@ -105,12 +164,107 @@ class SpaceInfoResp(SQLModel):
     follow_stat: SpaceFollowStat = Field(default_factory=SpaceFollowStat)
     upstat: SpaceUpStat = Field(default_factory=SpaceUpStat)
 
+    # ---- 2.58.0 隐私与对外可见性 ----
+    # 邮箱：pptr TUserDetail.email 有数据源，但历来不在空间资料里下发；
+    # 受 show_personal_info 控制（viewer==self 时恒下发）
+    email: str | None = None
+    # 上次登录时间 + IP 属地（属地由 mmdb 读取时实时解析，不入库）；
+    # 受 show_login_info 控制。last_login_at 为 pptr TUserActInfoLog 最近一条
+    # 登录记录的createdAt。
+    last_login_at: datetime | None = None
+    ip_location: str | None = None
+    # 空间被访问次数（2.58.0：进入他人空间时按 bizType=USER 上报）。
+    # 统计数字固定展示、不设开关。
+    view_count: int = 0
+    privacy_flags: SpacePrivacyFlags = Field(default_factory=SpacePrivacyFlags)
+
+
+@auto_str
+class SpaceTimelineItem(SQLModel):
+    """行为时间线单条记录（2.58.0 计划书 §3.3）。
+
+    反映「当前有效状态」而非操作流水：取消点赞 / 取关 / 取消收藏后，对应条目
+    因明细行被物理删除而自然消失。出参字段统一为：
+
+    - `act_type`：follow / like / favorite；
+    - follow：`target_mid/name/face` = 被关注用户；
+    - like / favorite：`target_dyn_id` = 动态 id，`target_mid/name/face` = 动态作者，
+      `target_text` = 动态正文摘要；favorite 额外带 `target_folder_name`。
+    """
+
+    act_type: str = Field(
+        description="行为类型：follow 关注 / like 点赞 / favorite 收藏"
+    )
+    target_mid: int | None = Field(
+        default=None,
+        description="目标用户 mid（follow=被关注者；like/favorite=动态作者）",
+    )
+    target_name: str | None = Field(
+        default=None, description="目标用户展示名（对方注销或回查失败时为 null）"
+    )
+    target_face: str | None = Field(default=None, description="目标用户头像 URL")
+    target_text: str | None = Field(
+        default=None, description="动态正文摘要（仅 like / favorite 有）"
+    )
+    target_dyn_id: int | None = Field(
+        default=None,
+        description="动态 id（仅 like / favorite 有，前端点进 MOMENT_DETAIL）",
+    )
+    target_folder_name: str | None = Field(
+        default=None, description="收藏夹名称（仅 favorite 有）"
+    )
+    acted_at: datetime = Field(description="行为发生时间（created_at）")
+
+
+@auto_str
+class SpaceTimelineResp(SQLModel):
+    """行为时间线分页响应（游标 = 本页最后一条的 acted_at）。"""
+
+    items: list[SpaceTimelineItem] = Field(default_factory=list)
+    has_more: bool = Field(default=False)
+    cursor: str | None = Field(
+        default=None, description="下一页游标（ISO 时间），has_more=false 时为空"
+    )
+
+
+@auto_str
+class SpaceViewHistoryItem(SQLModel):
+    """浏览历史单条记录（数据源 `TInteractionViewLog`，每用户每资源一行合并）。"""
+
+    biz_type: str = Field(
+        description="资源类型文字（dynamic / lottery / rpa_* / user）"
+    )
+    biz_id: int = Field(description="资源 id（dynamic 时 = dynId）")
+    title: str | None = Field(
+        default=None,
+        description="资源标题/正文摘要（当前仅 dynamic 回查，其余 bizType 待 P3）",
+    )
+    last_view_at: datetime = Field(description="最后访问时间")
+    view_count: int = Field(default=1, description="该用户对该资源的累计浏览次数")
+
+
+@auto_str
+class SpaceViewHistoryResp(SQLModel):
+    """浏览历史分页响应（游标 = 本页最后一条的 last_view_at）。"""
+
+    items: list[SpaceViewHistoryItem] = Field(default_factory=list)
+    has_more: bool = Field(default=False)
+    cursor: str | None = Field(
+        default=None, description="下一页游标（ISO 时间），has_more=false 时为空"
+    )
+
 
 __all__ = [
+    "SpacePrivacyFlags",
+    "SpacePrivacyUpdateReq",
     "SpaceFollowStat",
     "SpaceInfoResp",
     "SpaceOfficial",
+    "SpaceTimelineItem",
+    "SpaceTimelineResp",
     "SpaceUpStat",
+    "SpaceViewHistoryItem",
+    "SpaceViewHistoryResp",
     "SpaceVip",
     "SpaceVipLabel",
     "SpaceVipWrap",

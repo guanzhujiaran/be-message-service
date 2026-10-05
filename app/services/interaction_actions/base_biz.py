@@ -53,6 +53,7 @@ __all__ = [
 
 # ==================== 声明式权限元数据装饰器 ====================
 
+
 def biz_action(
     *,
     relation: list[InteractionRelationScopeEnum] | None = None,
@@ -306,7 +307,9 @@ class BaseBiz(ABC):
         if not scopes:
             return
         author_mid = (
-            resource.authorMid if resource.authorMid is not None else getattr(resource, "mid", None)
+            resource.authorMid
+            if resource.authorMid is not None
+            else getattr(resource, "mid", None)
         )
         if author_mid is None or author_mid == self.actor_mid:
             return
@@ -332,7 +335,9 @@ class BaseBiz(ABC):
 
     def _is_owner(self, resource: InteractionResource) -> bool:
         """资源所有者判断（DAC `OWNER_ONLY`）。"""
-        owner = resource.ownerMid if resource.ownerMid is not None else resource.authorMid
+        owner = (
+            resource.ownerMid if resource.ownerMid is not None else resource.authorMid
+        )
         return owner is not None and owner == self.actor_mid
 
     def _is_auditor(self) -> bool:
@@ -469,7 +474,9 @@ class BaseBiz(ABC):
             )
         )
 
-    async def _notify_report_result(self, rec, admin_mid: int, *, resolved: bool) -> None:
+    async def _notify_report_result(
+        self, rec, admin_mid: int, *, resolved: bool
+    ) -> None:
         """举报审核结果通知举报人（弱依赖，失败不阻塞）。"""
         from app.models.schemas import EventReportReq
         from app.services.message.insite.events import report_event_weakly
@@ -479,9 +486,7 @@ class BaseBiz(ABC):
             if resolved
             else InteractionActionTypeEnum.REPORT_REJECT
         )
-        content = (
-            "你提交的举报已成立并处理" if resolved else "你提交的举报未通过审核"
-        )
+        content = "你提交的举报已成立并处理" if resolved else "你提交的举报未通过审核"
         await report_event_weakly(
             EventReportReq(
                 mid=rec.reportMid,
@@ -548,6 +553,7 @@ class BaseBiz(ABC):
 
 
 # ==================== 资源解析入口（取代工厂）====================
+
 
 def get_biz_class(biz_type) -> type[BaseBiz]:
     """按资源类型返回对应的资源类（读继承登记表，无工厂映射表）。

@@ -13,6 +13,7 @@
 本文件只做 sys.path 注入与入口转发，不放业务逻辑。
 整体说明见 ``scripts/seed/__init__.py`` 与计划书 §5.7。
 """
+
 import sys
 from pathlib import Path
 

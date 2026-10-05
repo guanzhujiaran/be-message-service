@@ -39,7 +39,7 @@ from app.models.schemas import (
     CommentTopReq,
     CommentTopResp,
     UserBriefOut,
-    )
+)
 from app.services.comment import CommentService
 from app.services.comment.comment_action import CommentActionService
 from app.services.comment.comment_read import CommentReadService
@@ -106,7 +106,9 @@ async def resolve_optional_viewer(
 # ==================== 发布 / 删除 ====================
 
 
-@router.post("/add", response_model=StandardResponse[CommentAddResp], summary="发表评论")
+@router.post(
+    "/add", response_model=StandardResponse[CommentAddResp], summary="发表评论"
+)
 async def add_comment(
     session: SessionDep,
     user: RequiredUser,
@@ -128,7 +130,9 @@ async def add_comment(
     因此本路由**不需要也不允许**维护可评论类型白名单。
     """
     # 封禁校验：被封禁「评论」服务的用户禁止发表评论
-    if await CommentAdminUser(mid=user.mid).is_banned(session, BanServiceEnum.COMMENT.value):
+    if await CommentAdminUser(mid=user.mid).is_banned(
+        session, BanServiceEnum.COMMENT.value
+    ):
         return StandardResponse(code=403, msg="该账号已被封禁评论功能，无法发表评论")
 
     ip_v4, ip_v6 = extract_client_ip(
@@ -178,7 +182,9 @@ async def add_comment(
     return StandardResponse(data=data)
 
 
-@router.post("/del", response_model=StandardResponse[CommentOperationResp], summary="删除评论")
+@router.post(
+    "/del", response_model=StandardResponse[CommentOperationResp], summary="删除评论"
+)
 async def delete_comment(
     session: SessionDep,
     user: RequiredUser,
@@ -207,16 +213,23 @@ async def delete_comment(
 # ==================== 列表 / 详情 / 计数 ====================
 
 
-@router.get("/main", response_model=StandardResponse[CommentListResp], summary="一级评论列表")
+@router.get(
+    "/main", response_model=StandardResponse[CommentListResp], summary="一级评论列表"
+)
 async def list_main(
     session: SessionDep,
     _viewer: int | None = Depends(resolve_optional_viewer),
     oid: str = Query(description="业务实体id（字符串，雪花ID）"),
     type: InteractionBizTypeEnum = Query(description="业务实体类型"),
-    sort: CommentSortEnum = Query(default=CommentSortEnum.HOT, description="排序：hot 热度 / time 时间"),
+    sort: CommentSortEnum = Query(
+        default=CommentSortEnum.HOT, description="排序：hot 热度 / time 时间"
+    ),
     page_num: int = Query(default=1, ge=1, description="页码，从 1 开始"),
     page_size: int = Query(default=20, ge=1, le=50, description="每页条数"),
-    focus_rpid: str | None = Query(default=None, description="定位评论rpid：该评论（或其根评论）会被提到列表顶部并回填 focus 字段，用于通知/外链直达"),
+    focus_rpid: str | None = Query(
+        default=None,
+        description="定位评论rpid：该评论（或其根评论）会被提到列表顶部并回填 focus 字段，用于通知/外链直达",
+    ),
 ) -> StandardResponse[CommentListResp]:
     """一级评论列表（含置顶评论）。
 
@@ -259,7 +272,9 @@ async def list_main(
     return StandardResponse(data=data)
 
 
-@router.get("/detail/{rpid}", response_model=StandardResponse[CommentItem], summary="评论详情")
+@router.get(
+    "/detail/{rpid}", response_model=StandardResponse[CommentItem], summary="评论详情"
+)
 async def comment_detail(
     session: SessionDep,
     rpid: str,
@@ -279,7 +294,9 @@ async def comment_detail(
     return StandardResponse(data=item)
 
 
-@router.get("/count", response_model=StandardResponse[CommentCountResp], summary="评论区计数")
+@router.get(
+    "/count", response_model=StandardResponse[CommentCountResp], summary="评论区计数"
+)
 async def comment_count(
     session: SessionDep,
     oid: str = Query(description="业务实体id（字符串）"),
@@ -300,7 +317,11 @@ async def comment_count(
     return StandardResponse(data=data)
 
 
-@router.get("/latest", response_model=StandardResponse[CommentLatestResp], summary="首页最新评论（按资源类型分组）")
+@router.get(
+    "/latest",
+    response_model=StandardResponse[CommentLatestResp],
+    summary="首页最新评论（按资源类型分组）",
+)
 async def comment_latest(
     session: SessionDep,
     _viewer: int | None = Depends(resolve_optional_viewer),
@@ -308,7 +329,9 @@ async def comment_latest(
         default=None,
         description="逗号分隔的资源类型文字（dynamic/lottery/rpa_action/rpa_workflow/rpa_browser/rpa_plugin），缺省返回全部可挂评论的类型",
     ),
-    limit: int = Query(default=5, ge=1, le=20, description="每个资源类型取最新根评论条数"),
+    limit: int = Query(
+        default=5, ge=1, le=20, description="每个资源类型取最新根评论条数"
+    ),
 ) -> StandardResponse[CommentLatestResp]:
     """首页「最新评论」：按资源类型分组，仅返回各类型最新 N 条根评论。
 
@@ -337,7 +360,9 @@ async def comment_latest(
 # ==================== 楼中楼 / 互动 / @ / 置顶 ====================
 
 
-@router.get("/reply", response_model=StandardResponse[CommentSubListResp], summary="楼中楼展开")
+@router.get(
+    "/reply", response_model=StandardResponse[CommentSubListResp], summary="楼中楼展开"
+)
 async def reply_list(
     session: SessionDep,
     _viewer: int | None = Depends(resolve_optional_viewer),
@@ -376,7 +401,11 @@ async def reply_list(
     return StandardResponse(data=data)
 
 
-@router.post("/action", response_model=StandardResponse[CommentActionResp], summary="点赞/点踩/取消")
+@router.post(
+    "/action",
+    response_model=StandardResponse[CommentActionResp],
+    summary="点赞/点踩/取消",
+)
 async def comment_action(
     session: SessionDep,
     user: RequiredUser,
@@ -401,7 +430,9 @@ async def comment_action(
     return StandardResponse(data=data)
 
 
-@router.post("/report", response_model=StandardResponse[CommentReportResp], summary="举报评论")
+@router.post(
+    "/report", response_model=StandardResponse[CommentReportResp], summary="举报评论"
+)
 async def report_comment(
     session: SessionDep,
     user: RequiredUser,
@@ -435,7 +466,11 @@ async def report_comment(
     )
 
 
-@router.get("/at/search", response_model=StandardResponse[list[UserBriefOut]], summary="@用户搜索")
+@router.get(
+    "/at/search",
+    response_model=StandardResponse[list[UserBriefOut]],
+    summary="@用户搜索",
+)
 async def at_search(
     user: RequiredUser,
     keyword: str = Query(min_length=1, max_length=32, description="昵称前缀"),
@@ -452,7 +487,9 @@ async def at_search(
     return StandardResponse(data=[b for b in items])
 
 
-@router.post("/top", response_model=StandardResponse[CommentTopResp], summary="置顶/取消置顶")
+@router.post(
+    "/top", response_model=StandardResponse[CommentTopResp], summary="置顶/取消置顶"
+)
 async def comment_top(
     session: SessionDep,
     user: RequiredUser,

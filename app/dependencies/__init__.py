@@ -5,11 +5,13 @@ from bili_common.models.interaction import InteractionBizTypeEnum
 
 from app.dependencies.admin import MsgAdminUser
 from app.dependencies.user import (
+    ActiveUser,
     AdminUser,
     CurrentUser,
     OptionalUser,
     RequiredUser,
     RootUser,
+    get_active_user,
     get_admin_user,
     get_current_user,
     get_optional_user,
@@ -20,12 +22,14 @@ from app.dependencies.user import (
 __all__ = [
     "BizPermOp",
     "InteractionBizTypeEnum",
+    "ActiveUser",
     "AdminUser",
     "CurrentUser",
     "MsgAdminUser",
     "OptionalUser",
     "RequiredUser",
     "RootUser",
+    "get_active_user",
     "get_admin_user",
     "get_current_user",
     "get_optional_user",

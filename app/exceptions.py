@@ -33,7 +33,9 @@ class CommentNotInteractiveException(BiliException):
         )
 
     @classmethod
-    def for_state(cls, state: ResourceAuditStatusEnum) -> "CommentNotInteractiveException":
+    def for_state(
+        cls, state: ResourceAuditStatusEnum
+    ) -> "CommentNotInteractiveException":
         """按评论生命周期状态构造异常，反馈对应状态的准确文案。"""
         return cls(cls._STATE_MSG.get(state, "评论不可互动"))
 

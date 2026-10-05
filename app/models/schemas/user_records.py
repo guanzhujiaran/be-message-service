@@ -16,15 +16,23 @@ from sqlmodel import Field, SQLModel
 
 
 from app.models.schemas.base import auto_str
+
+
 @auto_str
 class UserActLogItem(SQLModel):
     """单条登录 / 行为记录（TUserActInfoLog）。"""
 
     time: datetime = Field(description="行为发生时间（timezone-aware）")
-    ip: str = Field(default="", description="客户端 IP（脱敏后，IPv4→a.b.*.*，IPv6→a:b:*）")
-    location: str = Field(default="未知", description="地理位置（地区 + 运营商，如：中国 上海 移动）")
+    ip: str = Field(
+        default="", description="客户端 IP（脱敏后，IPv4→a.b.*.*，IPv6→a:b:*）"
+    )
+    location: str = Field(
+        default="未知", description="地理位置（地区 + 运营商，如：中国 上海 移动）"
+    )
     ua: str = Field(default="", description="客户端 User-Agent")
-    act_info: str = Field(default="login_succ", description="行为类型：login_succ / reg")
+    act_info: str = Field(
+        default="login_succ", description="行为类型：login_succ / reg"
+    )
 
 
 @auto_str
@@ -40,7 +48,9 @@ class UserExpRecordItem(SQLModel):
     """单条经验变动记录（TUserExpRecord）。"""
 
     time: datetime = Field(description="经验增加时间（timezone-aware）")
-    action_type: int = Field(description="行为类型 int（对应 ExpActionType：1=daily_login）")
+    action_type: int = Field(
+        description="行为类型 int（对应 ExpActionType：1=daily_login）"
+    )
     action_name: str = Field(default="", description="行为类型名称（daily_login 等）")
     exp: int = Field(default=0, description="本次增加的经验值")
     ref_date: str = Field(default="", description="行为引用日期 YYYY-MM-DD")

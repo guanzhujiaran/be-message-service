@@ -17,7 +17,11 @@ from app.core.database import new_session
 from app.models.db import CommentIndex, CommentSubject
 from app.models.db.moment_tbl import TMoment
 from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import ResourceAuditStatusEnum, ResourceAuditStatusEnum, MomentTypeEnum
+from app.models.enums import (
+    ResourceAuditStatusEnum,
+    ResourceAuditStatusEnum,
+    MomentTypeEnum,
+)
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_admin import CommentAdminService
@@ -71,7 +75,9 @@ async def _cleanup(oid: int) -> None:
         )
         await s.exec(text(f"DELETE FROM msg_comment_index WHERE oid = {oid}"))
         await s.exec(text(f"DELETE FROM msg_comment_subject WHERE oid = {oid}"))
-        await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {oid}"))
+        await s.exec(
+            text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {oid}")
+        )
         await s.exec(
             text(f"DELETE FROM TInteractionStat WHERE bizType = 1 AND bizId = {oid}")
         )
@@ -128,7 +134,9 @@ async def _stat_comment_count(session, oid: int) -> int:
     # 2.36.0：动态计数统一 TInteractionStat（bizType=1=DYNAMIC）
     row = (
         await session.exec(
-            text(f"SELECT commentCount FROM TInteractionStat WHERE bizType = 1 AND bizId = {oid}")
+            text(
+                f"SELECT commentCount FROM TInteractionStat WHERE bizType = 1 AND bizId = {oid}"
+            )
         )
     ).one_or_none()
     return int(row[0]) if row else 0
@@ -143,7 +151,11 @@ async def test_comment_count_sync_on_review():
             rpid = await _add(s, oid)
             await s.commit()
             state = (
-                await s.exec(select(CommentIndex.auditStatus).where(col(CommentIndex.rpid) == rpid))
+                await s.exec(
+                    select(CommentIndex.auditStatus).where(
+                        col(CommentIndex.rpid) == rpid
+                    )
+                )
             ).one()
 
         # 若预审置 auditing：未审核状态不计入数量（关键断言）
@@ -154,7 +166,9 @@ async def test_comment_count_sync_on_review():
                 assert await _stat_comment_count(s, oid) == 0
             # 审核通过（auditing → normal）：计入数量
             async with new_session() as s:
-                await CommentAdminService.set_state(s, rpid, ResourceAuditStatusEnum.NORMAL)
+                await CommentAdminService.set_state(
+                    s, rpid, ResourceAuditStatusEnum.NORMAL
+                )
             async with new_session() as s:
                 root, allc = await _subject_counts(s, oid)
                 assert (root, allc) == (1, 1)
@@ -168,7 +182,9 @@ async def test_comment_count_sync_on_review():
 
         # 驳回（normal → rejected）：未审核评论不再计入数量
         async with new_session() as s:
-            await CommentAdminService.set_state(s, rpid, ResourceAuditStatusEnum.REJECTED)
+            await CommentAdminService.set_state(
+                s, rpid, ResourceAuditStatusEnum.REJECTED
+            )
         async with new_session() as s:
             root, allc = await _subject_counts(s, oid)
             assert (root, allc) == (0, 0)
@@ -202,7 +218,11 @@ async def test_auditing_not_counted():
             rpid = await _add(s, oid)
             await s.commit()
             state = (
-                await s.exec(select(CommentIndex.auditStatus).where(col(CommentIndex.rpid) == rpid))
+                await s.exec(
+                    select(CommentIndex.auditStatus).where(
+                        col(CommentIndex.rpid) == rpid
+                    )
+                )
             ).one()
         if state != ResourceAuditStatusEnum.AUDITING:
             return  # 未开启预审时跳过本场景

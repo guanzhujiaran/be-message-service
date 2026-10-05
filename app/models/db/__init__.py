@@ -16,9 +16,14 @@ from app.models.db.comment_tbl import (
     CommentReport,
     CommentSubject,
 )
+from app.models.db.deactivation_tbl import UserDeactivation
 from app.models.db.dm_tbl import DmContentDeadLetter, DmMessageIndex, DmSession
 from app.models.db.event_tbl import EventMessage, EventReadCursor
-from app.models.db.favorite_tbl import TFavoriteFolder, TResourceFavorite, TUserFavoriteSetting
+from app.models.db.favorite_tbl import (
+    TFavoriteFolder,
+    TResourceFavorite,
+    TUserFavoriteSetting,
+)
 from app.models.db.feed_impression_tbl import TFeedImpression
 from app.models.db.folder_cover_audit_tbl import TFolderCoverAudit
 from app.models.db.follow_tbl import UserFollow
@@ -39,6 +44,7 @@ from app.models.db.resource_tbl import (
 from app.models.db.resource_feed_tbl import TResourceFeed
 from app.models.db.report_tbl import TUserReport
 from app.models.db.setting_tbl import UserActivity, UserMessageSetting
+from app.models.db.space_privacy_tbl import TUserSpacePrivacy
 from app.models.db.sys_config_tbl import SysConfig
 
 __all__ = [  # noqa: RUF022
@@ -99,4 +105,8 @@ __all__ = [  # noqa: RUF022
     "UserFollow",
     # 设置与活跃度
     "UserMessageSetting",
+    # 空间对外可见性（2.58.0）
+    "TUserSpacePrivacy",
+    # 用户注销冷静期（两阶段注销）
+    "UserDeactivation",
 ]

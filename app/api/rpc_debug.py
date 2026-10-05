@@ -45,7 +45,9 @@ async def list_methods(user: RootUser) -> StandardResponse[list]:
 
 
 @router.post("/invoke", summary="发起一次真实 RPC 往返（回显原始信封）")
-async def invoke_rpc(user: RootUser, req: RpcInvokeReq) -> StandardResponse[RpcInvokeResult]:
+async def invoke_rpc(
+    user: RootUser, req: RpcInvokeReq
+) -> StandardResponse[RpcInvokeResult]:
     """按契约方法发起真实 RPC，回显 `StandardResponse` 原始信封（失败也回显，不吞错）。
 
     - 未知方法 / 参数不合法：400 回包（错误详情在 msg 里），不投递消息；
@@ -59,7 +61,8 @@ async def invoke_rpc(user: RootUser, req: RpcInvokeReq) -> StandardResponse[RpcI
         )
     except KeyError as e:
         return StandardResponse(
-            code=404, msg=f"未知 RPC 方法: {e.args[0] if e.args else e}（见 GET /methods）"
+            code=404,
+            msg=f"未知 RPC 方法: {e.args[0] if e.args else e}（见 GET /methods）",
         )
     except (ValueError, TypeError) as e:
         # ValueError：JSON 解析失败 / 不符合契约；TypeError：payload 不是 JSON 对象

@@ -16,8 +16,10 @@ from sqlmodel import Field, SQLModel
 
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import DmMsgTypeEnum
+from app.models.schemas.base import auto_str, SnowflakeInt
 
 
+@auto_str
 class DmContentPayload(SQLModel):
     """私信内容异步落库载体。
 
@@ -26,26 +28,28 @@ class DmContentPayload(SQLModel):
     这样发送接口的 RT 不再受内容写入影响，抬高了写性能天花板。
     """
 
-    msgkey: int = Field(description="消息全局唯一键，消费者据此解析分库分表")
+    msgkey: SnowflakeInt = Field(description="消息全局唯一键（字符串版见 msgkey_str）")
     session_key: str = Field(description="会话键：小mid_大mid")
-    sender_uid: int
-    receiver_uid: int
+    sender_uid: SnowflakeInt
+    receiver_uid: SnowflakeInt
     msg_type: DmMsgTypeEnum = DmMsgTypeEnum.TEXT
     content: str = ""
     msg_ts: int = Field(description="消息毫秒时间戳")
 
 
+@auto_str
 class DmNotifyPayload(SQLModel):
     """私信到达提醒（决定是否推送到外部渠道）。"""
 
-    receiver_mid: int
-    sender_mid: int
+    receiver_mid: SnowflakeInt
+    sender_mid: SnowflakeInt
     sender_name: str | None = None
     preview: str = ""
-    msgkey: int = 0
+    msgkey: SnowflakeInt = 0
     is_stranger: bool = False
 
 
+@auto_str
 class EventPushPayload(SQLModel):
     """事件提醒的推送载体。"""
 
@@ -57,6 +61,7 @@ class EventPushPayload(SQLModel):
     jump_url: str | None = None
 
 
+@auto_str
 class NotifyPushPayload(SQLModel):
     """系统通知的推送载体（按批投递，避免逐用户发 MQ）。"""
 
@@ -67,6 +72,7 @@ class NotifyPushPayload(SQLModel):
     mids: list[int] = Field(default_factory=list, description="本批目标用户")
 
 
+@auto_str
 class UserDeactivatePayload(SQLModel):
     """用户注销载体（异步执行完整删除流程）。
 
@@ -77,6 +83,7 @@ class UserDeactivatePayload(SQLModel):
     uid: int = Field(description="待注销用户 mid（>0）")
 
 
+@auto_str
 class InteractionViewPayload(SQLModel):
     """浏览统计载体（2.23.0；2.42.0 移除 refDate）。
 
@@ -87,8 +94,10 @@ class InteractionViewPayload(SQLModel):
     """
 
     # 2.43.0：内部统一投递 InteractionBizTypeEnum 整数值；兼容旧文字消息（str），消费端 from_text 统一解析
-    bizType: InteractionBizTypeEnum | str = Field(description="资源类型（InteractionBizTypeEnum 值；兼容旧文字）")
-    bizId: str = Field(description="资源 id（字符串雪花 id）")
+    bizType: InteractionBizTypeEnum | str = Field(
+        description="资源类型（InteractionBizTypeEnum 值；兼容旧文字）"
+    )
+    bizId: SnowflakeInt = Field(description="资源 id（雪花 id；字符串版见 bizId_str）")
     mid: int = Field(description="浏览用户 mid")
 
 

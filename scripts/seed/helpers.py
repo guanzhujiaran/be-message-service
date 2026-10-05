@@ -1,4 +1,5 @@
 """通用构造工具：网关身份请求头、@ 文本 / AT 节点、富文本正文节点。"""
+
 from .material import _IMG_URLS
 from .rr import _rr
 

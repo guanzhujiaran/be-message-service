@@ -3,6 +3,7 @@
 在**动态与 lottery 混合**资源池 ``[(oid, biz_type)]`` 上跑同一套互动，
 保证通用资源链路与动态链路覆盖对等（不出现「评论只覆盖动态」的偏斜）。
 """
+
 import asyncio
 import random
 

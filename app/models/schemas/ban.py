@@ -20,7 +20,9 @@ class BanCreateReq(SQLModel):
     限时封禁必须给出 `duration_days`（>=1）。
     """
 
-    mids: list[StrInt] = Field(description="待封禁用户 mid 列表（可批量，StrInt 兼容前端 str 传参）")
+    mids: list[StrInt] = Field(
+        description="待封禁用户 mid 列表（可批量，StrInt 兼容前端 str 传参）"
+    )
     ban_services: list[str] = Field(
         description="封禁的服务范围：comment 评论 / dm 私信（可多选）"
     )
@@ -36,7 +38,9 @@ class BanCreateReq(SQLModel):
 class UnbanReq(SQLModel):
     """批量解封请求。"""
 
-    mids: list[StrInt] = Field(description="待解封用户 mid 列表（可批量，StrInt 兼容前端 str 传参）")
+    mids: list[StrInt] = Field(
+        description="待解封用户 mid 列表（可批量，StrInt 兼容前端 str 传参）"
+    )
     ban_services: list[str] | None = Field(
         default=None,
         description="仅解封指定服务（缺省表示解封该用户全部服务封禁）",

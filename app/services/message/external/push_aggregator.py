@@ -200,7 +200,9 @@ async def _send(service: PushMessageService, title: str, content: str) -> bool:
     try:
         return await service.send(title, content)
     except Exception as e:  # noqa: BLE001
-        logger.error(f"推送失败，消息丢弃不重投 title={title} push_type={service.push_type}: {e}")
+        logger.error(
+            f"推送失败，消息丢弃不重投 title={title} push_type={service.push_type}: {e}"
+        )
         return False
 
 

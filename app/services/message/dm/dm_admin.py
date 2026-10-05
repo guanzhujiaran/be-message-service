@@ -17,7 +17,11 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from sqlalchemy import distinct, func
 from app.models.db import DmMessageIndex
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
@@ -35,7 +39,6 @@ from app.utils.notify_markup import markup_inline_link
 
 
 class DmAdminService:
-
     @staticmethod
     async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """私信审核统计：按 auditStatus 聚合 DmMessageIndex（写扩散双行按 msgkey 去重）。"""
@@ -100,10 +103,11 @@ class DmAdminService:
 
         # 审核通过（auditing -> normal）：把接收方会话快照刷新为真实内容并补未读，
         # 使「先审后发」的私信在通过后对接收方正常浮现。
-        if prev_state == ResourceAuditStatusEnum.AUDITING and state == ResourceAuditStatusEnum.NORMAL:
-            receiver_row = next(
-                (r for r in rows if r.owner_mid != r.sender_uid), None
-            )
+        if (
+            prev_state == ResourceAuditStatusEnum.AUDITING
+            and state == ResourceAuditStatusEnum.NORMAL
+        ):
+            receiver_row = next((r for r in rows if r.owner_mid != r.sender_uid), None)
             if receiver_row is not None:
                 sess = await DmSessionObject(
                     session, receiver_row.owner_mid, receiver_row.talker_mid
@@ -131,7 +135,9 @@ class DmAdminService:
         return True
 
     # 私信状态 → (通知标题, 正文首句, 通知级别)
-    _NOTIFY_TEMPLATE: dict[ResourceAuditStatusEnum, tuple[str, str, NotifyLevelEnum]] = {
+    _NOTIFY_TEMPLATE: dict[
+        ResourceAuditStatusEnum, tuple[str, str, NotifyLevelEnum]
+    ] = {
         ResourceAuditStatusEnum.NORMAL: (
             "私信审核通过",
             "已通过审核，对方现已可见。",
@@ -180,7 +186,9 @@ class DmAdminService:
         lines = [f"您发送给{target_link}的私信{summary}"]
         if row.content_preview:
             lines.append(f"私信内容：{summarize_text(row.content_preview)}")
-        if note and (state in (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN)):
+        if note and (
+            state in (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN)
+        ):
             lines.append(f"处理原因：{note}")
 
         await NotifyService.send_to_user(
@@ -211,7 +219,9 @@ class DmAdminService:
         for msgkey in msgkeys:
             try:
                 per_note = (notes or {}).get(str(msgkey)) if notes is not None else note
-                if await DmAdminService.set_state(session, msgkey, state, note=per_note):
+                if await DmAdminService.set_state(
+                    session, msgkey, state, note=per_note
+                ):
                     success += 1
                 else:
                     failed.append(msgkey)
@@ -273,9 +283,7 @@ class DmAdminService:
         return items, total
 
     @staticmethod
-    async def get_audit_item(
-        session: AsyncSession, msgkey: int
-    ) -> DmAuditItem | None:
+    async def get_audit_item(session: AsyncSession, msgkey: int) -> DmAuditItem | None:
         """按 msgkey 构造一条审核项（含摘要），用于审核后回显。"""
         row = (
             await session.exec(
@@ -302,9 +310,7 @@ class DmAdminService:
             msg_ts=r.msg_ts,
             content_ready=r.content_ready,
             created_at=r.created_at,
-            source=build_dm_source(
-                r.session_key, r.sender_uid, receiver_mid, r.msgkey
-            ),
+            source=build_dm_source(r.session_key, r.sender_uid, receiver_mid, r.msgkey),
         )
 
     @staticmethod

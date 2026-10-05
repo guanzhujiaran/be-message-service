@@ -87,7 +87,9 @@ async def _real_dyns(n: int) -> list[RealDyn]:
 async def _cleanup(dids: list[int]) -> None:
     async with new_session() as s:
         for d in dids:
-            await s.exec(text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {d}"))
+            await s.exec(
+                text(f"DELETE FROM TResourceAuditLog WHERE bizType = 1 AND bizId = {d}")
+            )
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {d}"))
         await s.commit()
 
@@ -142,10 +144,43 @@ async def test_comprehensive_only_normal():
     dids = []
     reals = await _real_dyns(4)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
-        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=ResourceAuditStatusEnum.AUDITING, minutes_ago=9))
-        dids.append(await _commit_seed(s, D_MID, real=reals[2], audit=ResourceAuditStatusEnum.REJECTED, minutes_ago=8))
-        dids.append(await _commit_seed(s, D_MID, real=reals[3], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=7, deleted=True))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[1],
+                audit=ResourceAuditStatusEnum.AUDITING,
+                minutes_ago=9,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[2],
+                audit=ResourceAuditStatusEnum.REJECTED,
+                minutes_ago=8,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[3],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=7,
+                deleted=True,
+            )
+        )
     try:
         async with new_session() as s:
             # 2.27.0：/feed/all 默认 recommend（EdgeRank，72h 候选窗口），
@@ -157,7 +192,9 @@ async def test_comprehensive_only_normal():
             )
             ids = {it.dynId for it in resp.items}
             assert dids[0] in ids  # normal 动态可见
-            assert not ({dids[1], dids[2], dids[3]} & ids)  # auditing/rejected/软删不可见
+            assert not (
+                {dids[1], dids[2], dids[3]} & ids
+            )  # auditing/rejected/软删不可见
             # 装配返回 auditStatus 为枚举成员名字符串（大写），与 MomentFeedItem 字段类型一致
             assert all(it.auditStatus == "NORMAL" for it in resp.items)
     finally:
@@ -168,9 +205,33 @@ async def test_comprehensive_order_by_pubtime():
     dids = []
     reals = await _real_dyns(3)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=30))
-        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=20))
-        dids.append(await _commit_seed(s, D_MID, real=reals[2], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=30,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[1],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=20,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[2],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
     try:
         async with new_session() as s:
             # 2.27.0：本测试验证 pubTime 倒序，显式 sort="time"（默认已变 recommend）
@@ -187,12 +248,38 @@ async def test_space_self_sees_all_states():
     dids = []
     reals = await _real_dyns(3)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
-        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=ResourceAuditStatusEnum.AUDITING, minutes_ago=9))
-        dids.append(await _commit_seed(s, D_MID, real=reals[2], audit=ResourceAuditStatusEnum.REJECTED, minutes_ago=8))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[1],
+                audit=ResourceAuditStatusEnum.AUDITING,
+                minutes_ago=9,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[2],
+                audit=ResourceAuditStatusEnum.REJECTED,
+                minutes_ago=8,
+            )
+        )
     try:
         async with new_session() as s:
-            resp = await MomentFeedService.space_feed(s, host_mid=D_MID, viewer_mid=D_MID)
+            resp = await MomentFeedService.space_feed(
+                s, host_mid=D_MID, viewer_mid=D_MID
+            )
             statuses = {it.auditStatus for it in resp.items}
             # 装配返回 auditStatus 为枚举成员名字符串（大写）
             assert statuses == {"NORMAL", "AUDITING", "REJECTED"}
@@ -204,11 +291,29 @@ async def test_space_visitor_only_normal():
     dids = []
     reals = await _real_dyns(2)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
-        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=ResourceAuditStatusEnum.AUDITING, minutes_ago=9))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[1],
+                audit=ResourceAuditStatusEnum.AUDITING,
+                minutes_ago=9,
+            )
+        )
     try:
         async with new_session() as s:
-            resp = await MomentFeedService.space_feed(s, host_mid=D_MID, viewer_mid=D_MID2)
+            resp = await MomentFeedService.space_feed(
+                s, host_mid=D_MID, viewer_mid=D_MID2
+            )
             assert all(it.auditStatus == "NORMAL" for it in resp.items)
     finally:
         await _cleanup_all(dids)
@@ -218,11 +323,30 @@ async def test_space_top_priority():
     dids = []
     reals = await _real_dyns(2)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
-        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=5, is_top=1))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[1],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=5,
+                is_top=1,
+            )
+        )
     try:
         async with new_session() as s:
-            resp = await MomentFeedService.space_feed(s, host_mid=D_MID, viewer_mid=D_MID)
+            resp = await MomentFeedService.space_feed(
+                s, host_mid=D_MID, viewer_mid=D_MID
+            )
             assert resp.items[0].isTop == 1
     finally:
         await _cleanup_all(dids)
@@ -232,7 +356,15 @@ async def test_detail_visitor_cannot_see_auditing():
     dids = []
     reals = await _real_dyns(1)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.AUDITING, minutes_ago=10))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.AUDITING,
+                minutes_ago=10,
+            )
+        )
     try:
         async with new_session() as s:
             d = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID2)
@@ -247,7 +379,15 @@ async def test_detail_normal_visible_to_all():
     dids = []
     reals = await _real_dyns(1)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
     try:
         async with new_session() as s:
             d = await MomentFeedService.get_detail(s, dids[0], viewer_mid=D_MID2)
@@ -260,9 +400,34 @@ async def test_batch_filters_non_normal_non_author():
     dids = []
     reals = await _real_dyns(3)
     async with new_session() as s:
-        dids.append(await _commit_seed(s, D_MID, real=reals[0], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=10))
-        dids.append(await _commit_seed(s, D_MID, real=reals[1], audit=ResourceAuditStatusEnum.AUDITING, minutes_ago=9))
-        dids.append(await _commit_seed(s, D_MID, real=reals[2], audit=ResourceAuditStatusEnum.NORMAL, minutes_ago=8, deleted=True))
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[0],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=10,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[1],
+                audit=ResourceAuditStatusEnum.AUDITING,
+                minutes_ago=9,
+            )
+        )
+        dids.append(
+            await _commit_seed(
+                s,
+                D_MID,
+                real=reals[2],
+                audit=ResourceAuditStatusEnum.NORMAL,
+                minutes_ago=8,
+                deleted=True,
+            )
+        )
     try:
         async with new_session() as s:
             resp = await MomentFeedService.get_details_batch(s, dids, viewer_mid=D_MID2)

@@ -36,17 +36,34 @@ class TFavoriteFolder(TimestampMixin, table=True):
     __tablename__ = "TFavoriteFolder"
     __table_args__ = (
         PrimaryKeyConstraint("folder_id", name="TFavoriteFolder_pkey"),
-        Index("idx_fav_folder_mid_created", "mid", text('created_at DESC')),
+        Index("idx_fav_folder_mid_created", "mid", text("created_at DESC")),
         # 每用户仅一个默认收藏夹（部分唯一索引由迁移创建，MySQL 8 支持）
         {"extend_existing": True, "comment": "动态收藏夹：每用户多夹，一个默认夹"},
     )
 
-    folder_id: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": False})
-    mid: int = Field(default=None, nullable=False, sa_type=BIGINT, index=True, description="收藏夹所属用户mid")
+    folder_id: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": False},
+    )
+    mid: int = Field(
+        default=None,
+        nullable=False,
+        sa_type=BIGINT,
+        index=True,
+        description="收藏夹所属用户mid",
+    )
     name: str = Field(default="默认收藏夹", max_length=100, description="收藏夹名称")
-    description: str | None = Field(default=None, max_length=500, description="收藏夹描述（选填）")
-    cover_url: str | None = Field(default=None, max_length=1000, description="封面图片链接（仅存URL，不转存图片）")
-    is_default: int = Field(default=0, sa_type=BIGINT, description="是否默认收藏夹：0=否,1=是（每用户一个）")
+    description: str | None = Field(
+        default=None, max_length=500, description="收藏夹描述（选填）"
+    )
+    cover_url: str | None = Field(
+        default=None, max_length=1000, description="封面图片链接（仅存URL，不转存图片）"
+    )
+    is_default: int = Field(
+        default=0, sa_type=BIGINT, description="是否默认收藏夹：0=否,1=是（每用户一个）"
+    )
 
 
 class TResourceFavorite(ResourceBase, TimestampMixin, table=True):
@@ -66,15 +83,33 @@ class TResourceFavorite(ResourceBase, TimestampMixin, table=True):
     __tablename__ = "TResourceFavorite"
     __table_args__ = (
         PrimaryKeyConstraint("pk", name="TResourceFavorite_pkey"),
-        UniqueConstraint("bizType", "bizId", "folderId", name="TResourceFavorite_bizType_bizId_folderId_key"),
-        Index("idx_resource_favorite_mid_created", "mid", text('created_at DESC')),
-        Index("idx_resource_favorite_folder_created", "folderId", text('created_at DESC')),
+        UniqueConstraint(
+            "bizType",
+            "bizId",
+            "folderId",
+            name="TResourceFavorite_bizType_bizId_folderId_key",
+        ),
+        Index("idx_resource_favorite_mid_created", "mid", text("created_at DESC")),
+        Index(
+            "idx_resource_favorite_folder_created", "folderId", text("created_at DESC")
+        ),
         Index("idx_resource_favorite_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "通用资源收藏明细：同夹内唯一约束(bizType,bizId,folderId)防重复收藏；继承 ResourceBase；原 TMomentFavorite"},
+        {
+            "extend_existing": True,
+            "comment": "通用资源收藏明细：同夹内唯一约束(bizType,bizId,folderId)防重复收藏；继承 ResourceBase；原 TMomentFavorite",
+        },
     )
 
-    folderId: int = Field(default=None, nullable=False, sa_type=BIGINT, index=True, description="所属收藏夹id")
-    note: str | None = Field(default=None, max_length=200, description="收藏备注（预留）")
+    folderId: int = Field(
+        default=None,
+        nullable=False,
+        sa_type=BIGINT,
+        index=True,
+        description="所属收藏夹id",
+    )
+    note: str | None = Field(
+        default=None, max_length=200, description="收藏备注（预留）"
+    )
 
 
 class TUserFavoriteSetting(TimestampMixin, table=True):
@@ -90,8 +125,16 @@ class TUserFavoriteSetting(TimestampMixin, table=True):
         {"extend_existing": True, "comment": "用户主页收藏可见性设置：每用户一行"},
     )
 
-    mid: int = Field(default=None, primary_key=True, sa_type=BIGINT, sa_column_kwargs={"autoincrement": False}, description="用户mid")
-    showFavorites: int = Field(default=1, sa_type=BIGINT, description="主页是否显示收藏tab：1=显示,0=隐藏")
+    mid: int = Field(
+        default=None,
+        primary_key=True,
+        sa_type=BIGINT,
+        sa_column_kwargs={"autoincrement": False},
+        description="用户mid",
+    )
+    showFavorites: int = Field(
+        default=1, sa_type=BIGINT, description="主页是否显示收藏tab：1=显示,0=隐藏"
+    )
 
 
 __all__ = ["TFavoriteFolder", "TResourceFavorite", "TUserFavoriteSetting"]

@@ -37,9 +37,7 @@ def test_routing_key_and_contract():
         notify_rpc_routing_key_for(NotifyRpcMethodName.PUBLISH_NOTIFY)
         == "message.notify.rpc.publish_notify"
     )
-    params_model, result_model = NOTIFY_RPC_CONTRACT[
-        NotifyRpcMethodName.PUBLISH_NOTIFY
-    ]
+    params_model, result_model = NOTIFY_RPC_CONTRACT[NotifyRpcMethodName.PUBLISH_NOTIFY]
     assert params_model is PublishNotifyParams
     assert result_model is PublishNotifyResult
 

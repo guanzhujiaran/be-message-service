@@ -42,7 +42,9 @@ def create_token(
         "role": role,
         "iat": int(datetime.now(UTC).timestamp()),
         "exp": int(
-            (datetime.now(UTC) + timedelta(seconds=settings.jwt_expires_seconds)).timestamp()
+            (
+                datetime.now(UTC) + timedelta(seconds=settings.jwt_expires_seconds)
+            ).timestamp()
         ),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

@@ -149,7 +149,9 @@ async def test_rpc_error_is_returned_as_envelope_not_timeout():
             )
             body = json.loads(resp.body.decode())
         except Exception as e:  # noqa: BLE001 - 超时同样属于「没拿到信封」
-            pytest.fail(f"参数非法时应回错误信封而不是异常/超时: {type(e).__name__}: {e}")
+            pytest.fail(
+                f"参数非法时应回错误信封而不是异常/超时: {type(e).__name__}: {e}"
+            )
         assert body["code"] != 0, f"非法参数不应返回成功: {body}"
     finally:
         await client.stop()

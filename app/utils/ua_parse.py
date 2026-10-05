@@ -40,7 +40,12 @@ def parse_user_agent(ua: str | None) -> tuple[str | None, str | None]:
     # ---- plat：操作系统 / 平台 ----
     if "android" in lowered:
         plat = "android"
-    elif "iphone" in lowered or "ipad" in lowered or "ipod" in lowered or "ios" in lowered:
+    elif (
+        "iphone" in lowered
+        or "ipad" in lowered
+        or "ipod" in lowered
+        or "ios" in lowered
+    ):
         plat = "ios"
     elif "harmonyos" in lowered or "harmony" in lowered:
         plat = "harmonyos"
@@ -72,7 +77,12 @@ def parse_user_agent(ua: str | None) -> tuple[str | None, str | None]:
                 device = match.group(1).strip() or "android"
             else:
                 device = "android"
-    elif "windows" in lowered or "macintosh" in lowered or "mac os" in lowered or "linux" in lowered:
+    elif (
+        "windows" in lowered
+        or "macintosh" in lowered
+        or "mac os" in lowered
+        or "linux" in lowered
+    ):
         device = "pc"
 
     return plat, device

@@ -29,14 +29,18 @@ from app.models.enums import (
     ResourceAuditStatusEnum,
 )
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from app.models.schemas.moment import (
     MomentAuditDetailResp,
     MomentAuditItem,
     MomentAuditListResp,
     MomentAuditLogItem,
     MomentAuditLogListResp,
-    )
+)
 from app.services.moment.moment_stat import MomentStatService
 from app.services.user.account import PptrUser
 
@@ -50,7 +54,9 @@ _AUDIT_STATUS_STR_MAP: dict[str, ResourceAuditStatusEnum] = {
 }
 
 
-def _normalize_audit_status(v: str | ResourceAuditStatusEnum) -> ResourceAuditStatusEnum:
+def _normalize_audit_status(
+    v: str | ResourceAuditStatusEnum,
+) -> ResourceAuditStatusEnum:
     """兼容：Feed 审核态从字符串列改统一枚举后，历史调用方仍可能传字符串，做一次映射。"""
     if isinstance(v, ResourceAuditStatusEnum):
         return v
@@ -180,9 +186,7 @@ def _build_audit_log(
     )
 
 
-async def _notify_reject(
-    operator_mid: int, dyn: TMoment, reject_reason: str
-) -> None:
+async def _notify_reject(operator_mid: int, dyn: TMoment, reject_reason: str) -> None:
     """弱依赖：审核驳回事件通知作者（AUDIT_REJECT）。
 
     独立会话投递：即便事件落库失败，也绝不回滚审核主事务。
@@ -318,7 +322,9 @@ class MomentAuditService:
 
         conditions = []
         if dyn_id is not None:
-            conditions.append(col(TResourceAuditLog.bizType) == InteractionBizTypeEnum.DYNAMIC)
+            conditions.append(
+                col(TResourceAuditLog.bizType) == InteractionBizTypeEnum.DYNAMIC
+            )
             conditions.append(col(TResourceAuditLog.bizId) == dyn_id)
         if operator_mid is not None:
             conditions.append(col(TResourceAuditLog.mid) == operator_mid)
@@ -354,18 +360,14 @@ class MomentAuditService:
     # ==================== 单条审核详情（P6-T5 GET /{dynId}）====================
 
     @staticmethod
-    async def detail(
-        session: AsyncSession, moment_id: int
-    ) -> MomentAuditDetailResp:
+    async def detail(session: AsyncSession, moment_id: int) -> MomentAuditDetailResp:
         """单条动态审核详情：当前快照（含全部状态）+ 历史流转。
 
         2.55.0 起历史流水按 `(bizType=DYNAMIC, bizId=moment_id)` 过滤。
         """
         dyn = await _get_any(session, moment_id)
         briefs = await PptrUser.get_many([dyn.mid] if dyn else [])
-        item = (
-            _to_audit_item(dyn, briefs.get(dyn.mid)) if dyn is not None else None
-        )
+        item = _to_audit_item(dyn, briefs.get(dyn.mid)) if dyn is not None else None
         logs = (
             await session.exec(
                 select(TResourceAuditLog)

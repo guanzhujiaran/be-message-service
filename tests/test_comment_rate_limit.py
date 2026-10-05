@@ -328,7 +328,9 @@ async def test_validate_config_value_normalizes_for_storage():
     normalized = runtime_config.validate_config_value(
         runtime_config.CONFIG_KEY_COMMENT_RATE_LIMIT,
         {
-            "root": [{"window_seconds": 10, "max_count": 2}],  # same_content 缺省 → False
+            "root": [
+                {"window_seconds": 10, "max_count": 2}
+            ],  # same_content 缺省 → False
             "reply": [{"window_seconds": 60, "max_count": 30, "same_content": True}],
             "未知字段": "剔除",
         },
@@ -341,7 +343,9 @@ async def test_validate_config_value_normalizes_for_storage():
     with pytest.raises(ValidationError):
         runtime_config.validate_config_value(
             runtime_config.CONFIG_KEY_COMMENT_RATE_LIMIT,
-            {"root": [{"window_seconds": 0, "max_count": 1}]},  # window_seconds 必须 > 0
+            {
+                "root": [{"window_seconds": 0, "max_count": 1}]
+            },  # window_seconds 必须 > 0
         )
     with pytest.raises(KeyError):
         runtime_config.validate_config_value("未登记的配置项", {})

@@ -43,9 +43,10 @@ record_report(biz_type=..., resource_type=ReportBizTypeEnum.RESOURCE, ...)
 ```python
 # ✅ 直接复用 InteractionBizTypeEnum，仅用 biz_type + biz_id 定位
 rec = await ReportBaseService.record_report(
-    session, model,
+    session,
+    model,
     reporter_mid=viewer_mid,
-    biz_type=biz.value,        # InteractionBizTypeEnum 的 int 值
+    biz_type=biz.value,  # InteractionBizTypeEnum 的 int 值
     biz_id=req.bizId,
     accused_mid=accused,
     reason_type=int(reason),

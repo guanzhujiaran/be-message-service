@@ -151,6 +151,8 @@ def _build_brief(
             vip_due_date = int(vip.vip_due_date)
     return UserBriefOut(
         mid=int(info.uid),
+        name=uname or None,
+        face=detail.avatar if detail else None,
         uname=uname or None,
         avatar=detail.avatar if detail else None,
         level=level_value,
@@ -208,9 +210,7 @@ async def _uname_taken(
         return await _run(s)
 
 
-async def _upsert_profile(
-    s: AsyncSession, uid: int, detail, level, vip
-) -> None:
+async def _upsert_profile(s: AsyncSession, uid: int, detail, level, vip) -> None:
     """按 uid（mid）upsert TUserDetail / TUserLevel / TUserVip（不触碰 TUserInfo.pwd）。"""
     existing = await s.exec(select(PptrUserDetail).where(PptrUserDetail.mid == uid))
     d = existing.first()
@@ -299,9 +299,7 @@ class PptrUser:
 
     # -------------------------- 权限（Linux 按位检查） --------------------------
 
-    def has_biz_perm(
-        self, biz: InteractionBizTypeEnum, op: "BizPermOp | int"
-    ) -> bool:
+    def has_biz_perm(self, biz: InteractionBizTypeEnum, op: "BizPermOp | int") -> bool:
         return (int(self.biz_perms.get(biz, 0)) & int(op)) != 0
 
     @property
@@ -388,6 +386,9 @@ class PptrUser:
                 else 0
             ),
             birthday=birthday,
+            # 2.58.0：邮箱首次随空间资料下发（受 `show_personal_info` 控制，
+            # 由路由层 SpacePrivacyService.apply_flags_to_info 裁剪）
+            email=(detail.email if detail and detail.email else None),
             vip=SpaceVipWrap(
                 type=vip_type,
                 status=vip_status,
@@ -426,9 +427,7 @@ class PptrUser:
 
         async def _run(s: AsyncSession) -> PptrUserNavData | None:
             row = (
-                await s.exec(
-                    _base_select().where(col(PptrUserInfo.uid) == self.mid)
-                )
+                await s.exec(_base_select().where(col(PptrUserInfo.uid) == self.mid))
             ).first()
             if row is None:
                 return None
@@ -603,9 +602,7 @@ class PptrUser:
                         else 0
                     ),
                 )
-                role_info = PptrUserRoleInfo(
-                    role_name=role, role_description=role_desc
-                )
+                role_info = PptrUserRoleInfo(role_name=role, role_description=role_desc)
                 items.append(
                     PptrUserSearchItem(
                         mid=str(mid),
@@ -819,9 +816,7 @@ class PptrUser:
         """按本账号 uid 取 TUserLevel。"""
         async with new_pptr_session() as s:
             lv = (
-                await s.exec(
-                    select(PptrUserLevel).where(PptrUserLevel.mid == self.mid)
-                )
+                await s.exec(select(PptrUserLevel).where(PptrUserLevel.mid == self.mid))
             ).one_or_none()
             if not lv:
                 return None
@@ -840,9 +835,7 @@ class PptrUser:
         """原子写入 TUserLevel。"""
         async with new_pptr_session() as s:
             lv = (
-                await s.exec(
-                    select(PptrUserLevel).where(PptrUserLevel.mid == self.mid)
-                )
+                await s.exec(select(PptrUserLevel).where(PptrUserLevel.mid == self.mid))
             ).first()
             if lv is None:
                 s.add(
@@ -890,18 +883,12 @@ class PptrUser:
             if d is None:
                 parent = (
                     await s.exec(
-                        select(PptrUserInfo.uid).where(
-                            PptrUserInfo.uid == self.mid
-                        )
+                        select(PptrUserInfo.uid).where(PptrUserInfo.uid == self.mid)
                     )
                 ).first()
                 if parent is None:
-                    raise ValueError(
-                        f"用户不存在 uid={self.mid}，无法写入公开资料"
-                    )
-                if uname and await _uname_taken(
-                    uname, self_uid=self.mid, session=s
-                ):
+                    raise ValueError(f"用户不存在 uid={self.mid}，无法写入公开资料")
+                if uname and await _uname_taken(uname, self_uid=self.mid, session=s):
                     raise ResourceConflictException("昵称已被占用，请更换昵称后重试")
                 s.add(
                     PptrUserDetail(
@@ -942,9 +929,7 @@ class PptrUser:
             return False
         async with new_pptr_session() as s:
             info = (
-                await s.exec(
-                    select(PptrUserInfo).where(PptrUserInfo.uid == self.mid)
-                )
+                await s.exec(select(PptrUserInfo).where(PptrUserInfo.uid == self.mid))
             ).first()
             if not info:
                 return False
@@ -967,9 +952,7 @@ class PptrUser:
         """升级时自动同步成长等级角色（不覆盖 root）。"""
         async with new_pptr_session() as s:
             info = (
-                await s.exec(
-                    select(PptrUserInfo).where(PptrUserInfo.uid == self.mid)
-                )
+                await s.exec(select(PptrUserInfo).where(PptrUserInfo.uid == self.mid))
             ).first()
             if not info:
                 return False
@@ -1243,18 +1226,28 @@ class PptrUser:
     async def deactivate(self) -> None:
         """注销当前账号：物理删除 pptr 四表 + 彻底清除 be-message 业务数据。
 
-        注销 = **物理删除**（不可恢复）；Casdoor 不同步禁用。幂等：已注销 / 无数据时
+        注销 = **物理删除**（不可恢复）。幂等：已注销 / 无数据时
         各 DELETE 影响 0 行仍正常返回。各业务「按 uid 彻底清除」逻辑内聚在
         `app.services.cleanup/` 的独立领域服务中，本方法仅按依赖顺序组合调用。
+
+        注：两阶段注销上线后，正常用户注销不再直接走本方法（先进入冷静期，由到期
+        定时任务调用），本方法保留为「本地物理删除」的统一入口（= purge_local_data）。
+        Casdoor 中心账号的删除由定时任务在本地删除成功后单独编排（最终一致）。
         """
         uid = self.mid
         if not uid or uid <= 0:
             raise ValueError("uid 不合法")
+        await self.purge_local_data()
+        logger.info(f"用户 {uid} 本地数据已物理删除（pptr 四表 + be-message 业务数据）")
+
+    async def purge_local_data(self) -> None:
+        """只物理删除本地数据（pptr 四表 + be-message MySQL 业务数据），不碰 Casdoor。
+
+        供注销到期定时任务复用：跨 pptr/MySQL 无分布式事务，两段各自独立事务提交，
+        且清理幂等（已无数据删除 0 行正常），故中途失败可安全重跑。
+        """
         await self._delete_pptr_user()
         await self._delete_message_data()
-        logger.info(
-            f"用户 {uid} 已注销（pptr 四表物理删除 + be-message 业务数据清除）"
-        )
 
     async def _delete_pptr_user(self) -> None:
         """删除 pptr Postgres 四表 + 关联日志（单事务）。"""

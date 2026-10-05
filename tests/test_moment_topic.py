@@ -184,7 +184,9 @@ async def _seed_moment(
 async def _cleanup(topics: list[int], moment_ids: list[int]) -> None:
     async with new_session() as s:
         for did in moment_ids:
-            await s.exec(text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}"))
+            await s.exec(
+                text(f"DELETE FROM TResourceFeed WHERE bizType = 1 AND bizId = {did}")
+            )
             await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {did}"))
         for tid in topics:
             await s.exec(text(f"DELETE FROM TMomentTopic WHERE topicId = {tid}"))
@@ -197,12 +199,16 @@ async def _cleanup(topics: list[int], moment_ids: list[int]) -> None:
 async def test_topic_square_ordering_and_dedup():
     # 用确定性唯一名（时间戳后缀），避免真实话题名与库内既有数据唯一键冲突；
     # 仅断言本测试 seed 的相对顺序（库内可能残留其它 normal 话题）
-    stamp = int(__import__('time').time() * 1000)
+    stamp = int(__import__("time").time() * 1000)
     name_a = f"sq-a-{stamp}"
     name_b = f"sq-b-{stamp}"
     async with new_session() as s:
-        await _seed_topic(s, _new_topic(T_TOPIC_A, name=name_a, is_hot=0, sort_weight=1, dyn_count=5))
-        await _seed_topic(s, _new_topic(T_TOPIC_B, name=name_b, is_hot=1, sort_weight=0, dyn_count=3))
+        await _seed_topic(
+            s, _new_topic(T_TOPIC_A, name=name_a, is_hot=0, sort_weight=1, dyn_count=5)
+        )
+        await _seed_topic(
+            s, _new_topic(T_TOPIC_B, name=name_b, is_hot=1, sort_weight=0, dyn_count=3)
+        )
 
         # 2.46.0 推荐流：无 page，以 last_showlist 去重，page_size 截断
         resp = await MomentTopicService.topic_square(s, page_size=20)
@@ -221,9 +227,13 @@ async def test_topic_square_ordering_and_dedup():
         assert len(p1.items) == 1
         assert p1.hasMore is True
         # 推荐流无游标语义：包络字段置空（对齐 feed recommend）
-        assert p1.updateBaseline is None and p1.historyOffset is None and p1.updateNum == 0
+        assert (
+            p1.updateBaseline is None and p1.historyOffset is None and p1.updateNum == 0
+        )
         first_id = p1.items[0].topicId
-        p2 = await MomentTopicService.topic_square(s, page_size=1, last_showlist=[first_id])
+        p2 = await MomentTopicService.topic_square(
+            s, page_size=1, last_showlist=[first_id]
+        )
         assert len(p2.items) == 1
         assert p2.items[0].topicId != first_id  # 排除已展示
         await _cleanup([T_TOPIC_A, T_TOPIC_B], [])
@@ -240,11 +250,15 @@ async def test_topic_feed_filters_normal_and_topic():
         # 同话题 normal
         m1 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_A)
         # 同话题 auditing（不可见）
-        m2 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_A, audit_status=ResourceAuditStatusEnum.AUDITING)
+        m2 = await _seed_moment(
+            s, T_MID, topic_id=T_TOPIC_A, audit_status=ResourceAuditStatusEnum.AUDITING
+        )
         # 其他话题 normal（不应出现）
         m3 = await _seed_moment(s, T_MID, topic_id=T_TOPIC_B)
 
-        resp = await TopicFeedService.topic_feed(s, topic_id=T_TOPIC_A, viewer_mid=T_MID)
+        resp = await TopicFeedService.topic_feed(
+            s, topic_id=T_TOPIC_A, viewer_mid=T_MID
+        )
         ids = {it.dynId for it in resp.items}
         assert m1 in ids
         assert m2 not in ids
@@ -304,9 +318,15 @@ async def test_at_search_empty_keyword():
 
 async def test_poi_nearby_dedup_by_lbs_poi():
     async with new_session() as s:
-        m1 = await _seed_moment(s, T_MID, lbs_poi="北京·故宫", lbs_lat=39.9, lbs_lng=116.4)
-        m2 = await _seed_moment(s, T_MID2, lbs_poi="北京·故宫", lbs_lat=39.91, lbs_lng=116.41)
-        m3 = await _seed_moment(s, T_MID, lbs_poi="上海·外滩", lbs_lat=31.2, lbs_lng=121.5)
+        m1 = await _seed_moment(
+            s, T_MID, lbs_poi="北京·故宫", lbs_lat=39.9, lbs_lng=116.4
+        )
+        m2 = await _seed_moment(
+            s, T_MID2, lbs_poi="北京·故宫", lbs_lat=39.91, lbs_lng=116.41
+        )
+        m3 = await _seed_moment(
+            s, T_MID, lbs_poi="上海·外滩", lbs_lat=31.2, lbs_lng=121.5
+        )
 
         resp = await MomentTopicService.poi_nearby(s, page=1, page_size=20)
         assert isinstance(resp, MomentPoiResp)

@@ -65,7 +65,9 @@ RelationScopeChecker = Callable[["_BizLike", int], Awaitable[None]]
 _RELATION_CHECKERS: dict[InteractionRelationScopeEnum, RelationScopeChecker] = {}
 
 
-def _relation_checker(scope: InteractionRelationScopeEnum) -> Callable[[RelationScopeChecker], RelationScopeChecker]:
+def _relation_checker(
+    scope: InteractionRelationScopeEnum,
+) -> Callable[[RelationScopeChecker], RelationScopeChecker]:
     """注册「关注关系权限检查项 → 校验器」的装饰器。"""
 
     def decorator(fn: RelationScopeChecker) -> RelationScopeChecker:
@@ -78,7 +80,9 @@ def _relation_checker(scope: InteractionRelationScopeEnum) -> Callable[[Relation
 @_relation_checker(InteractionRelationScopeEnum.FOLLOWING)
 async def _check_scope_following(action: "_BizLike", author_mid: int) -> None:
     """仅关注者可操作：操作者未关注作者时拒绝。"""
-    if not await FollowService.is_following(action.session, action.actor_mid, author_mid):
+    if not await FollowService.is_following(
+        action.session, action.actor_mid, author_mid
+    ):
         raise InteractionActionError(
             action.error_messages.get("permission") or "仅关注后可以执行该操作"
         )
@@ -96,9 +100,12 @@ async def _check_scope_non_following(action: "_BizLike", author_mid: int) -> Non
 @_relation_checker(InteractionRelationScopeEnum.NOT_BLOCKED)
 async def _check_scope_not_blocked(action: "_BizLike", author_mid: int) -> None:
     """黑名单禁止：双向任一向存在拉黑关系即拒绝。"""
-    if await FollowService.is_blocked_relation(action.session, action.actor_mid, author_mid):
+    if await FollowService.is_blocked_relation(
+        action.session, action.actor_mid, author_mid
+    ):
         raise InteractionActionError(
-            action.error_messages.get("blocked") or "对方已将你加入黑名单，无法执行该操作"
+            action.error_messages.get("blocked")
+            or "对方已将你加入黑名单，无法执行该操作"
         )
 
 
@@ -109,7 +116,9 @@ AclScopeChecker = Callable[["_BizLike", "InteractionResource"], Awaitable[None]]
 _ACL_CHECKERS: dict[InteractionAclScopeEnum, AclScopeChecker] = {}
 
 
-def _acl_checker(scope: InteractionAclScopeEnum) -> Callable[[AclScopeChecker], AclScopeChecker]:
+def _acl_checker(
+    scope: InteractionAclScopeEnum,
+) -> Callable[[AclScopeChecker], AclScopeChecker]:
     """注册「DAC 权限检查项 → 校验器」的装饰器。"""
 
     def decorator(fn: AclScopeChecker) -> AclScopeChecker:
@@ -120,7 +129,9 @@ def _acl_checker(scope: InteractionAclScopeEnum) -> Callable[[AclScopeChecker], 
 
 
 @_acl_checker(InteractionAclScopeEnum.OWNER_ONLY)
-async def _check_acl_owner_only(action: "_BizLike", resource: "InteractionResource") -> None:
+async def _check_acl_owner_only(
+    action: "_BizLike", resource: "InteractionResource"
+) -> None:
     """仅资源所有者可操作：操作者不是资源所有者（或资源无所有者）时拒绝。"""
     if not action._is_owner(resource):
         raise InteractionActionError(
@@ -129,7 +140,9 @@ async def _check_acl_owner_only(action: "_BizLike", resource: "InteractionResour
 
 
 @_acl_checker(InteractionAclScopeEnum.AUDITOR_ONLY)
-async def _check_acl_auditor_only(action: "_BizLike", resource: "InteractionResource") -> None:
+async def _check_acl_auditor_only(
+    action: "_BizLike", resource: "InteractionResource"
+) -> None:
     """仅审核员 / 管理员可操作：操作者不是审核员时拒绝。"""
     if not action._is_auditor():
         raise InteractionActionError(

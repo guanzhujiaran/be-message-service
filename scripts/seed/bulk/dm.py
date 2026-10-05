@@ -1,4 +1,5 @@
 """大数据灌数：pptr 用户池 O(n²) 批量互发私信，填充 DM 内容（软降级跳过业务拒绝）。"""
+
 import asyncio
 
 from loguru import logger
@@ -60,9 +61,7 @@ async def _seed_bulk_dm(
 
     total = 0
     if directed:
-        pending = [
-            asyncio.create_task(_send_one_directed(s, r)) for s, r in directed
-        ]
+        pending = [asyncio.create_task(_send_one_directed(s, r)) for s, r in directed]
         for f in tqdm(
             asyncio.as_completed(pending),
             total=len(pending),

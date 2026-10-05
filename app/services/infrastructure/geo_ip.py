@@ -121,9 +121,7 @@ def lookup(ip: str | None) -> GeoIpResult:
 
     parts = [p for p in (province, city) if p]
     poi = " ".join(parts) if parts else (resp.country.names.get("zh-CN") or "未知")
-    return GeoIpResult(
-        poi=poi, lat=float(lat), lng=float(lng), isp=_lookup_isp(ip)
-    )
+    return GeoIpResult(poi=poi, lat=float(lat), lng=float(lng), isp=_lookup_isp(ip))
 
 
 def lookup_poi(ip: str | None) -> str | None:

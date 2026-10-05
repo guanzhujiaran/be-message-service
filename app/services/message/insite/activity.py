@@ -82,8 +82,10 @@ class ActivityService:
         threshold = datetime.now() - timedelta(
             seconds=settings.active_user_window_seconds
         )
-        stmt = select(func.count()).select_from(UserActivity).where(
-            UserActivity.last_active_at >= threshold
+        stmt = (
+            select(func.count())
+            .select_from(UserActivity)
+            .where(UserActivity.last_active_at >= threshold)
         )
         return int((await session.exec(stmt)).one() or 0)
 

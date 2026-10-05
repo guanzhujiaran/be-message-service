@@ -112,32 +112,62 @@ class GenericResourceBiz(BaseBiz):
 
     @biz_action()
     async def reply(
-        self, content: str, *, parent: int | None = None, at_mids=None,
-        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+        self,
+        content: str,
+        *,
+        parent: int | None = None,
+        at_mids=None,
+        at_name_to_mid=None,
+        pictures=None,
+        emote_meta=None,
+        up_mid=0,
     ):
         """在本资源下发表评论（一级，root=0）。返回 CommentAddResp。
 
         `parent` 仅楼中楼有意义（一级评论恒为 0）；客户端上下文经 `comment_ctx()` 透传。
         """
         return await ops.do_comment(
-            self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=0, parent=parent, message=content, at_mids=at_mids,
-            at_name_to_mid=at_name_to_mid, pictures=pictures,
-            emote_meta=emote_meta, up_mid=up_mid,
+            self.session,
+            self.biz_type,
+            self.biz_id,
+            self.actor_mid,
+            root=0,
+            parent=parent,
+            message=content,
+            at_mids=at_mids,
+            at_name_to_mid=at_name_to_mid,
+            pictures=pictures,
+            emote_meta=emote_meta,
+            up_mid=up_mid,
             **self.comment_ctx(),
         )
 
     @biz_action()
     async def at(
-        self, mids, content: str, *, parent: int | None = None,
-        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+        self,
+        mids,
+        content: str,
+        *,
+        parent: int | None = None,
+        at_name_to_mid=None,
+        pictures=None,
+        emote_meta=None,
+        up_mid=0,
     ):
         """在本资源下 @ 提及用户（一级，root=0）。返回 CommentAddResp。"""
         return await ops.do_comment(
-            self.session, self.biz_type, self.biz_id, self.actor_mid,
-            root=0, parent=parent, message=content, at_mids=list(mids),
-            at_name_to_mid=at_name_to_mid, pictures=pictures,
-            emote_meta=emote_meta, up_mid=up_mid,
+            self.session,
+            self.biz_type,
+            self.biz_id,
+            self.actor_mid,
+            root=0,
+            parent=parent,
+            message=content,
+            at_mids=list(mids),
+            at_name_to_mid=at_name_to_mid,
+            pictures=pictures,
+            emote_meta=emote_meta,
+            up_mid=up_mid,
             **self.comment_ctx(),
         )
 
@@ -253,7 +283,9 @@ class GenericResourceBiz(BaseBiz):
         return {"success": True}
 
     @biz_action(acl=[])
-    async def audit_reject(self, reject_reason: str | None = None, remark: str | None = None, **kwargs):
+    async def audit_reject(
+        self, reject_reason: str | None = None, remark: str | None = None, **kwargs
+    ):
         """审核驳回：经 RPA RPC 把该资源「发布到社区审批单」置 rejected。"""
         await self._rpa_review("rejected", remark or reject_reason)
         return {"success": True}

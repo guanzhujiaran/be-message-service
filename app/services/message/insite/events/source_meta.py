@@ -5,6 +5,7 @@
 由 `BaseBiz.get_resource()` 统一装配为 `InteractionResource`，见计划书 §5.11 / C20）。
 本模块仅保留从动态富文本 `contentJson` 取首图的纯函数，供 `DynamicBiz` 复用。
 """
+
 from __future__ import annotations
 
 from app.models.db.moment_tbl import TMoment

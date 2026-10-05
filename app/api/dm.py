@@ -23,7 +23,7 @@ from fastapi import APIRouter, Query
 from loguru import logger
 
 from app.core.database import SessionDep
-from app.dependencies import RequiredUser
+from app.dependencies import ActiveUser, RequiredUser
 from app.models import StandardResponse
 from app.models.enums import BanServiceEnum, DmRelationEnum, DmSessionTypeEnum
 from app.models.schemas import (
@@ -64,7 +64,7 @@ def _to_msgkey(raw: str | None) -> int | None:
 
 @router.post("/send", response_model=StandardResponse[DmSendResp], summary="发送私信")
 async def send_dm(
-    session: SessionDep, user: RequiredUser, req: DmSendReq
+    session: SessionDep, user: ActiveUser, req: DmSendReq
 ) -> StandardResponse[DmSendResp]:
     """发送一条私信。
 
@@ -161,7 +161,11 @@ async def top_session(
             is_top=(top_ts != 0),
             affected=affected,
         ),
-        msg="已置顶会话" if (affected and req.top) else "已取消置顶" if affected else "会话不存在",
+        msg="已置顶会话"
+        if (affected and req.top)
+        else "已取消置顶"
+        if affected
+        else "会话不存在",
     )
 
 
@@ -177,7 +181,8 @@ async def list_messages(
         StrInt, Query(description="对话方mid（雪花 ID，StrInt 兼容前端 str 传参）")
     ],
     cursor: str | None = Query(
-        default=None, description="游标 msgkey：back=本页最小（往更旧翻）；forward=已见最大（增量查新）。首屏不传"
+        default=None,
+        description="游标 msgkey：back=本页最小（往更旧翻）；forward=已见最大（增量查新）。首屏不传",
     ),
     page_size: int = Query(default=20, ge=1, le=50),
     direction: Literal["back", "forward"] = Query(

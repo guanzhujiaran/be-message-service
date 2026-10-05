@@ -52,7 +52,9 @@ class LotteryBiz(GenericResourceBiz):
         return bid in existing
 
     @classmethod
-    async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
+    async def batch_get_resources(
+        cls, session, biz_ids, *, actor_mid=None, rpid_map=None
+    ):
         """抽奖批量回捞：并行 ``get_resource_detail`` RPC，按 lotteryId 装配快照。"""
         from asyncio import gather
 
@@ -69,14 +71,20 @@ class LotteryBiz(GenericResourceBiz):
             for bid in biz_ids
             if isinstance(bid, int)
         }
-        details = dict(zip(tasks.keys(), await gather(*tasks.values()))) if tasks else {}
+        details = (
+            dict(zip(tasks.keys(), await gather(*tasks.values()))) if tasks else {}
+        )
         out: dict[int, InteractionResource] = {}
         for bid in biz_ids:
             detail = details.get(bid)
             exists = detail is not None
             name = getattr(detail, "name", None) if detail else None
             cover = getattr(detail, "cover", None) if detail else None
-            am = getattr(detail.detail, "authorMid", None) if (detail and detail.detail) else None
+            am = (
+                getattr(detail.detail, "authorMid", None)
+                if (detail and detail.detail)
+                else None
+            )
             out[bid] = InteractionResource(
                 bizType=InteractionBizTypeEnum.LOTTERY,
                 bizId=bid,

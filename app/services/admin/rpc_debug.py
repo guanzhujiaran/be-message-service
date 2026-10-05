@@ -62,7 +62,9 @@ class RpcDebugMethod(BaseModel):
     params_model: str = Field(description="请求参数模型类名")
     # 参数结构是「随方法变化」的动态 JSON Schema，无法静态建模成 pydantic；
     # 以 JSON 字符串出参（前端 JSON.parse 后渲染表单），避免引入无类型的自由 dict 字段。
-    params_schema_json: str = Field(description="请求参数模型的 JSON Schema（JSON 字符串）")
+    params_schema_json: str = Field(
+        description="请求参数模型的 JSON Schema（JSON 字符串）"
+    )
 
 
 class RpcInvokeResult(BaseModel):
@@ -73,7 +75,9 @@ class RpcInvokeResult(BaseModel):
     duration_ms: int = Field(description="耗时（毫秒，含 MQ 往返）")
     # RPC 服务端返回的原始信封（code/msg/data）。调试工具的价值就在于把
     # 「失败也原样回显」，因此这里不做成功/失败分流。
-    reply: StandardResponse = Field(description="RPC 服务端返回的 StandardResponse 信封")
+    reply: StandardResponse = Field(
+        description="RPC 服务端返回的 StandardResponse 信封"
+    )
 
 
 def _build_registry() -> dict[str, tuple[str, RpcServerType, type[SQLModel]]]:
@@ -88,20 +92,40 @@ def _build_registry() -> dict[str, tuple[str, RpcServerType, type[SQLModel]]]:
         registry[str(name)] = (pptr_routing_key_for(name), "be-message", params_model)
 
     for name, (params_model, _result) in PUSH_RPC_CONTRACT.items():
-        registry[str(name)] = (push_rpc_routing_key_for(name), "be-message", params_model)
+        registry[str(name)] = (
+            push_rpc_routing_key_for(name),
+            "be-message",
+            params_model,
+        )
 
     for name, (params_model, _result) in NOTIFY_RPC_CONTRACT.items():
-        registry[str(name)] = (notify_rpc_routing_key_for(name), "be-message", params_model)
+        registry[str(name)] = (
+            notify_rpc_routing_key_for(name),
+            "be-message",
+            params_model,
+        )
 
     for name, (params_model, _result) in GEOIP_RPC_CONTRACT.items():
-        registry[str(name)] = (geoip_rpc_routing_key_for(name), "be-message", params_model)
+        registry[str(name)] = (
+            geoip_rpc_routing_key_for(name),
+            "be-message",
+            params_model,
+        )
 
     for name, (params_model, _result) in RPA_RPC_CONTRACT.items():
-        registry[str(name)] = (rpa_rpc_routing_key_for(name), "rpa-browser", params_model)
+        registry[str(name)] = (
+            rpa_rpc_routing_key_for(name),
+            "rpa-browser",
+            params_model,
+        )
 
     # lottery：只有 params 表（服务端是 be-bilibili-crawler，路由键前缀 FastapiApp.rpc）
     for name, params_model in RPC_METHOD_PARAMS_MODEL_MAP.items():
-        registry[str(name)] = (routing_key_for(name), "be-bilibili-crawler", params_model)
+        registry[str(name)] = (
+            routing_key_for(name),
+            "be-bilibili-crawler",
+            params_model,
+        )
 
     return registry
 

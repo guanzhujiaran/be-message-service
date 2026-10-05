@@ -38,6 +38,7 @@ from app.models.db import (
     MomentAuthorQuality,
     TMoment,
     TInteractionStat,
+    UserDeactivation,
     UserFollow,
 )
 from bili_common.models import InteractionBizTypeEnum
@@ -178,7 +179,10 @@ async def author_quality_job() -> None:
                             case(
                                 (
                                     TMoment.auditStatus.in_(
-                                        (ResourceAuditStatusEnum.REJECTED, ResourceAuditStatusEnum.HIDDEN)
+                                        (
+                                            ResourceAuditStatusEnum.REJECTED,
+                                            ResourceAuditStatusEnum.HIDDEN,
+                                        )
                                     ),
                                     1,
                                 ),
@@ -219,9 +223,9 @@ async def author_quality_job() -> None:
                 async with new_pptr_session() as ps:
                     lrows = (
                         await ps.exec(
-                            select(PptrUserLevel.mid, PptrUserLevel.current_level).where(
-                                col(PptrUserLevel.mid).in_(mids)
-                            )
+                            select(
+                                PptrUserLevel.mid, PptrUserLevel.current_level
+                            ).where(col(PptrUserLevel.mid).in_(mids))
                         )
                     ).all()
                     level_map = {int(m): int(lv or 0) for m, lv in lrows}
@@ -245,6 +249,105 @@ async def author_quality_job() -> None:
             logger.info(f"作者质量聚合完成：{len(rows)} 位作者")
     except Exception as e:  # noqa: BLE001
         logger.error(f"作者质量聚合失败: {e}")
+
+
+# ==================== 用户注销到期物理删除 + Casdoor 补偿 ====================
+
+
+async def deactivate_expire_job() -> None:
+    """扫描冷静期到期账号：物理删除本地数据，再删 Casdoor（失败转补偿态）。
+
+    逐用户处理、独立提交，避免大批量删除长时间持锁。跨 pptr/MySQL 无分布式事务，
+    依赖各清理逻辑幂等（已无数据删除 0 行正常）。编排：
+    物理删 pptr + MySQL 业务数据 → MySQL 注销记录置 pending_casdoor 提交
+    → 调 Casdoor delete-user：成功删记录；失败记错误 + retry，等补偿 job。
+    """
+    import datetime
+
+    from app.services.user import deactivation_service
+    from app.services.user.account import PptrUser
+
+    now = datetime.datetime.now()
+    async with new_session() as session:
+        due = await deactivation_service.list_due(session, now, limit=100)
+    if not due:
+        return
+
+    for row in due:
+        mid = int(row.mid)
+        try:
+            # 1. 物理删除本地（pptr 四表 + MySQL 业务数据），内部各自独立事务，幂等
+            await PptrUser(mid=mid).purge_local_data()
+            # 2. 置 Casdoor 待删补偿态并提交（本地删除结果先落库）
+            async with new_session() as s:
+                fresh = await deactivation_service.get_cooling(s, mid)
+                if fresh is not None:
+                    await deactivation_service.mark_pending_casdoor(s, fresh)
+                    await s.commit()
+        except Exception as e:  # noqa: BLE001 - 单用户失败不影响整批
+            logger.error(f"[deactivate-expire] 用户 {mid} 本地物理删除失败: {e}")
+            continue
+
+        # 3. 调 Casdoor 删除（最终一致，失败落补偿态，不回滚本地）
+        await _delete_casdoor_with_compensation(mid, row.user_name)
+
+    logger.info(f"[deactivate-expire] 本轮处理到期注销 {len(due)} 个")
+
+
+async def casdoor_delete_retry_job() -> None:
+    """补偿本地已删但 Casdoor 删除失败的账号（pending_casdoor）。"""
+    from app.services.user import deactivation_service
+
+    async with new_session() as session:
+        pending = await deactivation_service.list_pending_casdoor(session, limit=100)
+    if not pending:
+        return
+    for row in pending:
+        await _delete_casdoor_with_compensation(int(row.mid), row.user_name, row)
+    logger.info(f"[deactivate-expire] Casdoor 删除补偿扫描 {len(pending)} 个")
+
+
+async def _delete_casdoor_with_compensation(
+    mid: int,
+    user_name: str | None,
+    row: UserDeactivation | None = None,
+) -> None:
+    """调 Casdoor 删除并按结果维护注销记录；成功删记录，失败落错误态。
+
+    超过 ``casdoor_delete_max_retry`` 后保持 ERROR 告警（不再静默吞掉）。
+    """
+    from app.services.user import casdoor_service, deactivation_service
+
+    try:
+        await casdoor_service.delete_casdoor_user(user_name or "")
+    except Exception as e:  # noqa: BLE001 - Casdoor 不可用：记录待补偿
+        async with new_session() as s:
+            target = row
+            if target is None:
+                targets = await deactivation_service.list_pending_casdoor(s, limit=100)
+                target = next((r for r in targets if int(r.mid) == mid), None)
+            if target is not None:
+                await deactivation_service.mark_casdoor_error(s, target, str(e))
+                await s.commit()
+                over_limit = (target.retry_count or 0) >= settings.casdoor_delete_max_retry
+            else:
+                over_limit = False
+        if over_limit:
+            logger.error(
+                f"[deactivate-expire] 用户 {mid} Casdoor 删除重试已超上限，需人工介入: {e}"
+            )
+        else:
+            logger.warning(f"[deactivate-expire] 用户 {mid} Casdoor 删除失败，待补偿: {e}")
+        return
+
+    # 删除成功：清除注销记录
+    async with new_session() as s:
+        targets = await deactivation_service.list_pending_casdoor(s, limit=100)
+        target = next((r for r in targets if int(r.mid) == mid), None)
+        if target is not None:
+            await deactivation_service.clear_after_casdoor_deleted(s, target)
+            await s.commit()
+    logger.info(f"[deactivate-expire] 用户 {mid} Casdoor 账号已删除")
 
 
 # ==================== 调度器生命周期 ====================
@@ -295,12 +398,27 @@ def start_scheduler() -> None:
         id="comment_hot_score",
         **common,
     )
+    scheduler.add_job(
+        deactivate_expire_job,
+        "interval",
+        seconds=settings.deactivate_expire_scan_seconds,
+        id="deactivate_expire",
+        **common,
+    )
+    scheduler.add_job(
+        casdoor_delete_retry_job,
+        "interval",
+        seconds=settings.deactivate_expire_scan_seconds,
+        id="casdoor_delete_retry",
+        **common,
+    )
     scheduler.start()
     logger.info(
         "后台定时任务已启动："
         f"通知投递标记 {settings.notify_dispatch_interval_seconds}s / "
         "死信补偿 300s / 分片预热 3600s / "
-        "评论热度重算 1800s（计数对账已移除 2.46.0）"
+        "评论热度重算 1800s / "
+        f"注销到期删除 {settings.deactivate_expire_scan_seconds}s"
     )
 
 
@@ -312,7 +430,9 @@ def shutdown_scheduler() -> None:
 
 
 __all__ = [
+    "casdoor_delete_retry_job",
     "comment_hot_score_job",
+    "deactivate_expire_job",
     "dispatch_notify_job",
     "prewarm_shard_job",
     "retry_dead_letter_job",

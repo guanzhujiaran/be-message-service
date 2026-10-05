@@ -24,7 +24,9 @@ class CleanupEventService:
                 or_(col(EventMessage.mid) == uid, col(EventMessage.actor_mid) == uid)
             )
         )
-        await session.exec(delete(EventReadCursor).where(col(EventReadCursor.mid) == uid))
+        await session.exec(
+            delete(EventReadCursor).where(col(EventReadCursor.mid) == uid)
+        )
 
 
 __all__ = ["CleanupEventService"]

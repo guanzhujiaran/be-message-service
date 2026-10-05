@@ -9,6 +9,7 @@
 数值搬运——因此这里**不提供**"旧 int -> 新 int"的机械映射，改由各资源接入时
 按语义态显式映射。
 """
+
 from __future__ import annotations
 
 from enum import IntEnum
@@ -29,7 +30,9 @@ def resource_status_of(state: ResourceAuditStatusEnum) -> ResourceAuditStatusEnu
     return ResourceAuditStatusEnum(int(state))
 
 
-def parse_status(value: int | ResourceAuditStatusEnum | IntEnum) -> ResourceAuditStatusEnum:
+def parse_status(
+    value: int | ResourceAuditStatusEnum | IntEnum,
+) -> ResourceAuditStatusEnum:
     """把 int / 任意同值枚举 -> 统一 `ResourceAuditStatusEnum`。
 
     仅接受已经采用统一数值的表达（阶段二迁移后各表均为统一枚举）。

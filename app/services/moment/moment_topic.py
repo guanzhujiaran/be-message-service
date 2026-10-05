@@ -49,7 +49,9 @@ from app.services.user.account import PptrUser
 _POI_PAGE_SIZE = 20
 
 
-def _brief_to_at_item(b: UserBriefOut, *, remark: str | None = None) -> MomentAtUserItem:
+def _brief_to_at_item(
+    b: UserBriefOut, *, remark: str | None = None
+) -> MomentAtUserItem:
     """把**公开**用户简档映射到 @ 用户项（@ 面板只展示昵称 / 头像）。"""
     return MomentAtUserItem(
         mid=b.mid,
@@ -307,9 +309,7 @@ class MomentTopicService:
 
         existing = (
             await session.exec(
-                select(TMomentTopic).where(
-                    col(TMomentTopic.topicName) == topic_name
-                )
+                select(TMomentTopic).where(col(TMomentTopic.topicName) == topic_name)
             )
         ).one_or_none()
         if existing is not None:
@@ -400,17 +400,13 @@ class MomentTopicService:
         briefs = await PptrUser.get_many(following_mids + follower_mids)
 
         following = [
-            _brief_to_at_item(
-                briefs[it.mid], remark="互相关注" if it.mutual else None
-            )
+            _brief_to_at_item(briefs[it.mid], remark="互相关注" if it.mutual else None)
             if it.mid in briefs
             else MomentAtUserItem(mid=it.mid, remark="互相关注" if it.mutual else None)
             for it in following_resp.items
         ]
         followers = [
-            _brief_to_at_item(
-                briefs[it.mid], remark="互相关注" if it.mutual else None
-            )
+            _brief_to_at_item(briefs[it.mid], remark="互相关注" if it.mutual else None)
             if it.mid in briefs
             else MomentAtUserItem(mid=it.mid, remark="互相关注" if it.mutual else None)
             for it in followers_resp.items

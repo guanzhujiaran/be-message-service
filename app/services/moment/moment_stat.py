@@ -113,7 +113,9 @@ class MomentStatService:
             True 表示新计一次浏览量（Stat.viewCount +1）；
             False 表示同日重复访问，仅 ViewLog.viewCount 自增 + 刷新 lastViewAt，不累加 Stat。
         """
-        return await InteractionStatService.report_view(session, _DYNAMIC, moment_id, mid)
+        return await InteractionStatService.report_view(
+            session, _DYNAMIC, moment_id, mid
+        )
 
     # ==================== 批量读取（P4-T1）====================
 
@@ -138,5 +140,6 @@ class MomentStatService:
     async def ensure_stat_row(session: AsyncSession, moment_id: int) -> None:
         """确保动态存在对应的计数行（TInteractionStat 惰性建行兜底，MySQL 原子 upsert 防并发 1062）。"""
         await InteractionStatService._ensure_row(session, _DYNAMIC, moment_id)
+
 
 __all__ = ["_STAT_COLUMNS", "MomentStatService"]

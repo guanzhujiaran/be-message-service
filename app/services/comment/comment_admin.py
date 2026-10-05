@@ -18,7 +18,11 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
 from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
@@ -26,12 +30,12 @@ from app.models.schemas import (
     CommentAuditItem,
     CommentSourceResp,
     CommentStatsResp,
-    )
+)
 from app.services.comment import (
     DEFAULT_REJECT_REASON,
     CommentService,
     summarize_text,
-    )
+)
 from app.services.moment.moment_stat import MomentStatService
 from app.services.message.insite.notify import NotifyService
 from app.services.user.account import CommentAdminUser
@@ -43,7 +47,6 @@ DEFAULT_HIDDEN_REASON = "评论内容违反社区规范"
 
 
 class CommentAdminService:
-
     @staticmethod
     async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """评论审核统计：按评论区类型 × auditStatus 二维聚合 CommentIndex。"""
@@ -146,7 +149,9 @@ class CommentAdminService:
                         operator_mid=operator_mid,
                     )
                 elif state == ResourceAuditStatusEnum.NORMAL:
-                    await CommentAdminService._resend_interact_notify(session, rpid, row)
+                    await CommentAdminService._resend_interact_notify(
+                        session, rpid, row
+                    )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"评论状态变更通知投递失败（弱依赖）: {e}")
         return True
@@ -187,9 +192,7 @@ class CommentAdminService:
         """取评论原文，用于在通知里回显"被处理的是哪条内容"。"""
         content = (
             await session.exec(
-                select(CommentContent.message).where(
-                    col(CommentContent.rpid) == rpid
-                )
+                select(CommentContent.message).where(col(CommentContent.rpid) == rpid)
             )
         ).one_or_none()
         return content
@@ -243,10 +246,14 @@ class CommentAdminService:
                 )
             ).one_or_none()
             author_mid = (
-                await CommentService._resolve_resource_author(
-                    session, subject, row.oid, row.type
+                (
+                    await CommentService._resolve_resource_author(
+                        session, subject, row.oid, row.type
+                    )
                 )
-            ) if subject is not None else 0
+                if subject is not None
+                else 0
+            )
             if author_mid and author_mid != row.mid:
                 await CommentService._notify_reply(
                     row.mid,
@@ -296,7 +303,9 @@ class CommentAdminService:
         """下架通知：与驳回同构，同样告知来源、原文与原因。"""
         source = build_comment_source(row.oid, row.type, rpid)
         excerpt = await CommentAdminService._load_excerpt(session, rpid)
-        source_link = markup_inline_link(source.label, source.url or source.external_url)
+        source_link = markup_inline_link(
+            source.label, source.url or source.external_url
+        )
 
         lines = [
             f"您在{source_link}发布的评论已被管理员下架，当前对所有用户不可见。",
@@ -361,16 +370,17 @@ class CommentAdminService:
         `biz_type`（评论区资源类型：DYNAMIC/LOTTERY/…）与各 admin list 接口
         统一参数名：有资源子类型维度的域均用该参数筛选。
         """
-        states = states or [ResourceAuditStatusEnum.AUDITING, ResourceAuditStatusEnum.REJECTED]
+        states = states or [
+            ResourceAuditStatusEnum.AUDITING,
+            ResourceAuditStatusEnum.REJECTED,
+        ]
         conditions = [col(CommentIndex.auditStatus).in_(states)]
         if biz_type is not None:
             conditions.append(col(CommentIndex.type) == biz_type)
         total = int(
             (
                 await session.exec(
-                    select(func.count())
-                    .select_from(CommentIndex)
-                    .where(*conditions)
+                    select(func.count()).select_from(CommentIndex).where(*conditions)
                 )
             ).one()
             or 0
@@ -392,9 +402,7 @@ class CommentAdminService:
             c.rpid: c
             for c in (
                 await session.exec(
-                    select(CommentContent).where(
-                        col(CommentContent.rpid).in_(rpids)
-                    )
+                    select(CommentContent).where(col(CommentContent.rpid).in_(rpids))
                 )
             ).all()
         }
@@ -496,9 +504,7 @@ class CommentAdminService:
         ).one_or_none()
 
     @staticmethod
-    async def get_source(
-        session: AsyncSession, rpid: int
-    ) -> CommentSourceResp | None:
+    async def get_source(session: AsyncSession, rpid: int) -> CommentSourceResp | None:
         """按 rpid 返回内容来源详情（评论区归属 + 跳转地址 + 评论区计数）。"""
         row = (
             await session.exec(
@@ -562,7 +568,9 @@ class CommentAdminService:
 
         # 总数 = 全部状态之和减去已删除（deleted 视为移除，不计入在册评论）
         total_comments = sum(
-            v for k, v in state_counts.items() if k != ResourceAuditStatusEnum.DELETED.value
+            v
+            for k, v in state_counts.items()
+            if k != ResourceAuditStatusEnum.DELETED.value
         )
 
         total_subjects = int(

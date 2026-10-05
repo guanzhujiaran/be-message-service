@@ -37,12 +37,16 @@ def _to_item(tag) -> RpaTagItemResp:
         createdBy=getattr(tag, "createdBy", None),
         auditStatus=tag.auditStatus,
         pubTime=tag.pubTime.isoformat() if getattr(tag, "pubTime", None) else None,
-        createdAt=tag.createdAt.isoformat() if getattr(tag, "createdAt", None) else None,
+        createdAt=tag.createdAt.isoformat()
+        if getattr(tag, "createdAt", None)
+        else None,
     )
 
 
 @router.post(
-    "/create", response_model=StandardResponse[RpaTagItemResp], summary="创建资源标签（进入待审核）"
+    "/create",
+    response_model=StandardResponse[RpaTagItemResp],
+    summary="创建资源标签（进入待审核）",
 )
 async def create_tag(
     user: RequiredUser,
@@ -73,7 +77,9 @@ async def create_tag(
 
 
 @router.post(
-    "/attach", response_model=StandardResponse, summary="为资源关联标签（仅可关联已审核通过标签）"
+    "/attach",
+    response_model=StandardResponse,
+    summary="为资源关联标签（仅可关联已审核通过标签）",
 )
 async def attach_tag(
     user: RequiredUser,
@@ -92,9 +98,7 @@ async def attach_tag(
     return StandardResponse(msg="已关联标签")
 
 
-@router.post(
-    "/detach", response_model=StandardResponse, summary="移除资源上的标签"
-)
+@router.post("/detach", response_model=StandardResponse, summary="移除资源上的标签")
 async def detach_tag(
     user: RequiredUser,
     req: RpaTagDetachReq,
@@ -110,7 +114,9 @@ async def detach_tag(
 
 
 @router.post(
-    "/list", response_model=StandardResponse[RpaTagListResp], summary="列出标签（普通用户仅 normal，root 可按状态筛选）"
+    "/list",
+    response_model=StandardResponse[RpaTagListResp],
+    summary="列出标签（普通用户仅 normal，root 可按状态筛选）",
 )
 async def list_tags(
     user: RequiredUser,

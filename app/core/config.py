@@ -138,6 +138,14 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 是否启用后台定时任务
     scheduler_enabled: bool = True
 
+    # ==================== 用户注销（两阶段 / 冷静期）====================
+    # 注销冷静期天数：提交注销后保留数据 N 天，期间重新登录可自动撤销；到期物理删除。
+    account_deactivate_grace_days: int = 7
+    # 到期扫描任务间隔（秒）：扫描 cooling 且 delete_after<=now 的账号执行物理删除。
+    deactivate_expire_scan_seconds: int = 3600
+    # Casdoor 删除失败的补偿重试上限（超过后保持 ERROR 告警，不再静默重试）。
+    casdoor_delete_max_retry: int = 10
+
     # ==================== EdgeRank 推荐排序（2.27.0）====================
     # 公域 Feed（综合 Feed / 话题 Feed / 话题广场）的推荐排序算法：
     #   score = (w_like·likeCount + w_comment·commentCount + w_repost·repostCount
@@ -199,7 +207,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     edgerank_anon_perturb_ratio: float = 0.3
     # ==================== EdgeRank 多维打分（2.35.0）====================
     # content_quality 附加维度：
-    edgerank_engagement_weight: float = 0.5  # 互动率 (like+comment+repost)/max(view,1)，防僵尸爆款
+    edgerank_engagement_weight: float = (
+        0.5  # 互动率 (like+comment+repost)/max(view,1)，防僵尸爆款
+    )
     edgerank_rich_weight: float = 0.4  # 内容丰富度（contentJson 含图片/视频/LINK 节点）
     edgerank_forward_penalty: float = -0.6  # FORWARD 转发惩罚（负权重）
     # fresh_bonus = w/(1+viewCount)：新内容冷启动，防被高互动旧内容埋没
@@ -237,17 +247,25 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # ==================== 候选集多路召回（2.46.0）====================
     # sort=recommend 候选由「72h 最新 N 条」升级为五路召回并集去重；每路独立开关与上限。
     # 并集后仍受 edgerank_candidate_limit 总上限约束，召回阶段不排序（统一交 rank_feed 精排）。
-    edgerank_recall_hot_enabled: bool = True  # 热门/趋势路：时间窗口最新 + 互动 top 兜底
+    edgerank_recall_hot_enabled: bool = (
+        True  # 热门/趋势路：时间窗口最新 + 互动 top 兜底
+    )
     edgerank_recall_hot_limit: int = 200  # 时间窗口最新条数
     edgerank_recall_hot_top_limit: int = 100  # 互动量(like+comment+repost) top 兜底条数
-    edgerank_recall_social_enabled: bool = True  # 社交关系路：关注作者动态（未登录跳过）
+    edgerank_recall_social_enabled: bool = (
+        True  # 社交关系路：关注作者动态（未登录跳过）
+    )
     edgerank_recall_social_limit: int = 100
-    edgerank_recall_topic_enabled: bool = True  # 内容标签/分类路：偏好话题动态（未登录跳过）
+    edgerank_recall_topic_enabled: bool = (
+        True  # 内容标签/分类路：偏好话题动态（未登录跳过）
+    )
     edgerank_recall_topic_limit: int = 100
     edgerank_recall_geo_enabled: bool = True  # 地理位置路：附近动态（需请求带 lat/lng）
     edgerank_recall_geo_limit: int = 50
     edgerank_recall_geo_radius_km: float = 50.0  # 附近范围半径
-    edgerank_recall_cf_enabled: bool = True  # 协同过滤路（MVP 近似）：点赞/互动过作者的新动态
+    edgerank_recall_cf_enabled: bool = (
+        True  # 协同过滤路（MVP 近似）：点赞/互动过作者的新动态
+    )
     edgerank_recall_cf_limit: int = 100
     # ==================== Feed 曝光去重（2.47.0）====================
     # 推荐流已下发资源记入 TFeedImpression，TTL 窗口内不再重复下发（防重复刷到）。

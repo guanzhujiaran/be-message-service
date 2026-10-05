@@ -55,9 +55,7 @@ from app.services.user.account import PptrUser
 from app.services.user.account.base import _level_calc
 
 
-async def _push_new_user_notify(
-    *, user_name: str, uid: int, uname: str = ""
-) -> bool:
+async def _push_new_user_notify(*, user_name: str, uid: int, uname: str = "") -> bool:
     """新建用户后发布「欢迎注册」系统通知（写入 msg_notify，站内信）。
 
     委托 `NotifyService.send_welcome` 统一实现（Casdoor 登录注册通道共用同一逻辑），
@@ -330,7 +328,9 @@ async def rpc_search_users(params: UserSearchParams) -> StandardResponse:
 @rpc_safe
 async def rpc_add_exp(params: PptrAddExpParams) -> StandardResponse:
     """增加经验值（add_exp）：业务逻辑在 be-message 侧完成（经验计算 + 升级角色同步）。"""
-    result = await PptrUser(mid=params.uid).add_exp(exp=params.exp, action_type=params.action_type)
+    result = await PptrUser(mid=params.uid).add_exp(
+        exp=params.exp, action_type=params.action_type
+    )
     return success_response(data=PptrAddExpResult(**result))
 
 

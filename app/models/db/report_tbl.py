@@ -26,11 +26,16 @@ class TUserReport(ReportBase, table=True):
     __tablename__ = "TUserReport"
     __table_args__ = (
         UniqueConstraint(
-            "reportMid", "bizType", "bizId",
+            "reportMid",
+            "bizType",
+            "bizId",
             name="TUserReport_reportMid_bizType_bizId_key",
         ),
         Index("idx_tuser_report_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "用户空间举报表：bizType=user，bizId=mid（继承 ReportBase）"},
+        {
+            "extend_existing": True,
+            "comment": "用户空间举报表：bizType=user，bizId=mid（继承 ReportBase）",
+        },
     )
 
 

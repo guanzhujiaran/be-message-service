@@ -113,10 +113,19 @@ async def audit_statistics(
 async def audit_history(
     session: SessionDep,
     user: RootUser,
-    dynId: StrInt | None = Query(default=None, description="按动态 ID 过滤（雪花 ID，StrInt 兼容前端 str 传参）"),
-    operatorMid: StrInt | None = Query(default=None, description="按操作员 MID 过滤（雪花 ID，StrInt 兼容前端 str 传参）"),
-    fromDate: str | None = Query(default=None, description="起始时间 YYYY-MM-DD HH:MM:SS"),
-    toDate: str | None = Query(default=None, description="结束时间 YYYY-MM-DD HH:MM:SS"),
+    dynId: StrInt | None = Query(
+        default=None, description="按动态 ID 过滤（雪花 ID，StrInt 兼容前端 str 传参）"
+    ),
+    operatorMid: StrInt | None = Query(
+        default=None,
+        description="按操作员 MID 过滤（雪花 ID，StrInt 兼容前端 str 传参）",
+    ),
+    fromDate: str | None = Query(
+        default=None, description="起始时间 YYYY-MM-DD HH:MM:SS"
+    ),
+    toDate: str | None = Query(
+        default=None, description="结束时间 YYYY-MM-DD HH:MM:SS"
+    ),
     page_num: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[MomentAuditLogListResp]:
@@ -147,9 +156,7 @@ async def audit_approve(
         item = await biz.audit_approve(remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
-    return StandardResponse(
-        data=MomentAuditDetailResp(item=item, logs=[])
-    )
+    return StandardResponse(data=MomentAuditDetailResp(item=item, logs=[]))
 
 
 @router.post(
@@ -167,9 +174,7 @@ async def audit_reject(
         item = await biz.audit_reject(reject_reason=req.rejectReason, remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
-    return StandardResponse(
-        data=MomentAuditDetailResp(item=item, logs=[])
-    )
+    return StandardResponse(data=MomentAuditDetailResp(item=item, logs=[]))
 
 
 @router.get(

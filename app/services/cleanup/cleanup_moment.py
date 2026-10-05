@@ -42,9 +42,7 @@ class CleanupMomentService:
         最后删主表 `TMoment`。
         """
         # 我点赞 / 点踩 / 浏览他人动态的痕迹（mid = 操作者）
-        await session.exec(
-            delete(TResourceLike).where(col(TResourceLike.mid) == uid)
-        )
+        await session.exec(delete(TResourceLike).where(col(TResourceLike.mid) == uid))
         await session.exec(
             delete(TResourceDislike).where(col(TResourceDislike.mid) == uid)
         )

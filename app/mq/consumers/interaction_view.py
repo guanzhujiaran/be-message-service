@@ -21,6 +21,8 @@ from app.mq.router import router
     exchange=message_exchange,
     ack_policy=AckPolicy.MANUAL,
 )
-async def consume_interaction_view(message: InteractionViewPayload, msg: RabbitMessage) -> None:
+async def consume_interaction_view(
+    message: InteractionViewPayload, msg: RabbitMessage
+) -> None:
     """消费浏览统计消息，去重累计浏览数。"""
     await handle_interaction_view(message, msg)

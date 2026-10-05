@@ -32,7 +32,9 @@ from app.models.schemas.favorite import (
     FavoriteSettingReq,
     FavoriteSettingResp,
 )
-from app.services.moment.interaction import BeMessageInteractionStatService as InteractionStatService
+from app.services.moment.interaction import (
+    BeMessageInteractionStatService as InteractionStatService,
+)
 from app.services.interaction_actions import get_biz
 from app.services.interaction_actions.folder import FavoriteFolderAction
 
@@ -48,7 +50,9 @@ async def _parse_int(value: str | None, field: str) -> int | None:
         return None
 
 
-def _resolve_biz(biz_type: InteractionBizTypeEnum, biz_id: str | None) -> tuple[InteractionBizTypeEnum, int] | None:
+def _resolve_biz(
+    biz_type: InteractionBizTypeEnum, biz_id: str | None
+) -> tuple[InteractionBizTypeEnum, int] | None:
     """解析收藏请求的目标资源 (biz_type_enum, biz_id_int)。
 
     2.55.0 全面通用化：`bizId` 字段同时承载 dynId 语义（dynamic 时值等于 dynId），
@@ -59,7 +63,9 @@ def _resolve_biz(biz_type: InteractionBizTypeEnum, biz_id: str | None) -> tuple[
     return biz_type, int(biz_id)
 
 
-async def _get_favorite_count(session, biz_type: InteractionBizTypeEnum, biz_id: int) -> int:
+async def _get_favorite_count(
+    session, biz_type: InteractionBizTypeEnum, biz_id: int
+) -> int:
     """读取某资源收藏数（动态与非动态统一走 TInteractionStat）。"""
     counts = await InteractionStatService.batch_get_counts(session, biz_type, [biz_id])
     return counts.get(biz_id, {}).get("favoriteCount", 0)
@@ -68,16 +74,20 @@ async def _get_favorite_count(session, biz_type: InteractionBizTypeEnum, biz_id:
 # ==================== 收藏夹 CRUD ====================
 
 
-@router.post("/folder/create", response_model=StandardResponse[FavoriteFolderResp], summary="创建收藏夹")
+@router.post(
+    "/folder/create",
+    response_model=StandardResponse[FavoriteFolderResp],
+    summary="创建收藏夹",
+)
 async def create_folder(
     session: SessionDep,
     user: RequiredUser,
     req: FavoriteFolderCreateReq,
 ) -> StandardResponse[FavoriteFolderResp]:
     try:
-        folder_id, cover_audit_status = await FavoriteFolderAction(session, user.mid).create(
-            req.name, req.description, req.coverUrl
-        )
+        folder_id, cover_audit_status = await FavoriteFolderAction(
+            session, user.mid
+        ).create(req.name, req.description, req.coverUrl)
     except ValueError as e:
         # 封面 URL 下载校验失败等（复用头像校验：http/https、1s 内下载、≤1MB、image/*）
         return StandardResponse(code=422, msg=str(e))
@@ -135,7 +145,11 @@ async def delete_folder(
     return StandardResponse(data=None)
 
 
-@router.get("/folder/list", response_model=StandardResponse[list[FavoriteFolderResp]], summary="我的收藏夹列表")
+@router.get(
+    "/folder/list",
+    response_model=StandardResponse[list[FavoriteFolderResp]],
+    summary="我的收藏夹列表",
+)
 async def list_folders(
     session: SessionDep,
     user: RequiredUser,
@@ -150,7 +164,9 @@ async def list_folders(
 # ==================== 收藏 / 取消 ====================
 
 
-@router.post("/add", response_model=StandardResponse[FavoriteAddResp], summary="收藏资源到收藏夹")
+@router.post(
+    "/add", response_model=StandardResponse[FavoriteAddResp], summary="收藏资源到收藏夹"
+)
 async def add_favorite(
     session: SessionDep,
     user: RequiredUser,
@@ -179,7 +195,11 @@ async def add_favorite(
     )
 
 
-@router.post("/remove", response_model=StandardResponse[FavoriteAddResp], summary="从收藏夹取消收藏")
+@router.post(
+    "/remove",
+    response_model=StandardResponse[FavoriteAddResp],
+    summary="从收藏夹取消收藏",
+)
 async def remove_favorite(
     session: SessionDep,
     user: RequiredUser,
@@ -205,12 +225,19 @@ async def remove_favorite(
     )
 
 
-@router.get("/list", response_model=StandardResponse[FavoriteListResp], summary="某收藏夹下的资源列表")
+@router.get(
+    "/list",
+    response_model=StandardResponse[FavoriteListResp],
+    summary="某收藏夹下的资源列表",
+)
 async def list_favorites(
     session: SessionDep,
     user: RequiredUser,
     folderId: str = Query(description="收藏夹id（字符串）"),
-    bizType: InteractionBizTypeEnum | None = Query(default=None, description="资源类型过滤（缺省返回全部；InteractionBizTypeEnum 值）"),
+    bizType: InteractionBizTypeEnum | None = Query(
+        default=None,
+        description="资源类型过滤（缺省返回全部；InteractionBizTypeEnum 值）",
+    ),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[FavoriteListResp]:
@@ -229,12 +256,19 @@ async def list_favorites(
     )
 
 
-@router.get("/items", response_model=StandardResponse[FavoriteItemListResp], summary="某收藏夹下资源明细（bizType+bizId）")
+@router.get(
+    "/items",
+    response_model=StandardResponse[FavoriteItemListResp],
+    summary="某收藏夹下资源明细（bizType+bizId）",
+)
 async def list_favorite_items(
     session: SessionDep,
     user: RequiredUser,
     folderId: str = Query(description="收藏夹id（字符串）"),
-    bizType: InteractionBizTypeEnum | None = Query(default=None, description="资源类型过滤（缺省返回全部；InteractionBizTypeEnum 值）"),
+    bizType: InteractionBizTypeEnum | None = Query(
+        default=None,
+        description="资源类型过滤（缺省返回全部；InteractionBizTypeEnum 值）",
+    ),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=20, ge=1, le=50),
 ) -> StandardResponse[FavoriteItemListResp]:
@@ -253,12 +287,19 @@ async def list_favorite_items(
     )
 
 
-@router.get("/dyn/folders", response_model=StandardResponse[FavoriteDynFoldersResp], summary="某资源被当前用户收藏在哪些收藏夹")
+@router.get(
+    "/dyn/folders",
+    response_model=StandardResponse[FavoriteDynFoldersResp],
+    summary="某资源被当前用户收藏在哪些收藏夹",
+)
 async def dyn_folders(
     session: SessionDep,
     user: RequiredUser,
     bizId: str = Query(description="资源id（字符串）"),
-    bizType: InteractionBizTypeEnum = Query(default=InteractionBizTypeEnum.DYNAMIC, description="资源类型（InteractionBizTypeEnum 值）"),
+    bizType: InteractionBizTypeEnum = Query(
+        default=InteractionBizTypeEnum.DYNAMIC,
+        description="资源类型（InteractionBizTypeEnum 值）",
+    ),
 ) -> StandardResponse[FavoriteDynFoldersResp]:
     resolved = _resolve_biz(bizType, bizId)
     if resolved is None:
@@ -279,7 +320,11 @@ async def dyn_folders(
 # ==================== 主页收藏可见性设置 ====================
 
 
-@router.get("/setting", response_model=StandardResponse[FavoriteSettingResp], summary="主页是否显示收藏")
+@router.get(
+    "/setting",
+    response_model=StandardResponse[FavoriteSettingResp],
+    summary="主页是否显示收藏",
+)
 async def get_setting(
     session: SessionDep,
     user: RequiredUser,
@@ -288,7 +333,11 @@ async def get_setting(
     return StandardResponse(data=FavoriteSettingResp(showFavorites=show))
 
 
-@router.post("/setting", response_model=StandardResponse[FavoriteSettingResp], summary="设置主页是否显示收藏")
+@router.post(
+    "/setting",
+    response_model=StandardResponse[FavoriteSettingResp],
+    summary="设置主页是否显示收藏",
+)
 async def set_setting(
     session: SessionDep,
     user: RequiredUser,
@@ -301,7 +350,11 @@ async def set_setting(
 # ==================== 他人主页公开读（无需登录）====================
 
 
-@router.get("/user/folders", response_model=StandardResponse[list[FavoriteFolderResp] | None], summary="某用户主页公开的收藏夹列表")
+@router.get(
+    "/user/folders",
+    response_model=StandardResponse[list[FavoriteFolderResp] | None],
+    summary="某用户主页公开的收藏夹列表",
+)
 async def public_folders(
     session: SessionDep,
     mid: Annotated[
@@ -309,13 +362,19 @@ async def public_folders(
     ],
 ) -> StandardResponse[list[FavoriteFolderResp] | None]:
     # 公开读无需登录：以目标用户 mid 构造 action（方法内部按 target_mid 校验可见性）
-    folders = await FavoriteFolderAction(session, int(mid)).list_public_folders(int(mid))
+    folders = await FavoriteFolderAction(session, int(mid)).list_public_folders(
+        int(mid)
+    )
     if folders is None:
         return StandardResponse(code=403, msg="该用户未公开收藏")
     return StandardResponse(data=[FavoriteFolderResp(**f) for f in folders])
 
 
-@router.get("/user/dynamics", response_model=StandardResponse[FavoriteListResp | None], summary="某用户某收藏夹下的公开资源")
+@router.get(
+    "/user/dynamics",
+    response_model=StandardResponse[FavoriteListResp | None],
+    summary="某用户某收藏夹下的公开资源",
+)
 async def public_dynamics(
     session: SessionDep,
     mid: Annotated[

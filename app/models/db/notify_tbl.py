@@ -69,7 +69,9 @@ class NotifyMessage(TimestampMixin, table=True):
 
     creator_mid: int = Field(sa_type=BIGINT, index=True, description="发布者mid")
     # 由定时任务标记：该通知是否已完成一轮推送投递，避免重复推送
-    dispatched: bool = Field(default=False, index=True, description="是否已完成推送投递")
+    dispatched: bool = Field(
+        default=False, index=True, description="是否已完成推送投递"
+    )
     dispatched_at: datetime | None = Field(default=None, description="推送投递完成时间")
 
 

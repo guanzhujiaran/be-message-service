@@ -4,6 +4,7 @@
 关注 / @ 通知之外（服务端静默拒绝，seed 只能软降级跳过，覆盖率逐轮变窄）。
 故归一到「每人 ≤1 条」（够验证负面场景即可），其余走 ``POST /message/follow/unblock`` 解除。
 """
+
 from loguru import logger
 from sqlmodel import col, select
 
@@ -95,5 +96,7 @@ async def _normalize_blocklist(
             f"[黑名单归一] 解除 {len(stale)} 条历史拉黑，每人保留 ≤{keep} 条（保留 {len(kept)} 条）"
         )
     else:
-        logger.info(f"[黑名单归一] 无需清理，已有 {len(kept)} 条黑名单（每人 ≤{keep} 条）")
+        logger.info(
+            f"[黑名单归一] 无需清理，已有 {len(kept)} 条黑名单（每人 ≤{keep} 条）"
+        )
     return kept

@@ -67,7 +67,9 @@ def bind_viewer(mid: int = 0, is_admin: bool = False) -> Token:
     典型用法是中间件里 ``token = bind_viewer(...)``，在 ``finally`` 中
     :func:`reset_viewer` 复位，避免上下文污染到下一个请求。
     """
-    return _current_viewer.set(ViewerContext(mid=int(mid or 0), is_admin=bool(is_admin)))
+    return _current_viewer.set(
+        ViewerContext(mid=int(mid or 0), is_admin=bool(is_admin))
+    )
 
 
 def reset_viewer(token: Token | None) -> None:

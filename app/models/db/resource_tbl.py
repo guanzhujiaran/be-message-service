@@ -41,10 +41,15 @@ class TResourceLike(ResourceBase, TimestampMixin, table=True):
     __tablename__ = "TResourceLike"
     __table_args__ = (
         PrimaryKeyConstraint("pk", name="TResourceLike_pkey"),
-        UniqueConstraint("bizType", "bizId", "mid", name="TResourceLike_bizType_bizId_mid_key"),
-        Index("idx_resource_like_mid_time", "mid", text('created_at DESC')),
+        UniqueConstraint(
+            "bizType", "bizId", "mid", name="TResourceLike_bizType_bizId_mid_key"
+        ),
+        Index("idx_resource_like_mid_time", "mid", text("created_at DESC")),
         Index("idx_resource_like_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "通用资源点赞明细：一人一赞，继承 ResourceBase，唯一约束(bizType,bizId,mid)保证幂等双写；原 TMomentLike"},
+        {
+            "extend_existing": True,
+            "comment": "通用资源点赞明细：一人一赞，继承 ResourceBase，唯一约束(bizType,bizId,mid)保证幂等双写；原 TMomentLike",
+        },
     )
 
     likeType: int = Field(default=1, description="点赞类型：1=普通点赞（预留扩展）")
@@ -61,10 +66,15 @@ class TResourceDislike(ResourceBase, TimestampMixin, table=True):
     __tablename__ = "TResourceDislike"
     __table_args__ = (
         PrimaryKeyConstraint("pk", name="TResourceDislike_pkey"),
-        UniqueConstraint("bizType", "bizId", "mid", name="TResourceDislike_bizType_bizId_mid_key"),
+        UniqueConstraint(
+            "bizType", "bizId", "mid", name="TResourceDislike_bizType_bizId_mid_key"
+        ),
         Index("idx_resource_dislike_biz", "bizType", "bizId"),
-        Index("idx_resource_dislike_mid_time", "mid", text('created_at DESC')),
-        {"extend_existing": True, "comment": "通用资源点踩明细：一人一踩，继承 ResourceBase，唯一约束(bizType,bizId,mid)保证幂等双写；原 TMomentDislike"},
+        Index("idx_resource_dislike_mid_time", "mid", text("created_at DESC")),
+        {
+            "extend_existing": True,
+            "comment": "通用资源点踩明细：一人一踩，继承 ResourceBase，唯一约束(bizType,bizId,mid)保证幂等双写；原 TMomentDislike",
+        },
     )
 
 
@@ -83,11 +93,16 @@ class TResourceReport(ReportBase, table=True):
     __tablename__ = "TResourceReport"
     __table_args__ = (
         UniqueConstraint(
-            "reportMid", "bizType", "bizId",
+            "reportMid",
+            "bizType",
+            "bizId",
             name="TResourceReport_reportMid_bizType_bizId_key",
         ),
         Index("idx_tresource_report_biz", "bizType", "bizId"),
-        {"extend_existing": True, "comment": "通用资源举报表：任意资源(bizType+bizId)可举报（继承 ReportBase）"},
+        {
+            "extend_existing": True,
+            "comment": "通用资源举报表：任意资源(bizType+bizId)可举报（继承 ReportBase）",
+        },
     )
 
 
@@ -111,25 +126,43 @@ class TResourceAuditLog(ResourceBase, TimestampMixin, table=True):
     __tablename__ = "TResourceAuditLog"
     __table_args__ = (
         PrimaryKeyConstraint("pk", name="TResourceAuditLog_pkey"),
-        Index("idx_audit_log_biz_created", "bizType", "bizId", text('created_at DESC')),
-        Index("idx_audit_log_mid_created", "mid", text('created_at DESC')),
-        Index("idx_audit_log_action_created", "actionType", text('created_at DESC')),
-        {"extend_existing": True, "comment": "通用资源审核流水：bizType+bizId 定位任意资源，继承 ResourceBase"},
+        Index("idx_audit_log_biz_created", "bizType", "bizId", text("created_at DESC")),
+        Index("idx_audit_log_mid_created", "mid", text("created_at DESC")),
+        Index("idx_audit_log_action_created", "actionType", text("created_at DESC")),
+        {
+            "extend_existing": True,
+            "comment": "通用资源审核流水：bizType+bizId 定位任意资源，继承 ResourceBase",
+        },
     )
 
     operatorRole: MomentAuditLogOperatorRoleEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(MomentAuditLogOperatorRoleEnum), description="author / admin"
+        default=None,
+        nullable=False,
+        sa_type=SAEnum(MomentAuditLogOperatorRoleEnum),
+        description="author / admin",
     )
     fromStatus: ResourceAuditStatusEnum | None = Field(
-        default=None, sa_type=SAEnum(ResourceAuditStatusEnum), description="流转前 auditStatus"
+        default=None,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
+        description="流转前 auditStatus",
     )
     toStatus: ResourceAuditStatusEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(ResourceAuditStatusEnum), description="流转后 auditStatus"
+        default=None,
+        nullable=False,
+        sa_type=SAEnum(ResourceAuditStatusEnum),
+        description="流转后 auditStatus",
     )
     actionType: MomentAuditLogActionEnum = Field(
-        default=None, nullable=False, sa_type=SAEnum(MomentAuditLogActionEnum), description="create/edit/approve/reject/resubmit/delete"
+        default=None,
+        nullable=False,
+        sa_type=SAEnum(MomentAuditLogActionEnum),
+        description="create/edit/approve/reject/resubmit/delete",
     )
-    rejectReason: str | None = Field(default=None, max_length=500, description="驳回原因（仅 actionType=reject 有值）")
+    rejectReason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="驳回原因（仅 actionType=reject 有值）",
+    )
     remark: str | None = Field(default=None, max_length=500, description="其他备注")
     clientIp: str | None = Field(default=None, max_length=64, description="操作者 IP")
     userAgent: str | None = Field(default=None, max_length=512, description="操作者 UA")

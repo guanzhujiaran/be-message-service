@@ -20,7 +20,11 @@ from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from app.models.db import TUserAvatarAudit
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas.avatar_audit import (
@@ -50,7 +54,6 @@ def _to_item(row: TUserAvatarAudit, brief) -> AvatarAuditItem:
 
 
 class AvatarAuditService:
-
     @staticmethod
     async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """头像审核统计：按 auditStatus 聚合 TUserAvatarAudit（无子类型，byType 为空）。"""
@@ -219,7 +222,9 @@ class AvatarAuditService:
         try:
             await PptrUser(mid=row.mid).set_user_detail(face=row.newAvatar)
         except Exception as e:  # noqa: BLE001
-            logger.error(f"审核通过后写入公开头像失败 mid={row.mid} newAvatar={row.newAvatar}: {e}")
+            logger.error(
+                f"审核通过后写入公开头像失败 mid={row.mid} newAvatar={row.newAvatar}: {e}"
+            )
 
         # 弱依赖通知：审核通过
         await AvatarAuditService._notify_approved(row)
@@ -253,7 +258,9 @@ class AvatarAuditService:
         session.add(row)
         await session.commit()
         await session.refresh(row)
-        logger.info(f"管理员 {operator_mid} 审核驳回头像申请 pk={pk} mid={row.mid}：{reason}")
+        logger.info(
+            f"管理员 {operator_mid} 审核驳回头像申请 pk={pk} mid={row.mid}：{reason}"
+        )
 
         # 弱依赖通知：审核驳回
         await AvatarAuditService._notify_rejected(row)

@@ -50,7 +50,9 @@ _ROOT_DEFAULT_STATES = list(ResourceAuditStatusEnum)
 _LIMITED_STATES = [ResourceAuditStatusEnum.AUDITING]
 
 
-@router.post("/audit", response_model=StandardResponse[CommentAuditItem], summary="人工审核")
+@router.post(
+    "/audit", response_model=StandardResponse[CommentAuditItem], summary="人工审核"
+)
 async def audit_comment(
     session: SessionDep,
     user: RootUser,
@@ -124,7 +126,9 @@ async def bulk_audit_comment(
     )
 
 
-@router.get("/audit", response_model=StandardResponse[CommentAuditListResp], summary="审核队列")
+@router.get(
+    "/audit", response_model=StandardResponse[CommentAuditListResp], summary="审核队列"
+)
 async def audit_queue(
     session: SessionDep,
     user: MsgAdminUser,
@@ -155,7 +159,9 @@ async def audit_queue(
             try:
                 states = [ResourceAuditStatusEnum(int(x)) for x in state]
             except (ValueError, KeyError):
-                return StandardResponse(code=400, msg="state 取值非法（仅接受状态数值）")
+                return StandardResponse(
+                    code=400, msg="state 取值非法（仅接受状态数值）"
+                )
         else:
             states = _ROOT_DEFAULT_STATES
     else:
@@ -230,10 +236,14 @@ async def admin_ip(
         return StandardResponse(code=400, msg="rpid 不合法")
 
     ip_v4, ip_v6 = await CommentAdminService.get_plaintext_ip(session, rpid_int)
-    return StandardResponse(data={"rpid": str(rpid_int), "ip_v4": ip_v4, "ip_v6": ip_v6})
+    return StandardResponse(
+        data={"rpid": str(rpid_int), "ip_v4": ip_v4, "ip_v6": ip_v6}
+    )
 
 
-@router.get("/stats", response_model=StandardResponse[CommentStatsResp], summary="评论统计")
+@router.get(
+    "/stats", response_model=StandardResponse[CommentStatsResp], summary="评论统计"
+)
 async def admin_stats(
     session: SessionDep, user: MsgAdminUser
 ) -> StandardResponse[CommentStatsResp]:

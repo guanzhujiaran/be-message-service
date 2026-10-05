@@ -49,7 +49,9 @@ from app.services.interaction_actions import get_biz
 MAX_VIEW_RETRIES = DEFAULT_MAX_RETRIES
 
 
-async def handle_interaction_view(payload: InteractionViewPayload, msg: RabbitMessage) -> None:
+async def handle_interaction_view(
+    payload: InteractionViewPayload, msg: RabbitMessage
+) -> None:
     """消费浏览统计消息，去重累计浏览数。"""
     try:
         biz_id = int(str(payload.bizId).strip())

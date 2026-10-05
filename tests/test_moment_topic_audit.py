@@ -77,13 +77,17 @@ async def _bind_engine_per_test():
 
     async with new_session() as s:
         await s.exec(
-            text(f"DELETE FROM TMomentTopic WHERE creatorMid IN ({A_MID}, 0) OR topicId IN ({T_A}, {T_B})")
+            text(
+                f"DELETE FROM TMomentTopic WHERE creatorMid IN ({A_MID}, 0) OR topicId IN ({T_A}, {T_B})"
+            )
         )
         await s.commit()
     yield
     async with new_session() as s:
         await s.exec(
-            text(f"DELETE FROM TMomentTopic WHERE creatorMid IN ({A_MID}, 0) OR topicId IN ({T_A}, {T_B})")
+            text(
+                f"DELETE FROM TMomentTopic WHERE creatorMid IN ({A_MID}, 0) OR topicId IN ({T_A}, {T_B})"
+            )
         )
         await s.commit()
     await engine.dispose()
@@ -144,7 +148,9 @@ async def test_create_topic_invalid_cover_raises():
 
         with _pytest.raises(ValueError):
             await MomentTopicService.create_topic(
-                s, mid=A_MID, req=MomentTopicCreateReq(topicName="x", topicCover="ftp://a/b.png")
+                s,
+                mid=A_MID,
+                req=MomentTopicCreateReq(topicName="x", topicCover="ftp://a/b.png"),
             )
 
 
@@ -180,7 +186,9 @@ async def test_approve_twice_raises():
         import pytest as _pytest
 
         with _pytest.raises(ValueError):
-            await MomentTopicAuditService.approve(s, topic.topicId, operator_mid=ADMIN_MID)
+            await MomentTopicAuditService.approve(
+                s, topic.topicId, operator_mid=ADMIN_MID
+            )
 
 
 # ==================== 审核驳回 ====================
@@ -206,7 +214,9 @@ async def test_square_only_normal():
     async with new_session() as s:
         await _create_topic(s, A_MID, "广场普通话题")  # auditing，不应出现
         topic_n = await _create_topic(s, A_MID, "广场通过话题")
-        await MomentTopicAuditService.approve(s, topic_n.topicId, operator_mid=ADMIN_MID)
+        await MomentTopicAuditService.approve(
+            s, topic_n.topicId, operator_mid=ADMIN_MID
+        )
 
         # 2.46.0 推荐流：无 page 参数，page_size 截断
         resp = await MomentTopicService.topic_square(s, page_size=20)
@@ -222,7 +232,9 @@ async def test_square_only_normal():
 async def test_topic_feed_non_normal_returns_empty():
     async with new_session() as s:
         topic = await _create_topic(s, A_MID, "审核中话题Feed")
-        resp = await TopicFeedService.topic_feed(s, topic_id=topic.topicId, viewer_mid=A_MID)
+        resp = await TopicFeedService.topic_feed(
+            s, topic_id=topic.topicId, viewer_mid=A_MID
+        )
         assert resp.items == []
 
 
@@ -233,7 +245,9 @@ async def test_mine_returns_only_mine_with_status():
     async with new_session() as s:
         await _create_topic(s, A_MID, "我的话题A")
         topic_b = await _create_topic(s, A_MID, "我的话题B")
-        await MomentTopicAuditService.reject(s, topic_b.topicId, operator_mid=ADMIN_MID, reject_reason="违规")
+        await MomentTopicAuditService.reject(
+            s, topic_b.topicId, operator_mid=ADMIN_MID, reject_reason="违规"
+        )
 
         resp = await MomentTopicService.mine(s, mid=A_MID, page_num=1, page_size=20)
         assert isinstance(resp, MomentTopicMineResp)

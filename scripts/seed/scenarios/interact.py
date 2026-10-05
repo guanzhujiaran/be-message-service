@@ -1,4 +1,5 @@
 """场景③ 用户级互动：收藏夹（含封面审核）+ 收藏 + 关注/拉黑 + 关注流 + 事件/系统通知。"""
+
 from bili_common.models import InteractionActionTypeEnum
 from loguru import logger
 from tqdm import tqdm
@@ -86,7 +87,11 @@ async def seed_interact(
     # 4) 事件通知（like / reply / at 三类）
     target_mid = others[0][0] if others else hub[0]
     actor = hub
-    for event_type in (InteractionActionTypeEnum.LIKE, InteractionActionTypeEnum.REPLY, InteractionActionTypeEnum.AT):
+    for event_type in (
+        InteractionActionTypeEnum.LIKE,
+        InteractionActionTypeEnum.REPLY,
+        InteractionActionTypeEnum.AT,
+    ):
         await client.report_event(
             target_mid,
             event_type,

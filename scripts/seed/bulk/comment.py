@@ -3,6 +3,7 @@
 覆盖：资源点赞（按 biz_type 分流）、一级评论（正文末尾轮遍 @）、楼中楼、评论赞踩、
 显式 @、举报、置顶；lottery 额外补发 LIKE 事件（通用资源点赞后端不自动生成）。
 """
+
 import random
 
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum

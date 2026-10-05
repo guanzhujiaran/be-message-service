@@ -83,7 +83,9 @@ class CommentBiz(BaseBiz):
         return jump_target_for(idx.type, idx.oid, rpid or self.biz_id)
 
     @classmethod
-    async def batch_get_resources(cls, session, biz_ids, *, actor_mid=None, rpid_map=None):
+    async def batch_get_resources(
+        cls, session, biz_ids, *, actor_mid=None, rpid_map=None
+    ):
         """评论批量回捞：`CommentIndex` / `CommentContent` 各一次 `IN` 查询（计划书 §5.12）。
 
         覆盖基类「逐条 `get_resource`」的兜底实现，避免 N+1（对齐 `DynamicBiz`）。
@@ -224,8 +226,15 @@ class CommentBiz(BaseBiz):
 
     @biz_action()
     async def reply(
-        self, content: str, *, parent: int | None = None, at_mids=None,
-        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+        self,
+        content: str,
+        *,
+        parent: int | None = None,
+        at_mids=None,
+        at_name_to_mid=None,
+        pictures=None,
+        emote_meta=None,
+        up_mid=0,
     ):
         """回复本条评论（root=本评论 rpid）。返回 CommentAddResp。
 
@@ -237,26 +246,49 @@ class CommentBiz(BaseBiz):
         if idx is None:
             raise ValueError("评论不存在")
         return await ops.do_comment(
-            self.session, idx.type, idx.oid, self.actor_mid,
-            root=self.biz_id, parent=parent, message=content, at_mids=at_mids,
-            at_name_to_mid=at_name_to_mid, pictures=pictures,
-            emote_meta=emote_meta, up_mid=up_mid,
+            self.session,
+            idx.type,
+            idx.oid,
+            self.actor_mid,
+            root=self.biz_id,
+            parent=parent,
+            message=content,
+            at_mids=at_mids,
+            at_name_to_mid=at_name_to_mid,
+            pictures=pictures,
+            emote_meta=emote_meta,
+            up_mid=up_mid,
             **self.comment_ctx(),
         )
 
     @biz_action()
     async def at(
-        self, mids, content: str, *, parent: int | None = None,
-        at_name_to_mid=None, pictures=None, emote_meta=None, up_mid=0,
+        self,
+        mids,
+        content: str,
+        *,
+        parent: int | None = None,
+        at_name_to_mid=None,
+        pictures=None,
+        emote_meta=None,
+        up_mid=0,
     ):
         """在本评论下 @ 提及用户（root=本评论 rpid）。返回 CommentAddResp。"""
         idx = await self._index()
         if idx is None:
             raise ValueError("评论不存在")
         return await ops.do_comment(
-            self.session, idx.type, idx.oid, self.actor_mid,
-            root=self.biz_id, parent=parent, message=content, at_mids=list(mids),
-            at_name_to_mid=at_name_to_mid, pictures=pictures,
-            emote_meta=emote_meta, up_mid=up_mid,
+            self.session,
+            idx.type,
+            idx.oid,
+            self.actor_mid,
+            root=self.biz_id,
+            parent=parent,
+            message=content,
+            at_mids=list(mids),
+            at_name_to_mid=at_name_to_mid,
+            pictures=pictures,
+            emote_meta=emote_meta,
+            up_mid=up_mid,
             **self.comment_ctx(),
         )

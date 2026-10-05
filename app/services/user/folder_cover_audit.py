@@ -20,7 +20,11 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import agg_rows_to_resp, status_key, type_key
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from app.models.db import TFavoriteFolder, TFolderCoverAudit
 from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
 from app.models.schemas.folder_cover_audit import (
@@ -51,7 +55,6 @@ def _to_item(row: TFolderCoverAudit, brief) -> FolderCoverAuditItem:
 
 
 class FolderCoverAuditService:
-
     @staticmethod
     async def statistics(session: AsyncSession) -> AuditStatisticsResp:
         """收藏夹封面审核统计：按 auditStatus 聚合 TFolderCoverAudit（无子类型）。"""
@@ -112,7 +115,9 @@ class FolderCoverAuditService:
         session.add(row)
         await session.commit()
         await session.refresh(row)
-        logger.info(f"用户 {uid} 提交收藏夹封面审核申请 folderId={folder_id} pk={row.pk}，待审核")
+        logger.info(
+            f"用户 {uid} 提交收藏夹封面审核申请 folderId={folder_id} pk={row.pk}，待审核"
+        )
         return row.pk or 0
 
     # ==================== 用户侧：我的审核状态 ====================
@@ -222,7 +227,9 @@ class FolderCoverAuditService:
 
         await session.commit()
         await session.refresh(row)
-        logger.info(f"管理员 {operator_mid} 审核通过收藏夹封面申请 pk={pk} folderId={row.folderId} mid={row.mid}")
+        logger.info(
+            f"管理员 {operator_mid} 审核通过收藏夹封面申请 pk={pk} folderId={row.folderId} mid={row.mid}"
+        )
 
         # 弱依赖通知：审核通过
         await FolderCoverAuditService._notify_approved(row)
@@ -256,7 +263,9 @@ class FolderCoverAuditService:
         session.add(row)
         await session.commit()
         await session.refresh(row)
-        logger.info(f"管理员 {operator_mid} 审核驳回收藏夹封面申请 pk={pk} folderId={row.folderId} mid={row.mid}：{reason}")
+        logger.info(
+            f"管理员 {operator_mid} 审核驳回收藏夹封面申请 pk={pk} folderId={row.folderId} mid={row.mid}：{reason}"
+        )
 
         # 弱依赖通知：审核驳回
         await FolderCoverAuditService._notify_rejected(row)

@@ -202,7 +202,9 @@ def compute_moment_score(
     score += settings.edgerank_author_quality_weight * extra.author_quality
     threshold = settings.edgerank_author_publish_threshold
     if extra.recent_publish > threshold:
-        score -= settings.edgerank_author_spam_penalty * (extra.recent_publish - threshold)
+        score -= settings.edgerank_author_spam_penalty * (
+            extra.recent_publish - threshold
+        )
     score -= settings.edgerank_dislike_penalty * extra.dislike_ratio
     score -= settings.edgerank_report_penalty * extra.report_count
     score += settings.edgerank_fans_weight * log(1 + int(extra.fans))
@@ -237,7 +239,9 @@ def compute_topic_score(
     return total * decay(_age_seconds(topic.pubTime, now), profile.half_life_seconds)
 
 
-def _profile_from_settings(weights: dict[str, float], half_life_seconds: float) -> EdgeRankProfile:
+def _profile_from_settings(
+    weights: dict[str, float], half_life_seconds: float
+) -> EdgeRankProfile:
     """dict 配置桥接（pydantic-settings JSON 权重 → ``EdgeRankProfile``，2.45.0 关键字直构）。"""
     return EdgeRankProfile(**weights, half_life_seconds=float(half_life_seconds))
 
