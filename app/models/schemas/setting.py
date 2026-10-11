@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
+from bili_common.core.time_utils import OptionalUnixTime, UnixTime
 from sqlmodel import Field, SQLModel
-
 
 from app.models.schemas.base import auto_str
 
@@ -21,7 +21,7 @@ class MessageSettingResp(SQLModel):
     push_enabled: bool = True
     dnd_start_hour: int | None = None
     dnd_end_hour: int | None = None
-    updated_at: datetime | None = None
+    updated_at: OptionalUnixTime = None
 
 
 @auto_str
@@ -49,7 +49,7 @@ class UserActivityResp(SQLModel):
     """用户活跃度快照（当前是否在线，用于前端轮询节奏）。"""
 
     mid: int
-    last_active_at: datetime
+    last_active_at: UnixTime
     active_count: int = 0
     is_active: bool = Field(default=False, description="当前是否处于活跃窗口内")
 

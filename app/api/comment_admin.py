@@ -15,13 +15,12 @@ Phase 5.3 的管理能力：
 
 from typing import Annotated
 
+from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Query
 
-from bili_common.models import InteractionBizTypeEnum
 from app.core.database import SessionDep
 from app.dependencies import MsgAdminUser, RootUser
 from app.models import StandardResponse
-from app.models.str_int import StrInt
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas import (
     CommentAuditItem,
@@ -32,6 +31,7 @@ from app.models.schemas import (
     CommentSourceResp,
     CommentStatsResp,
 )
+from app.models.str_int import StrInt
 from app.services.comment.comment_admin import CommentAdminService
 
 router = APIRouter(prefix="/api/v1/comment/admin", tags=["comment-admin"])

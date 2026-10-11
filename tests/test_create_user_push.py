@@ -21,7 +21,7 @@ from bili_common.models import PptrCreateUserParams
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
 # 既有循环导入），再按需 import app.mq.rpc_pptr_user。
-import app.main  # noqa: F401
+import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
 from app.models.enums import NotifyTargetTypeEnum
 from app.mq.rpc_pptr_user import _push_new_user_notify, rpc_create_user
 

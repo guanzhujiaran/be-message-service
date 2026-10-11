@@ -14,20 +14,23 @@ MVP 图片方案：不支持图片上传，仅允许在文字正文里插入**�
 服务端原样存储为 LINK 节点，不做下载 / 存储 / 鉴真。
 """
 
-from typing import Annotated, Any, ClassVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar
 
+from bili_common.core.time_utils import OptionalUnixTime
+from bili_common.models import InteractionBizTypeEnum
+from bili_common.models.auto_str import Private
 from sqlmodel import Field, SQLModel
 
-from bili_common.models import InteractionBizTypeEnum
-
 from app.models.enums import MomentVisibleScopeEnum
-from bili_common.models.auto_str import Private
-from app.models.str_int import StrInt
 
 # ==================== 富文本节点 ====================
-
-
 from app.models.schemas.base import auto_str
+from app.models.str_int import StrInt
+
+if (
+    TYPE_CHECKING
+):  # 仅类型标注：避免 schemas 运行时依赖表模型包（依赖方向只能 schemas → db）
+    from app.models.db.moment_tbl import TMoment
 
 
 @auto_str
@@ -318,13 +321,30 @@ class MomentReportResp(SQLModel):
 
 @auto_str
 class MomentBaseResp(SQLModel):
-    """动态写操作通用响应。"""
+    """动态写操作通用响应。
+
+    装配入口是本模型的 `from_row()`：**对外 DTO 的字段规则跟着 DTO 走**，
+    不写进 `TMoment`（`app/models/db` 不得反向依赖 `app/models/schemas`，
+    否则表结构与 API 契约耦合、聚合导入成环）。
+    """
 
     dynId: int = Field(description="动态 ID（int）")
     auditStatus: str = Field(
         description="审核状态成员名字符串：AUDITING/NORMAL/REJECTED/HIDDEN"
     )
     dynType: str = Field(description="动态类型字符串：WORD/FORWARD")
+
+    @classmethod
+    def from_row(cls, dyn: "TMoment") -> "MomentBaseResp":
+        """动态行 → 本响应（纯字段映射，**不触发任何 IO**）。
+
+        字符串版雪花 ID（`dynId_str`）由 `@auto_str` 在序列化期派生，这里不冗余存副本。
+        """
+        return cls(
+            dynId=int(dyn.dynId),
+            auditStatus=dyn.auditStatus.name,
+            dynType=dyn.dynType.name,
+        )
 
 
 class MomentCreateResp(MomentBaseResp):
@@ -352,13 +372,25 @@ class MomentTopResp(SQLModel):
 
 
 @auto_str
+class MomentPublishSetting(SQLModel):
+    """发布设置（MVP 留空：强类型占位，扩展时在此加字段而不是往裸 dict 里塞键）。"""
+
+
+@auto_str
+class MomentPublishPermission(SQLModel):
+    """发布权限信息（MVP 只回操作者 mid）。"""
+
+    mid: int = Field(description="操作者 mid")
+
+
+@auto_str
 class MomentCreateCheckResp(SQLModel):
     """发布页预校验响应。"""
 
-    setting: dict = Field(default_factory=dict, description="发布设置（MVP 留空扩展）")
-    permission: dict = Field(
-        default_factory=dict, description="权限信息（MVP 留空扩展）"
+    setting: MomentPublishSetting = Field(
+        default_factory=MomentPublishSetting, description="发布设置（MVP 留空扩展）"
     )
+    permission: MomentPublishPermission = Field(description="权限信息")
     allowedScenes: list[str] = Field(
         default_factory=lambda: ["WORD", "FORWARD"], description="允许的动态场景"
     )
@@ -483,6 +515,41 @@ class MomentDetailResp(MomentFeedItem):
     2.41.0：详情/Feed **不返回统计**（外层 ``stat`` 字段与 ``module_stat`` 模块均已移除）
     ——互动状态 / 计数统一由 ``GET /api/v1/community/interaction/status`` 查询。
     """
+
+
+# ==================== Feed 行为埋点（2.66.0 机器学习推荐）====================
+
+
+@auto_str
+class FeedEventReportItem(SQLModel):
+    """前端上报的单条 Feed 行为（click / dwell）。
+
+    64 位资源 id 统一用 ``StrInt`` 接收（前端 str 传参，避免精度丢失）。
+    """
+
+    bizId: StrInt = Field(description="资源 id（动态=dynId）")
+    event: str = Field(
+        description="事件类型：click=点击进详情 / dwell=停留（impression 由服务端写）"
+    )
+    position: int | None = Field(
+        default=None, description="卡片在列表中的位次（0 起，可选）"
+    )
+    valueMs: int | None = Field(default=None, description="dwell 事件的停留毫秒数")
+
+
+@auto_str
+class FeedEventReportReq(SQLModel):
+    """批量 Feed 行为上报请求（匿名可上报）。"""
+
+    events: list[FeedEventReportItem] = Field(
+        default_factory=list, description="事件列表（单批上限 100 条）"
+    )
+    scene: str = Field(
+        default="comprehensive", description="Feed 场景：comprehensive / topic"
+    )
+    uniqId: str | None = Field(
+        default=None, description="客户端唯一 ID（未登录时用于标识观众）"
+    )
 
 
 # MomentModule.srcMoment ↔ MomentFeedItem.modules 存在循环引用，
@@ -856,9 +923,9 @@ class MomentLikerItem(SQLModel):
     mid: int = Field(description="点赞用户 mid")
     uname: str | None = Field(default=None, description="昵称（取不到则为 None）")
     face: str | None = Field(default=None, description="头像 URL")
-    like_time: str | None = Field(
+    like_time: OptionalUnixTime = Field(
         default=None,
-        description="点赞时间（ISO8601；服务端从 TResourceLike.created_at 取）",
+        description="点赞时间（秒级时间戳；服务端从 TResourceLike.created_at 取）",
     )
 
 
@@ -922,6 +989,8 @@ __all__ = [
     "MomentCreateResp",
     "MomentDetailResp",
     "MomentDetailsReq",
+    "MomentDislikeReq",
+    "MomentDislikeResp",
     "MomentFeedItem",
     "MomentFeedResp",
     "MomentLbsRef",
@@ -930,15 +999,13 @@ __all__ = [
     "MomentPoiResp",
     "MomentRemoveReq",
     "MomentRemoveResp",
-    "MomentDislikeReq",
-    "MomentDislikeResp",
-    "MomentShareReq",
-    "MomentShareResp",
     "MomentReportReq",
     "MomentReportResp",
     "MomentRepostReq",
     "MomentRepostResp",
     "MomentRepostSrc",
+    "MomentShareReq",
+    "MomentShareResp",
     "MomentThumbReq",
     "MomentThumbResp",
     "MomentTopReq",

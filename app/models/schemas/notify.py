@@ -3,6 +3,7 @@
 import json
 from datetime import UTC, datetime
 
+from bili_common.core.time_utils import OptionalUnixTime, UnixTime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import NotifyLevelEnum, NotifyStatusEnum, NotifyTargetTypeEnum
@@ -60,10 +61,10 @@ class NotifyItem(SQLModel):
     content: str
     jump_url: str | None = None
     level: NotifyLevelEnum = NotifyLevelEnum.NORMAL
-    publish_at: datetime
-    expire_at: datetime | None = None
+    publish_at: UnixTime
+    expire_at: OptionalUnixTime = None
     is_read: bool = False
-    read_at: datetime | None = None
+    read_at: OptionalUnixTime = None
     dispatched: bool = False
 
 
@@ -79,11 +80,11 @@ class NotifyAdminItem(SQLModel):
     target_value: str | None = None
     level: NotifyLevelEnum
     status: NotifyStatusEnum
-    publish_at: datetime
-    expire_at: datetime | None = None
+    publish_at: UnixTime
+    expire_at: OptionalUnixTime = None
     creator_mid: int
     dispatched: bool = False
-    created_at: datetime
+    created_at: UnixTime
 
 
 @auto_str
@@ -208,9 +209,9 @@ __all__ = [
     "NotifyAdminItem",
     "NotifyAdminListResp",
     "NotifyCreateReq",
+    "NotifyDeleteReq",
     "NotifyItem",
     "NotifyListResp",
-    "NotifyDeleteReq",
     "NotifyPullResp",
     "NotifyUpdateReq",
     "SystemNotifyItem",

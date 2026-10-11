@@ -181,7 +181,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
         "isHot": 5.0,
         "sortWeight": 2.0,
     }
-    # 综合 Feed recommend 模式候选集：最近 N 小时内、上限 M 条（走 idx_dynamic_pubtime_visible）
+    # 综合 Feed recommend 模式候选集：优先取最近 N 小时内、上限 M 条（走
+    # idx_dynamic_pubtime_visible）；2.65.0 起该窗口为「新鲜优先」软约束，
+    # 候选不足时由 edgerank_recall_fallback_* / edgerank_recall_explore_* 兜底补全。
     edgerank_candidate_window_hours: int = 72
     edgerank_candidate_limit: int = 300
     # 总开关：False 时 recommend/hot 回退为时间倒序（打分函数返回时间等价分）
@@ -267,6 +269,44 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
         True  # 协同过滤路（MVP 近似）：点赞/互动过作者的新动态
     )
     edgerank_recall_cf_limit: int = 100
+    # ==================== 候选召回去时间窗口硬约束（2.65.0）====================
+    # 时间窗口只用于「优先召回近期内容」，不再把窗口外内容一刀切掉（纯时间窗口在
+    # 低活跃 / 冷启动 / 存量数据场景会让 Feed 直接见底，且老爆款永无曝光机会）：
+    #   1) 互动 top 路用独立窗口 edgerank_recall_hot_top_window_hours（0=不限），
+    #      让高互动老内容入池，新鲜度由 EdgeRank decay 表达；
+    #   2) 五路并集后候选不足「保底条数」（= max(page_size,
+    #      edgerank_recall_fallback_min_candidates)）时，按 pubTime 倒序放宽窗口
+    #      兜底补全，保证 Feed 不见底；池内「谁能冒头」交给重排层的
+    #      Thompson Sampling 探索（见下方重排层配置）。
+    edgerank_recall_hot_top_window_hours: int = 0  # 互动 top 路窗口（0=不限）
+    edgerank_recall_fallback_enabled: bool = True  # 兜底路开关
+    edgerank_recall_fallback_window_hours: int = 0  # 兜底路时间窗口（0=不限）
+    edgerank_recall_fallback_limit: int = 100  # 兜底路条数上限（窗口外最新）
+    edgerank_recall_fallback_min_candidates: int = 0  # 保底条数（0 → 用 page_size）
+    # ==================== 重排层 Re-Rank（2.65.0）====================
+    # 业界标准链路「召回 → 粗排 → 精排 → 重排」的最后一层：精排分出来后再做
+    # 探索与打散，解决「纯按分排序 = 同质化 + 老内容没机会」的问题。
+    #   1) Thompson Sampling（EE 探索）：θ ~ Beta(1+pos, 1+neg)，曝光/互动少的
+    #      内容分布宽 → 采样值波动大 → 有探索机会；数据多的收敛到真实互动率 → 利用。
+    #      种子按 (viewer_key, bizId) 派生，保证同一用户刷新不跳变。
+    #   2) MMR 多样性重排：MR_i = λ·rel_i − (1−λ)·max_{j∈S} sim(i,j)，
+    #      sim = 同作者 + 话题 Jaccard 重合；只对精排 top-K 贪心重排（性能可控）。
+    edgerank_rerank_enabled: bool = True  # 重排层总开关
+    # --- Thompson Sampling 探索 ---
+    edgerank_ts_enabled: bool = True
+    # 探索强度：加分 = w · base_score · (θ − E[θ])（相对扰动，越大探索越强）
+    edgerank_ts_weight: float = 0.35
+    edgerank_ts_prior_alpha: float = 1.0  # Beta 先验「成功」数
+    edgerank_ts_prior_beta: float = 1.0  # Beta 先验「失败」数
+    edgerank_ts_max_count: float = (
+        200.0  # pos/neg 计数截断上限（压缩长尾，防爆款锁死探索）
+    )
+    # --- MMR 多样性打散 ---
+    edgerank_mmr_enabled: bool = True
+    edgerank_mmr_lambda: float = 0.85  # 1=纯相关性，0=纯多样性
+    edgerank_mmr_author_sim: float = 1.0  # 同作者相似度
+    edgerank_mmr_topic_sim: float = 0.6  # 话题重合相似度（Jaccard）
+    edgerank_mmr_top_k: int = 60  # 只对精排 top-K 重排（性能）
     # ==================== Feed 曝光去重（2.47.0）====================
     # 推荐流已下发资源记入 TFeedImpression，TTL 窗口内不再重复下发（防重复刷到）。
     # 关闭则退化为原行为（仅按客户端 last_showlist 去重）。
@@ -275,6 +315,33 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     edgerank_dedup_impression_ttl_hours: int = 24
     # 单次查询曝光记录的最大 id 数（防超大 IN 查询）
     edgerank_dedup_query_limit: int = 2000
+    # ==================== 机器学习推荐（2.66.0）====================
+    # 传统 ML 三件套：LightGBM LambdaRank 精排 / ALS 协同召回 / LinUCB 上下文探索。
+    # 全部为 CPU 可训练、无 GPU 依赖；EdgeRank 退为兜底基线，按权重灰度。
+    # ---- P0 埋点 ----
+    ml_event_enabled: bool = True  # 事件流水总开关（下发写 impression + 前端上报）
+    ml_event_batch_limit: int = 100  # 单批上报事件上限（防滥用）
+    ml_event_retention_days: int = 90  # 事件流水保留天数（清理任务归档）
+    # 标签窗口：曝光后 N 小时内的互动才算「这次曝光促成的互动」
+    ml_label_window_hours: int = 24
+    # ---- P1 精排 LightGBM ----
+    ml_ranker_enabled: bool = False  # 默认关闭：等样本量达标、训练产出模型后再开
+    ml_ranker_model_path: str = "data/ml/feed_ranker.txt"
+    ml_ranker_blend_weight: float = 0.5  # 与 EdgeRank 分的融合权重 w（0=纯 EdgeRank）
+    ml_ranker_reload_seconds: int = 300  # 模型文件 mtime 热重载检查周期
+    # ---- P1 召回 ALS 协同 ----
+    ml_als_enabled: bool = False
+    ml_als_model_path: str = "data/ml/feed_als.npz"
+    ml_als_factors: int = 32  # 隐向量维度
+    ml_als_iterations: int = 15  # 训练迭代轮次
+    ml_als_regularization: float = 0.05  # 正则系数
+    ml_als_limit: int = 100  # 该路召回条数上限
+    ml_als_min_interactions: int = 1  # 用户最少互动数（不足则视为冷启动，跳过本路）
+    # ---- P1 探索 LinUCB ----
+    ml_linucb_enabled: bool = False
+    ml_linucb_alpha: float = 0.5  # 置信区间系数（越大越探索）
+    ml_linucb_dim: int = 8  # 上下文特征维度
+    ml_linucb_weight: float = 1.0  # UCB 分在重排中的权重
 
     # ==================== 私信策略 ====================
     # 消息可撤回的时间窗口（秒），超过则不允许撤回

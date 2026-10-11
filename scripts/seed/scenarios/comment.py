@@ -45,8 +45,14 @@ async def seed_comment(
         # 仅当前资源的根评论（楼中楼/点赞/置顶必须限定在同一个评论区）
         dyn_root_rpids: list[str] = []
 
-        def _rr_at_targets(exclude_mid: int | None) -> list[tuple[int, str]]:
-            """确定性轮遍 @ 目标：从 commenters（排除自己）轮流取 1 个。"""
+        def _rr_at_targets(
+            exclude_mid: int | None, commenters=commenters
+        ) -> list[tuple[int, str]]:
+            """确定性轮遍 @ 目标：从 commenters（排除自己）轮流取 1 个。
+
+            `commenters` 走默认参数绑定 —— 循环内的嵌套函数若直接引用循环变量，
+            会在调用时（而非定义时）才取值（B023 延迟绑定陷阱）。
+            """
             pool = [u for u in commenters if u[0] != exclude_mid]
             if not pool:
                 return []

@@ -30,8 +30,6 @@ ASN 组织名如「中国电信」）—— 调用方（RPA 观看者列表）�
 这里统一转成**空串**再回包 —— 「未知」是展示文案，由调用方决定怎么显示。
 """
 
-from faststream.rabbit import RabbitQueue
-
 from bili_common.models.response import StandardResponse, success_response
 from bili_common.rpc.base import geoip_rpc_routing_key_for
 from bili_common.rpc.geoip import (
@@ -40,6 +38,7 @@ from bili_common.rpc.geoip import (
     ResolveIpRegionResult,
 )
 from bili_common.rpc.safe import rpc_safe
+from faststream.rabbit import RabbitQueue
 
 from app.core.broker import message_exchange
 from app.mq.router import router

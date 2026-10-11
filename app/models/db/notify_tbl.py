@@ -14,10 +14,10 @@
 from datetime import datetime
 
 from sqlalchemy import BIGINT, Text
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Column, Field, SQLModel, UniqueConstraint
 
 from app.models.db.base_tbl import TimestampMixin
-from sqlalchemy import Enum as SAEnum
 from app.models.enums import NotifyLevelEnum, NotifyStatusEnum, NotifyTargetTypeEnum
 
 

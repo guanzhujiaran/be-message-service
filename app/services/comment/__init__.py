@@ -8,9 +8,9 @@
 """
 
 from app.services.comment.comment import (
-    CommentService,
-    VISIBLE_STATES,
     DEFAULT_REJECT_REASON,
+    VISIBLE_STATES,
+    CommentService,
     summarize_text,
 )
 from app.services.comment.comment_action import CommentActionService, compute_hot_score
@@ -19,13 +19,13 @@ from app.services.comment.comment_audit import audit_text
 from app.services.comment.comment_read import CommentReadService
 
 __all__ = [
-    "CommentService",
-    "VISIBLE_STATES",
     "DEFAULT_REJECT_REASON",
-    "summarize_text",
+    "VISIBLE_STATES",
     "CommentActionService",
-    "compute_hot_score",
     "CommentAdminService",
-    "audit_text",
     "CommentReadService",
+    "CommentService",
+    "audit_text",
+    "compute_hot_score",
+    "summarize_text",
 ]

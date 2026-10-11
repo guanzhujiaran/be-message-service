@@ -73,10 +73,7 @@ def parse_user_agent(ua: str | None) -> tuple[str | None, str | None]:
         if device is None:
             # 尝试匹配 Build/ 前的设备名，如 "Mi 10 Build/..."
             match = re.search(r";\s*([^;]+?)\s+build/", lowered)
-            if match:
-                device = match.group(1).strip() or "android"
-            else:
-                device = "android"
+            device = match.group(1).strip() or "android" if match else "android"
     elif (
         "windows" in lowered
         or "macintosh" in lowered

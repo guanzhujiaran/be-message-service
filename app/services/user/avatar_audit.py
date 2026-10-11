@@ -19,20 +19,19 @@ from loguru import logger
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
 from app.models.db import TUserAvatarAudit
-from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
+from app.models.enums import NotifyLevelEnum, ResourceAuditStatusEnum
+from app.models.schemas.audit import AuditStatisticsResp
 from app.models.schemas.avatar_audit import (
     AvatarAuditItem,
     AvatarAuditListResp,
     AvatarAuditMineResp,
 )
 from app.services.message.insite.notify import NotifyService
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+)
 from app.services.user.account import PptrUser
 
 
@@ -185,7 +184,7 @@ class AvatarAuditService:
 
         mids = {r.mid for r in rows}
         briefs = await PptrUser.get_many(list(mids))
-        items = [_to_item(r, briefs.get(r.mid)) for r in rows]
+        items = [_to_item(r, briefs.of_mid(r.mid)) for r in rows]
         return AvatarAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
         )
@@ -221,7 +220,7 @@ class AvatarAuditService:
         # 尽力写入公开头像（pptr Postgres，独立会话）；失败只告警，不回滚本表状态
         try:
             await PptrUser(mid=row.mid).set_user_detail(face=row.newAvatar)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(
                 f"审核通过后写入公开头像失败 mid={row.mid} newAvatar={row.newAvatar}: {e}"
             )
@@ -229,7 +228,7 @@ class AvatarAuditService:
         # 弱依赖通知：审核通过
         await AvatarAuditService._notify_approved(row)
         briefs = await PptrUser.get_many([row.mid])
-        return _to_item(row, briefs.get(row.mid))
+        return _to_item(row, briefs.of_mid(row.mid))
 
     # ==================== 管理端：审核驳回 ====================
 
@@ -265,7 +264,7 @@ class AvatarAuditService:
         # 弱依赖通知：审核驳回
         await AvatarAuditService._notify_rejected(row)
         briefs = await PptrUser.get_many([row.mid])
-        return _to_item(row, briefs.get(row.mid))
+        return _to_item(row, briefs.of_mid(row.mid))
 
     # ==================== 内部方法 ====================
 
@@ -279,7 +278,7 @@ class AvatarAuditService:
                 content="您提交的新头像已审核通过并公开显示。",
                 level=NotifyLevelEnum.NORMAL,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"头像审核通过通知投递失败（弱依赖，已忽略）: {e}")
 
     @staticmethod
@@ -296,7 +295,7 @@ class AvatarAuditService:
                 content="\n".join(lines),
                 level=NotifyLevelEnum.IMPORTANT,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"头像审核驳回通知投递失败（弱依赖，已忽略）: {e}")
 
 

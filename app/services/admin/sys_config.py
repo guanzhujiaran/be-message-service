@@ -38,7 +38,7 @@ class SysConfigService:
             # SAVEPOINT：失败只回滚到保存点，不污染外层事务
             async with session.begin_nested():
                 rows = {r.key: r for r in (await session.exec(select(SysConfig))).all()}
-        except Exception as e:  # noqa: BLE001 - 配置表不可用不影响管理端列表
+        except Exception as e:
             logger.warning(f"[SysConfig] 读取配置表失败，全部按默认值返回: {e}")
             rows = {}
         items: list[SysConfigItem] = []

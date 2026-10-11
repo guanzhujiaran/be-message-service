@@ -4,10 +4,7 @@
 - 管理端：待审核列表 / 通过 / 驳回（RootUser 守卫）。
 """
 
-from datetime import datetime
-
 from sqlmodel import Field, SQLModel
-
 
 from app.models.schemas.base import auto_str
 

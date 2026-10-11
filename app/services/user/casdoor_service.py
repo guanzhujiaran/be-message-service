@@ -15,6 +15,7 @@
 """
 
 import json
+import time
 import uuid as _uuid
 
 import httpx
@@ -22,7 +23,6 @@ from casdoor import AsyncCasdoorSDK
 from loguru import logger
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-import time
 
 from app.core.config import settings
 from app.core.database import new_pptr_session
@@ -134,7 +134,7 @@ async def _get_admin_access_token() -> str | None:
     sdk = _get_admin_sdk()
     try:
         data = await sdk.get_oauth_token(username=name, password=password)
-    except Exception as e:  # noqa: BLE001 - SDK 调用失败降级返回 None
+    except Exception as e:
         logger.error(f"[Casdoor] admin 登录失败: {e}")
         return None
 
@@ -385,9 +385,7 @@ async def delete_casdoor_user(user_name: str) -> None:
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, params=params)
     if resp.status_code != 200:
-        raise RuntimeError(
-            f"delete-user HTTP {resp.status_code}: {resp.text[:200]}"
-        )
+        raise RuntimeError(f"delete-user HTTP {resp.status_code}: {resp.text[:200]}")
     payload = resp.json()
     if not isinstance(payload, dict) or payload.get("status") != "ok":
         raise RuntimeError(f"delete-user 业务失败: {payload}")
@@ -569,7 +567,7 @@ async def get_casdoor_user_as_user(
             user = await get_casdoor_user_by_email(email)
             if user is not None:
                 return user
-        except Exception as e:  # noqa: BLE001 - email 模式失败回退 user_name
+        except Exception as e:
             logger.error(f"[Casdoor] email 模式 get-user 失败，回退 user_name: {e}")
 
     # 4. 回退 user_name 模式（service）
@@ -747,7 +745,7 @@ async def create_local_user_from_casdoor(
     #    绕过了 RPC create_user 里的欢迎通知逻辑，导致 OAuth 注册漏发欢迎消息
     #    （表现为「注销后重新 CASDOOR 登录无欢迎消息」）。弱依赖，失败不影响主流程。
     if created:
-        await NotifyService.send_welcome(uid, default_uname or final_username)
+        await NotifyService.send_welcome(uid)
 
     logger.info(f"[Casdoor] 成功创建本地用户: {final_username}, uid: {uid}")
     return LocalUserResult(

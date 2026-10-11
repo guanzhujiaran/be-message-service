@@ -53,7 +53,7 @@ async def run_alembic_upgrade() -> bool:
         await asyncio.to_thread(command.upgrade, _alembic_config(), target)
         logger.info(f"===== alembic upgrade {target}（主库）完成 =====")
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"alembic upgrade {target}（主库）失败: {e}")
         return False
 
@@ -66,7 +66,7 @@ async def run_alembic_pptr_upgrade() -> bool:
         await asyncio.to_thread(command.upgrade, _alembic_pptr_config(), target)
         logger.info(f"===== alembic upgrade {target}（pptr 库）完成 =====")
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"alembic upgrade {target}（pptr 库）失败: {e}")
         return False
 

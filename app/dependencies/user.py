@@ -110,7 +110,7 @@ async def get_active_user(
             deactivated = await deactivation_service.is_deactivated(
                 session, int(auth.mid)
             )
-    except Exception as e:  # noqa: BLE001 - 查询失败不阻断正常业务，降级放行
+    except Exception as e:
         logger.warning(f"注销态查询失败，降级放行 mid={auth.mid}: {e}")
         deactivated = False
     if deactivated:

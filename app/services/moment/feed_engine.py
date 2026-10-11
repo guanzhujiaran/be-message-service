@@ -16,6 +16,10 @@
 4. **去重（2.32.0 + 2.47.0 曝光去重）**：排除客户端 ``last_showlist`` ∪ 服务端
    ``TFeedImpression``（该观众在本场景 TTL 内已下发过的资源）；**尽力去重 + 自动降级**
    ——候选不足一页时逐级放宽，保证 feed 不因去重见底；
+4.5 **重排（2.65.0，业界「召回→粗排→精排→重排」链路的最后一环）**：``Thompson
+   Sampling`` 探索加分（``θ ~ Beta(1+pos, 1+neg)``，低曝光内容有冒头机会、随真实
+   反馈自动收敛）+ ``MMR`` 多样性打散（``λ·rel − (1−λ)·max sim``，防同作者/同话题
+   刷屏）；只调顺序不改集合；
 5. **分页**：取前 ``page_size``，``has_more`` = 排除后仍有剩余；下发后批量 upsert 曝光记录。
 
 数据来源约定（2.36.0 计数统一）：
@@ -29,10 +33,10 @@
   其他 → RPC 详情）。
 """
 
-from bili_common.models import InteractionBizTypeEnum
-
+import random
 from datetime import datetime, timedelta
 
+from bili_common.models import InteractionBizTypeEnum
 from pydantic import ConfigDict
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlmodel import Field, SQLModel, col, select
@@ -41,13 +45,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from app.models.db import (
     CommentSubject,
+    TFeedBanditArm,
     TFeedImpression,
     TInteractionStat,
     TMoment,
+    TMomentTopicRel,
     TResourceDislike,
     TResourceLike,
-    TMomentTopicRel,
 )
+from app.models.schemas.sys_config import FeedMLConfig
+from app.services.common.indexed import Indexed
 from app.services.moment.edgerank import (
     FEED_PROFILE,
     EdgeRankExtra,
@@ -56,6 +63,9 @@ from app.services.moment.edgerank import (
     build_moment_counts,
     compute_moment_score,
 )
+
+# 2.66.0：曝光流水写入（模型训练样本源）
+from app.services.moment.feed_event import FeedEventService
 from app.services.user.follow import FollowService
 
 
@@ -91,6 +101,8 @@ class FeedCandidate(SQLModel):
     tags: list[int] = Field(default_factory=list)
     is_forward: bool = False
     rich: bool = False
+    # 2.66.0：正文长度（ML 精排特征；由 Provider 从内容行装配，缺则 0）
+    text_len: int = 0
 
 
 class PersonalSignals(SQLModel):
@@ -270,13 +282,311 @@ def build_extra_from_stat(stat: TInteractionStat | None) -> tuple[float, float, 
     return engagement, exposure, dislike_ratio
 
 
+def _stat_positive_negative(stat: TInteractionStat | None) -> tuple[float, float]:
+    """从 ``TInteractionStat`` 拆出「正反馈 / 未互动曝光」两计数（TS 探索用，2.65.0）。
+
+    - ``positive`` = like+comment+repost+favorite+share+coin（一次曝光产生了互动）；
+    - ``negative`` = max(view − positive, 0)（曝光了但没互动，视为「失败」）。
+    """
+    if stat is None:
+        return 0.0, 0.0
+
+    def _v(attr: str) -> float:
+        return float(int(getattr(stat, attr) or 0))
+
+    positive = sum(
+        _v(f)
+        for f in (
+            "likeCount",
+            "commentCount",
+            "repostCount",
+            "favoriteCount",
+            "shareCount",
+            "coinCount",
+        )
+    )
+    return positive, max(_v("viewCount") - positive, 0.0)
+
+
+def thompson_exploration_bonus(
+    stat: TInteractionStat | None,
+    *,
+    biz_id: int,
+    base_score: float,
+    seed: str | None = None,
+) -> float:
+    """Thompson Sampling 探索加分（2.65.0）：``w · base · (θ − E[θ])``，``θ ~ Beta(α, β)``。
+
+    业界标准的**探索-利用（EE）**做法（多臂老虎机 / Beta-Bernoulli 共轭）：把「这条
+    内容被曝光后产生互动的概率」当作未知参数 θ，用 Beta 后验描述它——
+
+    - **数据少**（新内容 / 低曝光）：后验分布宽，采样值波动大 → 有机会被探索到前面；
+    - **数据多**（老爆款）：后验收敛到真实互动率 → 波动小 → 稳定利用。
+
+    由此**不依赖时间窗口**也能让「没人看过的好内容」冒头，且随真实反馈自动收敛
+    （不是瞎随机）。计数按 ``edgerank_ts_max_count`` 截断（压缩长尾），避免千万级
+    曝光的爆款把分布彻底锁死、永远失去探索。
+
+    加分形如 ``w · base · (θ − E[θ])``（**相对扰动**，非绝对加分）：
+
+    - 减 ``E[θ] = α/(α+β)`` 使扰动零均值——不改变期望排序，只注入探索噪声；
+    - 乘 ``base`` 使扰动与内容分同量级：零互动 / 已沉底的内容（``base<=0``）不参与
+      探索，避免「全库零互动时 Feed 变成随机排序」；
+    - 爆款因后验收敛，实际波动远小于冷内容，正是 EE 想要的「利用 vs 探索」。
+
+    采样以 ``(seed, biz_id)`` 为种子**确定性派生**：同一观众刷新页面不会看到排序乱跳
+    （与 ``build_anon_profile`` 的稳定性约定一致）。
+    """
+    if not settings.edgerank_ts_enabled or base_score <= 0:
+        return 0.0
+    pos, neg = _stat_positive_negative(stat)
+    # 零曝光（pos=neg=0）没有后验可言：θ 退化成先验 U(0,1)，纯噪声会盖掉时间序，
+    # 故不参与探索——这类内容按精排分（新鲜度 / 时间衰减）自然排序即可。
+    if pos + neg <= 0:
+        return 0.0
+    cap = settings.edgerank_ts_max_count
+    alpha = settings.edgerank_ts_prior_alpha + min(pos, cap)
+    beta = settings.edgerank_ts_prior_beta + min(neg, cap)
+    if alpha <= 0 or beta <= 0:
+        return 0.0
+    rng = random.Random(f"ts:{seed or 'global'}:{biz_id}")
+    theta = rng.betavariate(alpha, beta)
+    return settings.edgerank_ts_weight * base_score * (theta - alpha / (alpha + beta))
+
+
+def apply_ml_ranker(
+    ranked: list[FeedCandidate],
+    score_map: dict[int, float],
+    *,
+    counts: Indexed[TInteractionStat],
+    author_quality: Indexed[AuthorQualitySignal] | None,
+    signals: PersonalSignals | None,
+    now: datetime,
+    config: FeedMLConfig | None = None,
+) -> list[FeedCandidate]:
+    """2.66.0：把 LightGBM 精排分融合进 EdgeRank 分并重排（模型不可用则原序）。
+
+    特征与离线 ``scripts/build_feed_samples.py`` 的 ``FEATURE_NAMES`` 同序（由
+    :func:`~app.services.moment.ml_ranker.to_vector` 保证）。**``position`` 恒传 0**：
+    位置偏差是曝光后才有的信息，在线让它参与打分会自我强化「先下发的一定排前面」。
+    """
+    from app.services.moment.ml_ranker import (
+        CandidateFeatures,
+        RankContext,
+        score_candidates,
+    )
+
+    follow = signals.follow if signals is not None else set()
+    pref_topics = signals.topic if signals is not None else set()
+
+    features: list[CandidateFeatures] = []
+    for c in ranked:
+        stat = counts.value_of(c.biz_id)
+        aq = (
+            author_quality.value_of(c.mid)
+            if author_quality is not None and c.mid is not None
+            else None
+        )
+        features.append(
+            CandidateFeatures(
+                biz_id=c.biz_id,
+                mid=c.mid or 0,
+                pub_time=c.pub_time,
+                topic_count=len(c.tags or ()),
+                is_rich=c.rich,
+                is_forward=c.is_forward,
+                text_len=c.text_len,
+                like_count=int(stat.likeCount or 0) if stat is not None else 0,
+                comment_count=int(stat.commentCount or 0) if stat is not None else 0,
+                repost_count=int(stat.repostCount or 0) if stat is not None else 0,
+                view_count=int(stat.viewCount or 0) if stat is not None else 0,
+                author_avg_engagement=aq.avg_engagement if aq is not None else 0.0,
+                author_recent_publish=aq.recent_publish if aq is not None else 0,
+                author_fans=aq.fans if aq is not None else 0,
+                author_level=aq.level if aq is not None else 0.0,
+                is_followed=c.mid is not None and c.mid in follow,
+                topic_hit=len(set(c.tags or ()) & pref_topics),
+                position=0,
+            )
+        )
+
+    finals = score_candidates(
+        features,
+        [score_map[c.biz_id] for c in ranked],
+        RankContext(now=now, hour_of_day=now.hour),
+    )
+    for c, final in zip(ranked, finals, strict=False):
+        score_map[c.biz_id] = final
+    return sorted(ranked, key=lambda c: score_map[c.biz_id], reverse=True)
+
+
+async def apply_linucb(
+    session,
+    ranked: list[FeedCandidate],
+    score_map: dict[int, float],
+    *,
+    counts: Indexed[TInteractionStat],
+    author_quality: Indexed[AuthorQualitySignal] | None,
+    signals: PersonalSignals | None,
+    biz_type: InteractionBizTypeEnum,
+    config: FeedMLConfig | None = None,
+) -> list[FeedCandidate]:
+    """2.66.0：LinUCB 探索分叠加（带上下文特征的 bandit，替代无特征 TS 的泛化短板）。
+
+    臂参数（A/b）一次 IN 查询后点查；冷启动（无臂行）退化为「纯探索」——
+    ``ucb = α·‖x‖``，即特征强的内容先拿到曝光机会。
+    """
+    from app.services.moment.linucb import (
+        ArmContext,
+        blend_ucb,
+        context_vector,
+        load_arms,
+        ucb_score,
+    )
+
+    ids = [c.biz_id for c in ranked][: settings.edgerank_dedup_query_limit]
+    if not ids:
+        return ranked
+    rows = (
+        await session.exec(
+            select(TFeedBanditArm).where(
+                col(TFeedBanditArm.bizType) == biz_type,
+                col(TFeedBanditArm.bizId).in_(ids),
+            )
+        )
+    ).all()
+    arms = load_arms(rows)
+    follow = signals.follow if signals is not None else set()
+    pref_topics = signals.topic if signals is not None else set()
+
+    ucb_scores: list[float] = []
+    for c in ranked:
+        stat = counts.value_of(c.biz_id)
+        view = int(stat.viewCount or 0) if stat is not None else 0
+        positive = (
+            sum(
+                int(getattr(stat, f) or 0)
+                for f in (
+                    "likeCount",
+                    "commentCount",
+                    "repostCount",
+                    "favoriteCount",
+                    "shareCount",
+                    "coinCount",
+                )
+            )
+            if stat is not None
+            else 0
+        )
+        aq = (
+            author_quality.value_of(c.mid)
+            if author_quality is not None and c.mid is not None
+            else None
+        )
+        age_hours = (
+            (datetime.now() - c.pub_time).total_seconds() / 3600.0
+            if c.pub_time is not None
+            else 0.0
+        )
+        x = context_vector(
+            ArmContext(
+                is_rich=c.rich,
+                is_forward=c.is_forward,
+                topic_count=len(c.tags or ()),
+                text_len=c.text_len,
+                age_hours=age_hours,
+                engagement=positive / max(view, 1),
+                author_quality=aq.avg_engagement if aq is not None else 0.0,
+                is_followed=c.mid is not None and c.mid in follow,
+                topic_hit=len(set(c.tags or ()) & pref_topics),
+            )
+        )
+        a, b = arms.get(c.biz_id, (None, None))
+        ucb_scores.append(
+            ucb_score(
+                x,
+                a_matrix=a,
+                b_vector=b,
+                alpha=config.linucb_alpha if config is not None else None,
+            )
+        )
+
+    finals = blend_ucb(
+        [score_map[c.biz_id] for c in ranked],
+        ucb_scores,
+        weight=config.linucb_weight if config is not None else None,
+    )
+    for c, final in zip(ranked, finals, strict=False):
+        score_map[c.biz_id] = final
+    return sorted(ranked, key=lambda c: score_map[c.biz_id], reverse=True)
+
+
+def mmr_rerank(
+    candidates: list[FeedCandidate],
+    scores: dict[int, float],
+    *,
+    page_size: int,
+) -> list[FeedCandidate]:
+    """MMR 多样性重排（2.65.0）：``MR_i = λ·rel_i − (1−λ)·max_{j∈S} sim(i,j)``。
+
+    业界重排层标配（Maximal Marginal Relevance）：精排分出 top-K 后贪心挑选——每一步
+    挑「相关性高、且与已选集合最不相似」的一条，避免整页被同一作者 / 同一话题刷屏。
+
+    - ``rel_i``：精排分在本批候选内做 min-max 归一化到 [0,1]（与相似度可加）；
+    - ``sim(i,j)``：同作者（``w_author``）+ 话题 Jaccard 重合（``w_topic``）；
+    - ``λ``：1=纯按分排，0=纯多样性；默认 0.85（轻微打散，保住相关性）。
+
+    只对前 ``edgerank_mmr_top_k`` 条重排（性能可控），其余保持精排顺序接在后面。
+    """
+    if not settings.edgerank_mmr_enabled or len(candidates) <= 1:
+        return candidates
+    top_k = settings.edgerank_mmr_top_k
+    head = candidates[:top_k] if top_k > 0 else candidates
+    tail = candidates[len(head) :]
+
+    vals = [scores.get(c.biz_id, 0.0) for c in head]
+    lo, hi = min(vals), max(vals)
+    span = hi - lo
+    lam = settings.edgerank_mmr_lambda
+    w_author = settings.edgerank_mmr_author_sim
+    w_topic = settings.edgerank_mmr_topic_sim
+    mids = [c.mid for c in head]
+    tag_sets = [set(c.tags or ()) for c in head]
+    rels = [((v - lo) / span) if span > 0 else 1.0 for v in vals]
+
+    def _sim(i: int, j: int) -> float:
+        sim = w_author if (mids[i] is not None and mids[i] == mids[j]) else 0.0
+        a, b = tag_sets[i], tag_sets[j]
+        if a and b:
+            sim += w_topic * (len(a & b) / len(a | b))
+        return sim
+
+    selected: list[int] = []
+    remaining = list(range(len(head)))
+    while remaining:
+        best_i = -1
+        best_mr = float("-inf")
+        for i in remaining:
+            max_sim = 0.0
+            for j in selected:
+                s_ij = _sim(i, j)
+                if s_ij > max_sim:
+                    max_sim = s_ij
+            mr = lam * rels[i] - (1.0 - lam) * max_sim
+            if mr > best_mr:
+                best_i, best_mr = i, mr
+        selected.append(best_i)
+        remaining.remove(best_i)
+    return [head[i] for i in selected] + tail
+
+
 def _extra(
     c: FeedCandidate,
     stat: TInteractionStat,
-    author_quality: dict[int, AuthorQualitySignal] | None,
-    report_counts: dict[int, ResourceReportCount] | None = None,
+    author_quality: Indexed[AuthorQualitySignal] | None,
+    report_counts: Indexed[ResourceReportCount] | None = None,
     *,
-    comment_subjects: dict[int, CommentSubject] | None = None,
+    comment_subjects: Indexed[CommentSubject] | None = None,
     use_last_activity: bool = False,
 ) -> EdgeRankExtra:
     """附加维度信号（2.35.0 + 2.37.0 + 2.43.0 + 2.44.0；2.45.0 索引 dict 语义固化）。
@@ -289,8 +599,8 @@ def _extra(
     作者质量改收通用 ``AuthorQualitySignal``（引擎不再依赖动态专属表）。
 
     ``author_quality`` / ``report_counts`` / ``comment_subjects`` 均为
-    ``{id: SQLModel 实体}`` 批量查询结果索引（一次 IN 查询后点查，避免 N+1），
-    dict 仅作映射容器、值一律为具体实体（2.45.0 起不再出现裸 tuple/dict 值）。
+    批量查询结果的 `Indexed[实体]`（一次 IN 查询后点查，避免 N+1）；
+    值一律为具体实体，未命中返回 None（不再用裸 dict 承载映射）。
     """
     engagement, exposure, dislike_ratio = build_extra_from_stat(stat)
     extra = EdgeRankExtra(
@@ -301,20 +611,22 @@ def _extra(
         dislike_ratio=dislike_ratio,
     )
     if use_last_activity and comment_subjects:
-        cs = comment_subjects.get(c.biz_id)
+        cs = comment_subjects.value_of(c.biz_id)
         last_at = cs.updated_at if cs is not None else None
         if last_at is not None:
             extra.last_activity_time = (
                 max(c.pub_time, last_at) if c.pub_time is not None else last_at
             )
-    aq = author_quality.get(c.mid) if author_quality and c.mid is not None else None
+    aq = (
+        author_quality.value_of(c.mid) if author_quality and c.mid is not None else None
+    )
     if aq:
         extra.author_quality = aq.avg_engagement
         extra.recent_publish = aq.recent_publish
         extra.fans = aq.fans
         extra.level = float(aq.level)
     if report_counts:
-        rc = report_counts.get(c.biz_id)
+        rc = report_counts.value_of(c.biz_id)
         if rc:
             extra.report_count = float(rc.pending_count)
     return extra
@@ -416,33 +728,34 @@ async def record_impressions(
 async def rank_feed(
     session: AsyncSession,
     candidates: list[FeedCandidate],
-    counts: dict[int, TInteractionStat],
+    counts: Indexed[TInteractionStat],
     *,
     viewer_mid: int | None,
     last_showlist: list[int] | None,
     uniq_id: str | None,
     page_size: int,
     clicklist: list[int] | None = None,
-    author_quality: dict[int, AuthorQualitySignal] | None = None,
-    report_counts: dict[int, ResourceReportCount] | None = None,
-    comment_subjects: dict[int, CommentSubject] | None = None,
+    author_quality: Indexed[AuthorQualitySignal] | None = None,
+    report_counts: Indexed[ResourceReportCount] | None = None,
+    comment_subjects: Indexed[CommentSubject] | None = None,
     now: datetime | None = None,
     profile: EdgeRankProfile | None = None,
     viewer_key: str | None = None,
     feed_scene: str | None = None,
     biz_type: InteractionBizTypeEnum | None = None,
+    ml_config: FeedMLConfig | None = None,
 ) -> tuple[list[int], bool]:
     """通用推荐流水线，返回 ``(排序后的 biz_id 列表, has_more)``。
 
     Args:
         candidates: Provider 提供的候选（已按 bizType 过滤、含 pubTime/tags/特征）；
-        counts: ``{biz_id: TInteractionStat}``；
+        counts: `Indexed[TInteractionStat]`（biz_id 点查计数行）；
         clicklist: 客户端已互动 biz_id 列表（2.35.0 反馈闭环）；
-        author_quality: ``{mid: MomentAuthorQuality}``（作者质量表，仅 dynamic 等有聚合的
+        author_quality: `Indexed[AuthorQualitySignal]`（作者质量表，仅 dynamic 等有聚合的
           bizType 提供；读 ``avgEngagement`` / ``recentPublishCount`` /
           ``fansCount`` / ``currentLevel``）；
-        report_counts: ``{biz_id: ResourceReportCount}``（pending 举报数，全资源通用降权）；
-        comment_subjects: ``{biz_id: CommentSubject}``（``root_count`` 实时计数与
+        report_counts: `Indexed[ResourceReportCount]`（pending 举报数，全资源通用降权）；
+        comment_subjects: `Indexed[CommentSubject]`（``root_count`` 实时计数与
           ``updated_at`` 最后评论时间）；
         viewer_mid: 登录用户（个性化信号）；None → 匿名（随机权重 / 全局）；
         last_showlist: 客户端已展示 biz_id 列表（去重）；
@@ -479,10 +792,14 @@ async def rank_feed(
         if signals.disliked and settings.edgerank_personal_dislike_exclude:
             candidates = [c for c in candidates if c.biz_id not in signals.disliked]
 
+    # 2.65.0 重排层：TS 探索与 MMR 打散共用同一观众种子（刷新不跳变）
+    seed = viewer_key or uniq_id
+    score_map: dict[int, float] = {}
+
     def _score(c: FeedCandidate) -> float:
-        cs = comment_subjects.get(c.biz_id) if comment_subjects else None
+        cs = comment_subjects.value_of(c.biz_id) if comment_subjects else None
         cm = build_moment_counts(
-            counts.get(c.biz_id), cs.root_count if cs is not None else None
+            counts.value_of(c.biz_id), cs.root_count if cs is not None else None
         )
         s = compute_moment_score(
             cm,
@@ -498,13 +815,47 @@ async def rank_feed(
                 use_last_activity=settings.edgerank_decay_use_last_activity,
             ),
         )
+        # 2.65.0：Thompson Sampling 探索加分（EE：低曝光内容有机会冒头）
+        s += thompson_exploration_bonus(cm, biz_id=c.biz_id, seed=seed, base_score=s)
         if personalized and signals is not None:
             s += _boost(c, signals)
             # 2.62.0：点踩者本人大幅降权（负反馈，与正向 boost 对称，只对本人生效）
             s = apply_dislike_penalty(s, c, signals)
+        score_map[c.biz_id] = s
         return s
 
     ranked = sorted(candidates, key=_score, reverse=True)
+
+    # ---- 2.66.0：ML 精排融合（LightGBM 与 EdgeRank 分加权，模型不可用则原序）----
+    # 开关/权重来自运行时配置 ``feed_ml``（管理端可热更新）；未传入时回落 settings。
+    ml_cfg = ml_config or FeedMLConfig(
+        ranker_enabled=settings.ml_ranker_enabled,
+        ranker_blend_weight=settings.ml_ranker_blend_weight,
+        linucb_enabled=settings.ml_linucb_enabled,
+        linucb_weight=settings.ml_linucb_weight,
+        linucb_alpha=settings.ml_linucb_alpha,
+    )
+    if ml_cfg.ranker_enabled:
+        ranked = apply_ml_ranker(
+            ranked,
+            score_map,
+            counts=counts,
+            author_quality=author_quality,
+            signals=signals,
+            now=now,
+            config=ml_cfg,
+        )
+    if ml_cfg.linucb_enabled:
+        ranked = await apply_linucb(
+            session,
+            ranked,
+            score_map,
+            counts=counts,
+            author_quality=author_quality,
+            signals=signals,
+            biz_type=biz_type or InteractionBizTypeEnum.DYNAMIC,
+            config=ml_cfg,
+        )
 
     # ---- 去重（2.32.0 客户端 last_showlist + 2.47.0 服务端曝光记录）----
     # ``shown``（客户端已展示）是**硬约束**：必须始终排除，绝不因降级而复现；
@@ -532,12 +883,17 @@ async def rank_feed(
     # 不被服务端曝光去重掏空——但已展示项永不回填。
     if impressed:
         deduped = [c for c in always_exclude if c.biz_id not in impressed]
-        if len(deduped) >= page_size:
-            page, has_more = deduped[:page_size], len(deduped) > page_size
-        else:
-            page, has_more = always_exclude[:page_size], len(always_exclude) > page_size
+        pool = deduped if len(deduped) >= page_size else always_exclude
     else:
-        page, has_more = always_exclude[:page_size], len(always_exclude) > page_size
+        pool = always_exclude
+
+    # ---- 重排层（2.65.0）：MMR 多样性打散（只调顺序，不改集合）----
+    ordered = (
+        mmr_rerank(pool, score_map, page_size=page_size)
+        if settings.edgerank_rerank_enabled
+        else pool
+    )
+    page, has_more = ordered[:page_size], len(ordered) > page_size
 
     served_ids = [c.biz_id for c in page]
     if dedup_on and served_ids:
@@ -548,6 +904,19 @@ async def rank_feed(
             feed_scene=feed_scene,
             biz_ids=served_ids,
         )
+        # 2.66.0：曝光流水（模型训练样本源；与去重表职责分离，弱依赖）
+        if settings.ml_event_enabled:
+            await FeedEventService.record_impressions(
+                session,
+                viewer_key=viewer_key,
+                biz_type=biz_type,
+                feed_scene=feed_scene,
+                biz_ids=served_ids,
+                scores=Indexed.of(
+                    (bid, score_map[bid]) for bid in served_ids if bid in score_map
+                ),
+                now=now,
+            )
     return served_ids, has_more
 
 
@@ -557,10 +926,13 @@ __all__ = [
     "PersonalSignals",
     "ResourceReportCount",
     "apply_dislike_penalty",
+    "apply_ml_ranker",
     "build_extra_from_stat",
     "build_viewer_key",
     "load_impressed_ids",
     "load_personal_signals",
+    "mmr_rerank",
     "rank_feed",
     "record_impressions",
+    "thompson_exploration_bonus",
 ]

@@ -39,7 +39,6 @@ from .base import (
     CommentLocate,
     GenericEvent,
     MsgfeedBuildContext,
-    _resolve_handler_cls,
     build_dedup_key,
     is_comment_anchored,
     report_event_weakly,

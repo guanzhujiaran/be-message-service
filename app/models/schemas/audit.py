@@ -17,7 +17,6 @@ from typing import Any
 from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import Field, SQLModel
 
-
 from app.models.schemas.base import auto_str
 
 
@@ -71,8 +70,11 @@ class AuditActionResp(SQLModel):
     """通用审核动作响应：回显定位键，操作结果细节由各资源自行返回。"""
 
     bizType: InteractionBizTypeEnum
-    # bizIdStr 由 @auto_str 自动派生（禁止重复声明）
-    bizId: int
+    # bizId 统一为字符串业务键（雪花 id / ca_xxx / workflow UUID / browser_id）
+    bizId: str
+    bizIdStr: str | None = Field(
+        default=None, description="bizId 字符串形式（兼容旧前端，等同 bizId）"
+    )
     data: dict[str, Any] | None = Field(
         default=None, description="资源类返回的审核结果（各资源形态不同）"
     )
@@ -120,10 +122,10 @@ class AuditStatisticsResp(SQLModel):
 
 
 __all__ = [
-    "AuditSourceInfo",
+    "AuditActionResp",
     "AuditApproveReq",
     "AuditRejectReq",
-    "AuditActionResp",
+    "AuditSourceInfo",
     "AuditStatisticsResp",
     "AuditTypeCountRow",
 ]

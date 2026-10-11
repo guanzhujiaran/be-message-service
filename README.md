@@ -181,6 +181,18 @@ MYSQL_MESSAGE_URL='mysql+aiomysql://root:<pwd>@127.0.0.1:10000/BiliMessageDB?cha
 | `tests/test_phase_e_enums.py` | 枚举值存取往返（VARCHAR 存 value / INTEGER 存 value / 非原生 ENUM） |
 | `tests/test_push_channels.py` | 各推送渠道（需真实 token，未配置则 skip） |
 
+### 静态检查
+
+```bash
+cd be-message-service
+uv run ruff check .          # 必须 0 报错（配置见 pyproject.toml 的 [tool.ruff]）
+uv run ruff check --fix .    # 自动修可修项（import 排序、未用导入、语法现代化等）
+uv run ty check              # 类型检查（可选，与 ruff 互补）
+```
+
+规则集与豁免理由见计划书 §5.27。注意 **ruff 是 linter，查不出类型不匹配**
+（例如把裸字符串传给声明为枚举的参数），这类问题只能靠 `ty` / `mypy`。
+
 ---
 
 ## 九、HTTP 接口一览

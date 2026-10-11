@@ -1,0 +1,20 @@
+[
+  "age_hours",
+  "topic_count",
+  "is_rich",
+  "is_forward",
+  "text_len",
+  "like_count",
+  "comment_count",
+  "repost_count",
+  "view_count",
+  "engagement",
+  "author_avg_engagement",
+  "author_recent_publish",
+  "author_fans",
+  "author_level",
+  "is_followed",
+  "topic_hit",
+  "hour_of_day",
+  "position"
+]

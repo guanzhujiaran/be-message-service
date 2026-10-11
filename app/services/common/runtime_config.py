@@ -32,10 +32,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.models.db.sys_config_tbl import SysConfig
-from app.models.schemas.sys_config import CommentRateLimitConfig
+from app.models.schemas.sys_config import CommentRateLimitConfig, FeedMLConfig
 
 #: 评论频率限制配置键（值模型 `CommentRateLimitConfig`）
 CONFIG_KEY_COMMENT_RATE_LIMIT = "comment_rate_limit"
+#: 推荐机器学习三件套开关（值模型 `FeedMLConfig`，2.66.0）
+CONFIG_KEY_FEED_ML = "feed_ml"
 
 #: 配置值模型类型变量（`get_config_model` 的返回类型）
 T = TypeVar("T", bound=SQLModel)
@@ -46,6 +48,19 @@ def _default_comment_rate_limit() -> dict[str, Any]:
     return {
         "root": settings.comment_rate_root_rules,
         "reply": settings.comment_rate_reply_rules,
+    }
+
+
+def _default_feed_ml() -> dict[str, Any]:
+    """推荐机器学习三件套默认值（形态与库里 JSON 一致）。"""
+    return {
+        "ranker_enabled": settings.ml_ranker_enabled,
+        "ranker_blend_weight": settings.ml_ranker_blend_weight,
+        "als_enabled": settings.ml_als_enabled,
+        "als_limit": settings.ml_als_limit,
+        "linucb_enabled": settings.ml_linucb_enabled,
+        "linucb_weight": settings.ml_linucb_weight,
+        "linucb_alpha": settings.ml_linucb_alpha,
     }
 
 
@@ -67,6 +82,7 @@ CONFIG_SPECS: dict[str, ConfigSpec] = {
     CONFIG_KEY_COMMENT_RATE_LIMIT: ConfigSpec(
         model=CommentRateLimitConfig, default=_default_comment_rate_limit
     ),
+    CONFIG_KEY_FEED_ML: ConfigSpec(model=FeedMLConfig, default=_default_feed_ml),
 }
 
 #: 进程内缓存：key → (写入缓存时刻, 原始 JSON)
@@ -101,7 +117,7 @@ async def _load_raw(session: AsyncSession, key: str, default: dict[str, Any]) ->
     try:
         async with session.begin_nested():
             row = await session.get(SysConfig, key)
-    except Exception as e:  # noqa: BLE001 - 配置读取失败不能阻断业务
+    except Exception as e:
         logger.warning(f"[RuntimeConfig] 读取 {key} 失败，回落默认值: {e}")
         _cache[key] = (now, default)
         return default
@@ -138,6 +154,15 @@ async def get_comment_rate_limit(session: AsyncSession) -> CommentRateLimitConfi
     )
 
 
+async def get_feed_ml_config(session: AsyncSession) -> FeedMLConfig:
+    """读取推荐机器学习三件套配置（2.66.0）。
+
+    Feed 读路径每个请求读一次（进程内 TTL 缓存，默认 10s），因此**开关与权重可热更新**
+    ——管理端改一次，≤ TTL 内全实例生效，无需重启。
+    """
+    return await get_config_model(session, CONFIG_KEY_FEED_ML, FeedMLConfig)
+
+
 def validate_config_value(key: str, value: dict[str, Any]) -> dict[str, Any]:
     """按 key 校验并**规范化**配置值（管理端写入前调用）。
 
@@ -155,10 +180,12 @@ def validate_config_value(key: str, value: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "CONFIG_KEY_COMMENT_RATE_LIMIT",
+    "CONFIG_KEY_FEED_ML",
     "CONFIG_SPECS",
     "ConfigSpec",
     "get_comment_rate_limit",
     "get_config_model",
+    "get_feed_ml_config",
     "invalidate",
     "validate_config_value",
 ]

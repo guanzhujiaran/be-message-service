@@ -21,7 +21,6 @@ from app.core.database import SessionDep
 from app.dependencies import AdminUser, RequiredUser
 from app.models import StandardResponse
 from app.models.enums import NotifyStatusEnum, NotifyTargetTypeEnum
-from app.models.str_int import StrInt
 from app.models.schemas import (
     BiliSystemNotifyResp,
     NotifyAdminItem,
@@ -34,6 +33,7 @@ from app.models.schemas import (
     SystemNotifyItem,
     SystemNotifyListResp,
 )
+from app.models.str_int import StrInt
 from app.services.message.insite.activity import ActivityService
 from app.services.message.insite.notify import NotifyService
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bili_common.deps.permissions import BizPermOp
 from bili_common.models.interaction import InteractionBizTypeEnum
+
 from app.services.user.account.base import PptrUser
 
 

@@ -26,7 +26,7 @@ from app.services.interaction_actions import get_biz
 router = APIRouter(prefix="/api/v1/audit", tags=["audit"])
 
 
-def _resp(biz_type, biz_id: int, data) -> StandardResponse[AuditActionResp]:
+def _resp(biz_type, biz_id: str, data) -> StandardResponse[AuditActionResp]:
     return StandardResponse(
         data=AuditActionResp(
             bizType=biz_type,
@@ -47,14 +47,15 @@ async def audit_approve(
     user: RootUser,
     req: AuditApproveReq,
 ) -> StandardResponse[AuditActionResp]:
+    biz_id = str(req.bizId)
     try:
-        biz = get_biz(req.bizType, session, int(req.bizId), user.mid)
+        biz = get_biz(req.bizType, session, biz_id, user.mid)
         data = await biz.audit_approve(remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     except NotImplementedError as e:
         return StandardResponse(code=400, msg=str(e))
-    return _resp(req.bizType, int(req.bizId), data)
+    return _resp(req.bizType, biz_id, data)
 
 
 @router.post(
@@ -67,14 +68,15 @@ async def audit_reject(
     user: RootUser,
     req: AuditRejectReq,
 ) -> StandardResponse[AuditActionResp]:
+    biz_id = str(req.bizId)
     try:
-        biz = get_biz(req.bizType, session, int(req.bizId), user.mid)
+        biz = get_biz(req.bizType, session, biz_id, user.mid)
         data = await biz.audit_reject(reject_reason=req.rejectReason, remark=req.remark)
     except ValueError as e:
         return StandardResponse(code=404, msg=str(e))
     except NotImplementedError as e:
         return StandardResponse(code=400, msg=str(e))
-    return _resp(req.bizType, int(req.bizId), data)
+    return _resp(req.bizType, biz_id, data)
 
 
 __all__ = ["router"]

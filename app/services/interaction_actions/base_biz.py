@@ -26,28 +26,29 @@
 import functools
 import re
 from abc import ABC
-from typing import Any, Awaitable, Callable
-
-from loguru import logger
+from collections.abc import Callable
+from typing import Any
 
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from loguru import logger
+
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base import (
+    _ACL_CHECKERS,
+    _RELATION_CHECKERS,
     InteractionAclScopeEnum,
     InteractionActionError,
     InteractionRelationScopeEnum,
-    _ACL_CHECKERS,
-    _RELATION_CHECKERS,
 )
 
 __all__ = [
     "BaseBiz",
+    "batch_get_resource_snapshots",
     "biz_action",
+    "find_at_mention_mids",
     "get_biz",
     "get_biz_class",
-    "batch_get_resource_snapshots",
     "replace_at_mentions",
-    "find_at_mention_mids",
 ]
 
 
@@ -112,13 +113,14 @@ class BaseBiz(ABC):
         if biz_type is not None:
             cls._registry[biz_type] = cls
 
-    def __init__(self, session, biz_id: int, actor_mid: int | None = None) -> None:
+    def __init__(self, session, biz_id: str | int, actor_mid: int | None = None) -> None:
         if self._biz_type is None:
             raise TypeError(
                 f"{type(self).__name__} 必须声明 _biz_type（对应的 InteractionBizTypeEnum）"
             )
         self.session = session
-        self.biz_id = int(biz_id)
+        # bizId 统一按字符串承载（数字主键 / ca_xxx / workflow UUID / browser_id 等）
+        self.biz_id = str(biz_id)
         self.actor_mid = int(actor_mid) if actor_mid is not None else None
         # 客户端上下文（2.56.0 显式化）：发布 / 审核日志类操作需要，由接口层注入；
         # 默认 None，未注入时各资源方法按「无客户端信息」处理（取代原动态属性 + getattr 兜底）
@@ -246,19 +248,19 @@ class BaseBiz(ABC):
     async def batch_get_resources(
         cls,
         session,
-        biz_ids: list[int],
+        biz_ids: list[str],
         *,
         actor_mid: int | None = None,
-        rpid_map: dict[int, str] | None = None,
-    ) -> dict[int, InteractionResource]:
+        rpid_map: dict[str, str] | None = None,
+    ) -> dict[str, InteractionResource]:
         """批量取资源快照（默认逐条 ``get_resource``；资源类可覆盖为一次 IN 查询 / 批量 RPC）。
 
-        返回 ``biz_id(int) -> InteractionResource``；``rpid_map`` 携带楼层锚点（评论定位）。
+        返回 ``biz_id(str) -> InteractionResource``；``rpid_map`` 携带楼层锚点（评论定位）。
         """
-        out: dict[int, InteractionResource] = {}
+        out: dict[str, InteractionResource] = {}
         for bid in biz_ids:
             biz = cls(session, bid, actor_mid)
-            out[bid] = await biz.to_resource_model(rpid=(rpid_map or {}).get(bid))
+            out[str(bid)] = await biz.to_resource_model(rpid=(rpid_map or {}).get(bid))
         return out
 
     async def check_resource(self, resource: InteractionResource) -> None:
@@ -373,13 +375,8 @@ class BaseBiz(ABC):
         """隐藏 / 下架该资源（`HIDE`，管理端处置）。"""
         raise self._unsupported(InteractionActionTypeEnum.HIDE)
 
-    async def report_reject(self, **kwargs):
-        """举报审核驳回（`REPORT_REJECT`）：通知举报人「举报未通过」。"""
-        raise self._unsupported(InteractionActionTypeEnum.REPORT_REJECT)
-
-    async def report_resolved(self, **kwargs):
-        """举报审核成立（`REPORT_RESOLVED`）：通知举报人「已成立」，可选下架资源。"""
-        raise self._unsupported(InteractionActionTypeEnum.REPORT_RESOLVED)
+    # 注：`report_reject` / `report_resolved` 的**真实实现在本类后面**（带 `@biz_action`
+    # 装饰器），这里不再留占位版本 —— 同类内后定义会覆盖前定义，留着只是死代码。
 
     async def dislike(self, **kwargs):
         """点踩 / 取消点踩（`DISLIKE`）。"""
@@ -571,7 +568,7 @@ def get_biz_class(biz_type) -> type[BaseBiz]:
     return biz_cls
 
 
-def get_biz(biz_type, session, biz_id: int, actor_mid: int | None = None) -> BaseBiz:
+def get_biz(biz_type, session, biz_id: str | int, actor_mid: int | None = None) -> BaseBiz:
     """按资源类型返回资源**实例**（资源为主体的统一入口）。
 
     用法：``biz = get_biz("dynamic", session, dyn_id, actor_mid=user.mid); await biz.like(up=1)``
@@ -661,17 +658,19 @@ async def batch_get_resource_snapshots(
             biz_cls = get_biz_class(rt_int)
         except ValueError:  # 未知 / 未实现资源类型 → 整组空占位
             pass
-        snaps: dict[int, InteractionResource] = {}
+        snaps: dict[str, InteractionResource] = {}
         if biz_cls is not None:
             rpid_map = {
-                int(rid): rpid
+                rid: rpid
                 for t, rid, rpid in norm
                 if t == rt_int and rid.isdigit() and rpid
             }
             try:
+                # id 统一按字符串透传（数字主键 / ca_xxx / workflow UUID / browser_id），
+                # 由各资源类 batch_get_resources 自行按业务键解析
                 snaps = await biz_cls.batch_get_resources(
                     session,
-                    [int(i) for i in ids if i.isdigit()],
+                    list(ids),
                     rpid_map=rpid_map,
                 )
             except Exception as exc:  # 弱依赖：资源侧（含 RPC）不可用时降级为空占位
@@ -679,11 +678,10 @@ async def batch_get_resource_snapshots(
                     f"资源快照批量回捞失败（type={InteractionBizTypeEnum(rt_int).to_text()}），降级为空占位：{exc}"
                 )
         for rid in ids:
-            digit = rid.isdigit()
-            snap = snaps.get(int(rid)) if digit else None
+            snap = snaps.get(rid) or snaps.get(int(rid)) if rid.isdigit() else snaps.get(rid)
             out[(rt_int, rid)] = snap or InteractionResource(
                 bizType=InteractionBizTypeEnum(rt_int),
-                bizId=int(rid) if digit else 0,
+                bizId=rid,
                 exists=False,
             )
-    return out
+        return out

@@ -27,9 +27,9 @@ from bili_common.rpc.rpa import (
     ListTagsByTargetResult,
     ListTagsParams,
     ListTagsResult,
-    RpaRpcMethodName,
     ReviewResourceParams,
     ReviewResourceResult,
+    RpaRpcMethodName,
 )
 from loguru import logger
 
@@ -53,7 +53,7 @@ class RpaRpcClient:
         await self._client.close()
 
     async def get_resource_detail(
-        self, biz_type: str, biz_id: int
+        self, biz_type: str, biz_id: str
     ) -> GetResourceDetailResult | None:
         """获取 RPA 资源详情（弱依赖：失败返回 None，不抛错）。
 
@@ -61,7 +61,9 @@ class RpaRpcClient:
             GetResourceDetailResult{detail}；RPC 失败 / 资源不存在返回 None。
         """
         routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.GET_RESOURCE_DETAIL)
-        payload = GetResourceDetailParams(bizType=biz_type, bizId=biz_id).model_dump()
+        payload = GetResourceDetailParams(
+            bizType=biz_type, bizId=int(biz_id)
+        ).model_dump()
         try:
             if not self._client.connected:
                 logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过资源详情获取")
@@ -72,12 +74,12 @@ class RpaRpcClient:
                 f"[RpaRpcClient] get_resource_detail 超时: {biz_type}/{biz_id}"
             )
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] get_resource_detail 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] get_resource_detail 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:
@@ -88,7 +90,7 @@ class RpaRpcClient:
         self,
         *,
         biz_type: str,
-        biz_id: int,
+        biz_id: str,
         operator_mid: int,
         reason: str = "",
     ) -> bool:
@@ -101,7 +103,7 @@ class RpaRpcClient:
         routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.HIDE_RESOURCE)
         payload = HideResourceParams(
             bizType=biz_type,
-            bizId=biz_id,
+            bizId=int(biz_id),
             operatorMid=operator_mid,
             reason=reason,
         ).model_dump()
@@ -113,12 +115,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning(f"[RpaRpcClient] hide_resource 超时: {biz_type}/{biz_id}")
             return False
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] hide_resource 调用失败: {e}")
             return False
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] hide_resource 响应解析失败: {e}")
             return False
         if resp.code != 0 or resp.data is None:
@@ -133,7 +135,7 @@ class RpaRpcClient:
         self,
         *,
         biz_type: str,
-        biz_id: int,
+        biz_id: str,
         decision: str,
         operator_mid: int,
         note: str = "",
@@ -145,7 +147,7 @@ class RpaRpcClient:
         routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.REVIEW_RESOURCE)
         payload = ReviewResourceParams(
             bizType=biz_type,
-            bizId=biz_id,
+            bizId=int(biz_id),
             decision=decision,
             operatorMid=operator_mid,
             note=note,
@@ -158,12 +160,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning(f"[RpaRpcClient] review_resource 超时: {biz_type}/{biz_id}")
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] review_resource 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] review_resource 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:
@@ -187,12 +189,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning("[RpaRpcClient] create_tag 超时")
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] create_tag 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] create_tag 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:
@@ -219,12 +221,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning("[RpaRpcClient] attach_tag 超时")
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] attach_tag 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] attach_tag 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:
@@ -248,12 +250,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning("[RpaRpcClient] detach_tag 超时")
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] detach_tag 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] detach_tag 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:
@@ -277,12 +279,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning("[RpaRpcClient] list_tags 超时")
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] list_tags 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] list_tags 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:
@@ -308,12 +310,12 @@ class RpaRpcClient:
         except TimeoutError:
             logger.warning("[RpaRpcClient] list_tags_by_target 超时")
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] list_tags_by_target 调用失败: {e}")
             return None
         try:
             resp = StandardResponse.model_validate(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[RpaRpcClient] list_tags_by_target 响应解析失败: {e}")
             return None
         if resp.code != 0 or resp.data is None:

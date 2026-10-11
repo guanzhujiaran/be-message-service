@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import Iterable
 
+from bili_common.core.time_utils import to_unix_timestamp
+from bili_common.deps.permissions import BizPermOp
 from bili_common.exceptions import ResourceConflictException
 from bili_common.models import (
     VALID_ROLES,
@@ -32,7 +33,6 @@ from bili_common.models import (
     PptrUserSearchItem,
     PptrUserVipInfo,
 )
-from bili_common.deps.permissions import BizPermOp
 from bili_common.models.interaction import InteractionBizTypeEnum
 from loguru import logger
 from sqlmodel import col, func, select
@@ -42,8 +42,6 @@ from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
 from app.core.sharding import generate_uid
 from app.models.enums import ExpActionType
-from app.services.infrastructure.geo_ip import lookup as geo_lookup
-from app.utils.ip_mask import mask_ipv4, mask_ipv6
 from app.models.pptr_db import (
     PptrUserActInfoLog,
     PptrUserExpRecord,
@@ -65,7 +63,9 @@ from app.models.schemas import (
     UserExpRecordListResp,
 )
 from app.models.schemas.user_brief import UserBriefOut
-
+from app.services.infrastructure.geo_ip import lookup as geo_lookup
+from app.services.user.space.briefs import UserBriefs
+from app.utils.ip_mask import mask_ipv4, mask_ipv6
 
 # ----------------------------------------------------------------------------
 # 模块级工具函数（经验算法 / 脱敏 / 四表联查构造 / 昵称唯一校验 / upsert）
@@ -199,10 +199,7 @@ async def _uname_taken(
     async def _run(s: AsyncSession) -> bool:
         stmt = select(PptrUserDetail.mid).where(PptrUserDetail.uname == str(uname))
         rows = (await s.exec(stmt)).all()
-        for mid in rows:
-            if self_uid is None or int(mid) != int(self_uid):
-                return True
-        return False
+        return any(self_uid is None or int(mid) != int(self_uid) for mid in rows)
 
     if session is not None:
         return await _run(session)
@@ -299,7 +296,7 @@ class PptrUser:
 
     # -------------------------- 权限（Linux 按位检查） --------------------------
 
-    def has_biz_perm(self, biz: InteractionBizTypeEnum, op: "BizPermOp | int") -> bool:
+    def has_biz_perm(self, biz: InteractionBizTypeEnum, op: BizPermOp | int) -> bool:
         return (int(self.biz_perms.get(biz, 0)) & int(op)) != 0
 
     @property
@@ -367,12 +364,8 @@ class PptrUser:
             int(vip.vip_due_date) if vip and vip.vip_due_date is not None else 0
         )
 
-        birthday = ""
-        if detail and detail.birthday:
-            try:
-                birthday = detail.birthday.strftime("%m-%d")
-            except (AttributeError, ValueError):
-                birthday = ""
+        # 生日统一对外为秒级时间戳（int32），0 表示未设置
+        birthday = to_unix_timestamp(detail.birthday) or 0 if detail else 0
 
         return SpaceInfoResp(
             mid=int(info.uid),
@@ -387,7 +380,7 @@ class PptrUser:
             ),
             birthday=birthday,
             # 2.58.0：邮箱首次随空间资料下发（受 `show_personal_info` 控制，
-            # 由路由层 SpacePrivacyService.apply_flags_to_info 裁剪）
+            # 由路由层的 SpaceVisibility.mask_profile 按属性描述符裁剪）
             email=(detail.email if detail and detail.email else None),
             vip=SpaceVipWrap(
                 type=vip_type,
@@ -420,7 +413,7 @@ class PptrUser:
                         )
                     )
                     await s.commit()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.warning(
                     f"[nav] 用户 {self.mid} 记录每日首次登录行为失败（不影响 nav 返回）"
                 )
@@ -462,27 +455,31 @@ class PptrUser:
         mids: list[int] | set[int],
         *,
         session: AsyncSession | None = None,
-    ) -> dict[int, UserBriefOut]:
-        """批量取用户完整简档，返回 `mid -> 用户信息` 字典（评论 / 私信列表装配核心）。
+    ) -> UserBriefs:
+        """批量取用户完整简档（评论 / 私信 / 动态等列表装配核心）。
 
-        返回完整简档（含脱敏邮箱 / 经验 / 大会员到期 / 角色等私域字段）。
+        返回 `UserBriefs` 值对象（**不返回裸 dict**）：调用方用 `of_mid(mid)` 取某人，
+        `None` 明确表示「已注销 / 本批未覆盖」，不再靠 dict 缺键猜语义。
+        返回的简档含脱敏邮箱 / 经验 / 大会员到期 / 角色等私域字段，
         私域字段在序列化期按访问者身份自动剥离，仅本人 / 管理员可见。
         """
         unique = {int(m) for m in mids if m}
         if not unique:
-            return {}
+            return UserBriefs()
 
         stmt = _base_select().where(
             col(PptrUserInfo.uid).in_(unique),
             col(PptrUserInfo.deletedAt).is_(None),
         )
 
-        async def _run(s: AsyncSession) -> dict[int, UserBriefOut]:
+        async def _run(s: AsyncSession) -> UserBriefs:
             rows = (await s.exec(stmt)).all()
-            return {
-                int(info.uid): _build_brief(info, detail, vip, level)
-                for info, detail, vip, level in rows
-            }
+            return UserBriefs.of(
+                [
+                    (int(info.uid), _build_brief(info, detail, vip, level))
+                    for info, detail, vip, level in rows
+                ]
+            )
 
         if session is not None:
             return await _run(session)
@@ -655,7 +652,7 @@ class PptrUser:
         return row is not None
 
     @classmethod
-    async def load(cls, mid: int) -> "PptrUser | None":
+    async def load(cls, mid: int) -> PptrUser | None:
         """按 uid 加载账号对象；不存在或已注销返回 None。"""
         if not await cls.exists_active(mid):
             return None
@@ -902,11 +899,12 @@ class PptrUser:
                     )
                 )
             else:
-                if uname and uname != (d.uname or ""):
-                    if await _uname_taken(uname, self_uid=self.mid, session=s):
-                        raise ResourceConflictException(
-                            "昵称已被占用，请更换昵称后重试"
-                        )
+                if (
+                    uname
+                    and uname != (d.uname or "")
+                    and await _uname_taken(uname, self_uid=self.mid, session=s)
+                ):
+                    raise ResourceConflictException("昵称已被占用，请更换昵称后重试")
                 if uname:
                     d.uname = uname
                 if face:
@@ -1111,9 +1109,7 @@ class PptrUser:
         offset = max(0, int(offset))
         limit = max(1, min(int(limit), 100))
         days = max(1, int(days))
-        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-            days=days
-        )
+        since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
 
         stmt = (
             select(PptrUserActInfoLog)
@@ -1156,9 +1152,7 @@ class PptrUser:
         offset = max(0, int(offset))
         limit = max(1, min(int(limit), 100))
         days = max(1, int(days))
-        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-            days=days
-        )
+        since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
 
         stmt = (
             select(PptrUserExpRecord)

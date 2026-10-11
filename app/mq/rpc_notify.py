@@ -21,8 +21,6 @@
 系统内部触发的通知（如新用户欢迎）直接调服务层，不走 RPC 自调用。
 """
 
-from faststream.rabbit import RabbitQueue
-
 from bili_common.models import (
     StandardResponse,
     error_response,
@@ -35,11 +33,12 @@ from bili_common.models.notify_rpc import (
     PublishNotifyResult,
 )
 from bili_common.rpc.safe import rpc_safe
+from faststream.rabbit import RabbitQueue
 
 from app.core.broker import message_exchange
 from app.core.database import new_session
-from app.mq.router import router
 from app.models.schemas import NotifyCreateReq
+from app.mq.router import router
 from app.services.message.insite.notify import NotifyService
 
 

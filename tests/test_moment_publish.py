@@ -11,6 +11,8 @@
 """
 
 import pytest
+from bili_common.models import InteractionBizTypeEnum
+from seed_biliopus import fetch_real_dyns
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import col, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -20,16 +22,15 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
+    TInteractionStat,
     TMoment,
     TResourceAuditLog,
-    TInteractionStat,
     TResourceFeed,
 )
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.moment import (
     MomentContentNode,
@@ -46,7 +47,6 @@ from app.services.moment.moment_publish import (
     _precheck_content,
     _precheck_scene,
 )
-from seed_biliopus import fetch_real_dyns
 
 
 @pytest.fixture(autouse=True)

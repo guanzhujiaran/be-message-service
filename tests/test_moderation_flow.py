@@ -141,7 +141,7 @@ async def test_resource_has_multiple_independent_flows(session):
         action=ModerationAction.APPROVE,
         actor_mid=1,
     )
-    assert getattr(content_row, "auditStatus") is ResourceAuditStatusEnum.NORMAL
+    assert content_row.auditStatus is ResourceAuditStatusEnum.NORMAL
     # 主状态联动为 NORMAL
     assert primary.auditStatus is ResourceAuditStatusEnum.NORMAL
 
@@ -150,7 +150,7 @@ async def test_resource_has_multiple_independent_flows(session):
     await orch.run_flow(
         session, report_row, "report", action=ModerationAction.REJECT, actor_mid=2
     )
-    assert getattr(report_row, "reportStatus") is ResourceAuditStatusEnum.REJECTED
+    assert report_row.reportStatus is ResourceAuditStatusEnum.REJECTED
     # 主状态仍为 NORMAL，未被举报驳回覆盖
     assert primary.auditStatus is ResourceAuditStatusEnum.NORMAL
 

@@ -20,14 +20,10 @@
   `TInteractionStat.favoriteCount`（2.36.0 起），收藏/取消时原子 ±1。
 """
 
-from datetime import datetime
-
-from sqlalchemy import BIGINT, Text, UniqueConstraint, text
+from sqlalchemy import BIGINT, UniqueConstraint, text
 from sqlmodel import Field, Index, PrimaryKeyConstraint
 
 from app.models.db.base_tbl import ResourceBase, TimestampMixin
-from sqlalchemy import Enum as SAEnum
-from bili_common.models import InteractionBizTypeEnum
 
 
 class TFavoriteFolder(TimestampMixin, table=True):
@@ -63,6 +59,10 @@ class TFavoriteFolder(TimestampMixin, table=True):
     )
     is_default: int = Field(
         default=0, sa_type=BIGINT, description="是否默认收藏夹：0=否,1=是（每用户一个）"
+    )
+    is_public: bool = Field(
+        default=True,
+        description="是否对外公开：True=公开（他人可见）,False=隐藏（仅本人可见）",
     )
 
 
@@ -112,29 +112,4 @@ class TResourceFavorite(ResourceBase, TimestampMixin, table=True):
     )
 
 
-class TUserFavoriteSetting(TimestampMixin, table=True):
-    """用户主页收藏可见性设置（每用户一行，`get_or_create` 范式）。
-
-    - `showFavorites`：主页是否展示「收藏」tab（默认 1=展示；0=隐藏，
-      对访客同样隐藏）。默认显示，由用户自行关闭（计划书 §4.2）。
-    """
-
-    __tablename__ = "TUserFavoriteSetting"
-    __table_args__ = (
-        PrimaryKeyConstraint("mid", name="TUserFavoriteSetting_pkey"),
-        {"extend_existing": True, "comment": "用户主页收藏可见性设置：每用户一行"},
-    )
-
-    mid: int = Field(
-        default=None,
-        primary_key=True,
-        sa_type=BIGINT,
-        sa_column_kwargs={"autoincrement": False},
-        description="用户mid",
-    )
-    showFavorites: int = Field(
-        default=1, sa_type=BIGINT, description="主页是否显示收藏tab：1=显示,0=隐藏"
-    )
-
-
-__all__ = ["TFavoriteFolder", "TResourceFavorite", "TUserFavoriteSetting"]
+__all__ = ["TFavoriteFolder", "TResourceFavorite"]

@@ -16,32 +16,34 @@
 （严禁请求热路径做 COUNT 聚合；2.36.0 起计数统一 TInteractionStat）。
 """
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from math import cos, radians
-from typing import Any, Iterable
+from typing import Any
 
+from bili_common.models import InteractionBizTypeEnum
+from bili_common.models.report import ReportAuditStatusEnum
+from loguru import logger
 from sqlalchemy import func
-from sqlmodel import col, func, select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.models.db import (
     MomentAuthorQuality,
+    TInteractionStat,
     TMoment,
-    TResourceLike,
     TMomentTopic,
     TMomentTopicRel,
-    TInteractionStat,
     TResourceFeed,
+    TResourceLike,
     TResourceReport,
 )
 from app.models.db.comment_tbl import CommentSubject
-from bili_common.models import InteractionBizTypeEnum
-from bili_common.models.report import ReportAuditStatusEnum
 from app.models.enums import (
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
     MomentVisibleScopeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.moment import (
     MomentContentNode,
@@ -55,6 +57,10 @@ from app.models.schemas.moment import (
     MomentModule,
     MomentTopicRef,
 )
+from app.models.schemas.sys_config import FeedMLConfig
+from app.services.common.indexed import Indexed, ResourceDisplay
+from app.services.common.runtime_config import get_feed_ml_config
+from app.services.moment.als_recall import recall_by_als
 from app.services.moment.feed_engine import (
     AuthorQualitySignal,
     FeedCandidate,
@@ -62,10 +68,9 @@ from app.services.moment.feed_engine import (
     build_viewer_key,
     rank_feed,
 )
-from app.services.user.follow import FollowService
+from app.services.moment.values import MomentUpStat
 from app.services.user.account import PptrUser
-
-from loguru import logger
+from app.services.user.follow import FollowService
 
 # 单页上限
 _FEED_PAGE_SIZE = 20
@@ -167,28 +172,29 @@ def _collect_lottery_ids(dyns: list[TMoment]) -> list[int]:
 
 async def _build_lottery_detail_map(
     dyns: list[TMoment],
-) -> dict[int, dict[str, str | None]]:
+) -> Indexed[ResourceDisplay]:
     """对一批动态收集 lottery_id 后批量一次 RPC 回查详情（2.20.1）。
 
-    返回 ``{lottery_id: {name, cover, jumpUrl}}``；RPC 失败 / 未连接 / 无 lottery 时
-    返回空 dict（弱依赖降级），调用方保留原节点。
+    返回 `Indexed[ResourceDisplay]`（lottery_id → 展示信息）；RPC 失败 / 未连接 /
+    无 lottery 时返回空集合（弱依赖降级），调用方保留原节点。
     """
     ids = _collect_lottery_ids(dyns)
     if not ids:
-        return {}
+        return Indexed.empty()
     from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
 
     client = await get_lottery_rpc_client()
     try:
+        # RPC 客户端已返回值对象（边界转换点在其内部），这里直接用，不再二次转换
         return await client.get_lottery_details(ids)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"[moment_feed] 批量回查 lottery 详情失败，降级保留原节点: {e}")
-        return {}
+        return Indexed.empty()
 
 
 def _enrich_resource_nodes(
     nodes: list[MomentContentNode] | None,
-    detail_map: dict[int, dict[str, str | None]],
+    detail_map: Indexed[ResourceDisplay],
 ) -> None:
     """用批量回查结果填充 RESOURCE=lottery 节点详情（2.20.1）。
 
@@ -201,13 +207,13 @@ def _enrich_resource_nodes(
     for n in nodes:
         if n.type == "RESOURCE" and _is_lottery_biz_type(n.bizType) and n.bizId:
             try:
-                detail = detail_map.get(int(n.bizId))
+                detail = detail_map.value_of(int(n.bizId))
             except (TypeError, ValueError):
                 detail = None
             if detail:
-                n.name = detail["name"] or n.name
-                n.cover = detail["cover"] or n.cover
-                n.jumpUrl = detail["jumpUrl"] or n.jumpUrl
+                n.name = detail.name or n.name
+                n.cover = detail.cover or n.cover
+                n.jumpUrl = detail.jump_url or n.jumpUrl
 
 
 async def _build_feed_item(
@@ -216,8 +222,8 @@ async def _build_feed_item(
     session: AsyncSession | None = None,
     author: Any | None = None,
     is_like: bool | None = None,
-    lottery_detail_map: dict[int, dict[str, str | None]] | None = None,
-    topic_rel_map: dict[int, list[int]] | None = None,
+    lottery_detail_map: Indexed[ResourceDisplay] | None = None,
+    topic_rel_map: Indexed[tuple[int, ...]] | None = None,
     _depth: int = 0,
 ) -> MomentFeedItem:
     """把 TMoment 装配成对外卡片。
@@ -250,7 +256,7 @@ async def _build_feed_item(
     if isinstance(dyn.contentJson, list):
         nodes = [_to_content_node(n) for n in dyn.contentJson]
         # 2.20.1：旧数据正文 RESOURCE=lottery 节点用批量回查结果填充（不存快照，弱依赖降级）
-        _enrich_resource_nodes(nodes, lottery_detail_map or {})
+        _enrich_resource_nodes(nodes, lottery_detail_map or Indexed.empty())
     modules.append(
         MomentModule(
             moduleType="desc",
@@ -263,7 +269,7 @@ async def _build_feed_item(
     # name/cover/jumpUrl 由装配层 RPC 实时获取（弱依赖失败仅返回 bizType+bizId）
     if dyn.bizType and dyn.bizRid:
         detail = (
-            (lottery_detail_map or {}).get(int(dyn.bizRid))
+            (lottery_detail_map or Indexed.empty()).value_of(int(dyn.bizRid))
             if dyn.bizType == InteractionBizTypeEnum.LOTTERY
             else None
         )
@@ -272,9 +278,9 @@ async def _build_feed_item(
                 moduleType="additional",
                 bizType=dyn.bizType,
                 bizId=str(dyn.bizRid),
-                name=detail["name"] if detail else None,
-                cover=detail["cover"] if detail else None,
-                jumpUrl=detail["jumpUrl"] if detail else None,
+                name=detail.name if detail else None,
+                cover=detail.cover if detail else None,
+                jumpUrl=detail.jump_url if detail else None,
             )
         )
 
@@ -300,11 +306,11 @@ async def _build_feed_item(
             ).one_or_none()
             if src_dyn is not None:
                 # 2.22.0：嵌套源动态的话题关系若未在外层 map，单条补齐（仅 FORWARD 嵌套场景，量小）
-                nested_rel_map = topic_rel_map or {}
+                nested_rel_map = topic_rel_map or Indexed.empty()
                 if src_dyn.dynId not in nested_rel_map:
                     extra = await _load_topic_rel_map(session, [src_dyn.dynId])
                     if extra:
-                        nested_rel_map = {**nested_rel_map, **extra}
+                        nested_rel_map = nested_rel_map.merge(extra)
                 src_moment = await _build_feed_item(
                     src_dyn,
                     session=session,
@@ -323,7 +329,7 @@ async def _build_feed_item(
     topic_ids: list[int] = []
     if dyn.topicId:
         topic_ids.append(dyn.topicId)
-    for tid in (topic_rel_map or {}).get(dyn.dynId, []):
+    for tid in (topic_rel_map or Indexed.empty()).value_or(dyn.dynId, ()):
         if tid not in topic_ids:
             topic_ids.append(tid)
     if topic_ids:
@@ -376,7 +382,7 @@ async def _attach_authors(session: AsyncSession, items: list[MomentFeedItem]) ->
         return
     briefs = await PptrUser.get_many(list(mids))
     for it in all_items:
-        b = briefs.get(it.mid)
+        b = briefs.of_mid(it.mid)
         for m in it.modules:
             if m.moduleType == "author":
                 m.uname = b.uname if b else None
@@ -433,13 +439,13 @@ async def _attach_topics(session: AsyncSession, items: list[MomentFeedItem]) -> 
 
 async def _load_topic_rel_map(
     session: AsyncSession, moment_ids: list[int]
-) -> dict[int, list[int]]:
+) -> Indexed[tuple[int, ...]]:
     """批量读动态-话题多对多关系（2.22.0），按 dynId 分组，保持写入顺序。
 
-    返回 ``{dynId: [topicId, ...]}``；无关系返回空 dict。
+    返回 `Indexed[tuple[int, ...]]`（dynId → 有序 topicId）；无关系返回空集合。
     """
     if not moment_ids:
-        return {}
+        return Indexed.empty()
     rows = (
         await session.exec(
             select(TMomentTopicRel.dynId, TMomentTopicRel.topicId)
@@ -447,18 +453,24 @@ async def _load_topic_rel_map(
             .order_by(col(TMomentTopicRel.pk))
         )
     ).all()
-    result: dict[int, list[int]] = {}
+    grouped: list[tuple[int, tuple[int, ...]]] = []
     for dyn_id, topic_id in rows:
-        result.setdefault(int(dyn_id), []).append(int(topic_id))
-    return result
+        key = int(dyn_id)
+        current = next((v for k, v in grouped if k == key), ())
+        grouped = [item for item in grouped if item[0] != key]
+        grouped.append((key, (*current, int(topic_id))))
+    return Indexed.of(grouped)
 
 
 async def _load_stats(
     session: AsyncSession, moment_ids: list[int]
-) -> dict[int, TInteractionStat]:
-    """批量读动态计数（2.36.0 统一 TInteractionStat，bizType=dynamic；直接读字段，禁 COUNT 聚合）。"""
+) -> Indexed[TInteractionStat]:
+    """批量读动态计数（2.36.0 统一 TInteractionStat，bizType=dynamic；直接读字段，禁 COUNT 聚合）。
+
+    返回 `Indexed[TInteractionStat]`；未命中即该动态还没有计数行。
+    """
     if not moment_ids:
-        return {}
+        return Indexed.empty()
     rows = (
         await session.exec(
             select(TInteractionStat).where(
@@ -467,12 +479,12 @@ async def _load_stats(
             )
         )
     ).all()
-    return {r.bizId: r for r in rows}
+    return Indexed.of((int(r.bizId), r) for r in rows)
 
 
 async def _load_comment_subjects(
     session: AsyncSession, moment_ids: list[int]
-) -> dict[int, CommentSubject]:
+) -> Indexed[CommentSubject]:
     """批量读评论系统实体（msg_comment_subject，type='dynamic'）。
 
     2.44.0：合并原 ``_load_comment_counts``（root_count 实时计数）与
@@ -484,7 +496,7 @@ async def _load_comment_subjects(
     无评论动态无 subject 行则缺失，由引擎回退发布时间。
     """
     if not moment_ids:
-        return {}
+        return Indexed.empty()
     rows = (
         await session.exec(
             select(CommentSubject).where(
@@ -493,15 +505,18 @@ async def _load_comment_subjects(
             )
         )
     ).all()
-    return {int(r.oid): r for r in rows}
+    return Indexed.of((int(r.oid), r) for r in rows)
 
 
 async def _load_like_states(
     session: AsyncSession, moment_ids: list[int], viewer_mid: int | None
-) -> dict[int, bool]:
-    """批量读当前用户对这批动态的点赞态（用于 interaction 模块）。"""
+) -> Indexed[bool]:
+    """批量读当前用户对这批动态的点赞态（用于 interaction 模块）。
+
+    返回 `Indexed[bool]`；未登录 / 空集合返回空（调用方按「未知」处理）。
+    """
     if not moment_ids or not viewer_mid:
-        return {}
+        return Indexed.empty()
     rows = (
         await session.exec(
             select(TResourceLike.bizId).where(
@@ -511,7 +526,7 @@ async def _load_like_states(
             )
         )
     ).all()
-    return {int(d): True for d in rows}
+    return Indexed.of((int(d), True) for d in rows)
 
 
 async def _assemble_page(
@@ -538,7 +553,7 @@ async def _assemble_page(
         await _build_feed_item(
             r,
             session=session,
-            is_like=like_states.get(r.dynId),
+            is_like=like_states.value_of(r.dynId),
             lottery_detail_map=lottery_detail_map,
             topic_rel_map=topic_rel_map,
         )
@@ -558,6 +573,8 @@ async def _recall_dynamic_candidates(
     lat: float | None,
     lng: float | None,
     window_dt: datetime,
+    page_size: int = _FEED_PAGE_SIZE,
+    ml_config: FeedMLConfig | None = None,
 ) -> list[TResourceFeed]:
     """2.46.0 候选集多路召回（bizId 并集去重 → 统一回查 `TResourceFeed` 行）。
 
@@ -569,6 +586,15 @@ async def _recall_dynamic_candidates(
     4. **地理位置**：请求带 ``lat/lng`` 时按 ``TMoment.lbs*`` 附近范围召回（未传跳过）；
     5. **协同过滤（MVP 近似）**：我点赞过作者的新动态（ItemCF 简化，完整
        user-based CF 标记 Phase 2）。
+
+    2.65.0：**时间窗口由硬过滤降级为「新鲜优先」**（纯时间窗口在低活跃 / 冷启动 /
+    存量数据场景会让 Feed 直接见底，且窗口外的高互动老内容永无曝光机会）：
+    - 路 1 的互动 top 分支走独立窗口 ``edgerank_recall_hot_top_window_hours``
+      （默认 0=不限），高互动老内容可入池，新鲜度排序交给 EdgeRank ``decay``；
+    - 五路并集后候选不足**保底条数**（``max(page_size,
+      edgerank_recall_fallback_min_candidates)``）时，追加**兜底路**：按 pubTime
+      倒序放宽窗口取最新 N（保证 Feed 不见底）。池内谁能冒头由精排 + 重排层
+      （Thompson Sampling 探索）决定，召回层不做随机。
 
     返回按召回顺序去重后的 `TResourceFeed` 行；总候选受
     ``edgerank_candidate_limit`` 上限约束；任一/多路数据缺失自动退化为剩余路并集。
@@ -583,14 +609,26 @@ async def _recall_dynamic_candidates(
                 seen.add(bid)
                 cand_ids.append(bid)
 
-    feed_base = [
-        col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
-        col(TResourceFeed.auditStatus) == ResourceAuditStatusEnum.NORMAL,
-        col(TResourceFeed.deletedAt).is_(None),
-        col(TResourceFeed.pubTime).isnot(None),
-        col(TResourceFeed.pubTime) >= window_dt,
-        col(TResourceFeed.visibleScope) == MomentVisibleScopeEnum.PUBLIC,
-    ]
+    def _feed_conds(window: datetime | None) -> list:
+        """`TResourceFeed` 可入 Feed 的通用过滤条件；``window=None`` 表示不限时间。"""
+        conds = [
+            col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
+            col(TResourceFeed.auditStatus) == ResourceAuditStatusEnum.NORMAL,
+            col(TResourceFeed.deletedAt).is_(None),
+            col(TResourceFeed.pubTime).isnot(None),
+            col(TResourceFeed.visibleScope) == MomentVisibleScopeEnum.PUBLIC,
+        ]
+        if window is not None:
+            conds.append(col(TResourceFeed.pubTime) >= window)
+        return conds
+
+    def _hours_ago(hours: int) -> datetime | None:
+        """小时数 → 时间窗口下界；``hours<=0`` 返回 None（不限时间）。"""
+        return datetime.now() - timedelta(hours=hours) if hours > 0 else None
+
+    feed_base = _feed_conds(window_dt)
+    # 2.65.0：互动 top 路独立窗口（默认不限）——「窗口内没互动、窗口外有爆款」的错配修复
+    top_window_dt = _hours_ago(s.edgerank_recall_hot_top_window_hours)
 
     # 登录用户的点赞历史（路 3 / 路 5 复用，一次查询；单列 select 返回标量 int 列表）
     liked_dyn_ids: list[int] = []
@@ -642,7 +680,10 @@ async def _recall_dynamic_candidates(
                 top = (
                     await session.exec(
                         select(TResourceFeed.bizId)
-                        .where(*feed_base, col(TResourceFeed.bizId).in_(top_raw))
+                        .where(
+                            *_feed_conds(top_window_dt),
+                            col(TResourceFeed.bizId).in_(top_raw),
+                        )
                         .order_by(col(TResourceFeed.pubTime).desc())
                         .limit(s.edgerank_recall_hot_top_limit)
                     )
@@ -655,7 +696,7 @@ async def _recall_dynamic_candidates(
             follow_mids = await FollowService.list_following_mids(
                 session, viewer_mid, limit=2000
             )
-        except Exception:  # noqa: BLE001 —— 关注查询失败不阻塞召回
+        except Exception:
             follow_mids = []
         if follow_mids:
             social = (
@@ -756,6 +797,31 @@ async def _recall_dynamic_candidates(
             ).all()
             _add(cf)
 
+    # ---- 路 6 ALS 协同（2.66.0）：隐语义召回「与我看过的内容共现」的资源 ----
+    # 开关/条数取运行时配置 ``feed_ml``（管理端可热更新），未配置时回落 settings
+    ml_cfg = ml_config or FeedMLConfig(
+        als_enabled=s.ml_als_enabled, als_limit=s.ml_als_limit
+    )
+    if viewer_mid is not None and ml_cfg.als_enabled:
+        _add(recall_by_als(viewer_mid, ml_cfg.als_limit, ml_cfg))
+
+    # ---- 兜底路（2.65.0）：候选不足保底条数 → 放宽时间窗口补全 ----
+    # 纯时间窗口在低活跃 / 冷启动 / 存量数据场景会把候选清空（Feed 直接见底）；
+    # 这里按 pubTime 倒序补齐，「谁能冒头」交给精排 + 重排层（Thompson Sampling）决定。
+    min_candidates = max(page_size, s.edgerank_recall_fallback_min_candidates)
+    if s.edgerank_recall_fallback_enabled and len(cand_ids) < min_candidates:
+        fallback = (
+            await session.exec(
+                select(TResourceFeed.bizId)
+                .where(
+                    *_feed_conds(_hours_ago(s.edgerank_recall_fallback_window_hours))
+                )
+                .order_by(col(TResourceFeed.pubTime).desc())
+                .limit(s.edgerank_recall_fallback_limit)
+            )
+        ).all()
+        _add(fallback)
+
     cand_ids = cand_ids[: s.edgerank_candidate_limit]
     if not cand_ids:
         return []
@@ -764,6 +830,12 @@ async def _recall_dynamic_candidates(
             select(TResourceFeed).where(
                 col(TResourceFeed.bizType) == InteractionBizTypeEnum.DYNAMIC,
                 col(TResourceFeed.bizId).in_(cand_ids),
+                # 2.66.0：统一在回查处兜底过滤——ALS / 协同路给出的是历史互动过的
+                # bizId，可能已下架 / 转私有 / 软删，状态过滤放在最后一道更稳
+                col(TResourceFeed.auditStatus) == ResourceAuditStatusEnum.NORMAL,
+                col(TResourceFeed.deletedAt).is_(None),
+                col(TResourceFeed.pubTime).isnot(None),
+                col(TResourceFeed.visibleScope) == MomentVisibleScopeEnum.PUBLIC,
             )
         )
     ).all()
@@ -867,12 +939,16 @@ class MomentFeedService:
         )
         # 2.46.0：候选集由纯时间窗口升级为多路召回（仅 visibleScope=PUBLIC，
         # 零 join 直接过滤 TResourceFeed.visibleScope）
+        # 运行时配置（feed_ml）：三件套开关与权重，管理端可热更新（进程内 TTL 缓存）
+        ml_config = await get_feed_ml_config(session)
         res_rows = await _recall_dynamic_candidates(
             session,
             viewer_mid=viewer_mid,
             lat=lat,
             lng=lng,
             window_dt=window_dt,
+            page_size=page_size,
+            ml_config=ml_config,
         )
         if not res_rows:
             return MomentFeedResp(
@@ -889,13 +965,25 @@ class MomentFeedService:
             await session.exec(select(TMoment).where(col(TMoment.dynId).in_(cand_ids)))
         ).all()
         moment_map = {r.dynId: r for r in moment_rows}
+        # 2.66.0：剔除 TResourceFeed 孤儿行（TMoment 已删但 Feed 元数据残留）——
+        # 否则候选里混进渲染不出的条目：曝光流水照写、页面却少几条（下发数 ≠ 渲染数）
+        res_rows = [r for r in res_rows if r.bizId in moment_map]
+        if not res_rows:
+            return MomentFeedResp(
+                items=[],
+                hasMore=False,
+                updateBaseline=None,
+                historyOffset=None,
+                updateNum=0,
+            )
+        cand_ids = [r.bizId for r in res_rows]
         cand_stats = await _load_stats(session, cand_ids)
         # 2.44.0：评论系统实体（root_count 实时计数 + updated_at 最后评论时间）
         cand_comment_subjects = await _load_comment_subjects(session, cand_ids)
 
         # 2.35.0 作者质量：候选作者批量读 moment_author_quality
         # 2.47.0：映射为引擎通用信号 AuthorQualitySignal（引擎不再依赖动态专属表）
-        author_q: dict[int, AuthorQualitySignal] = {}
+        author_q: Indexed[AuthorQualitySignal] = Indexed.empty()
         cand_mids = {r.mid for r in res_rows}
         if cand_mids:
             aq_rows = (
@@ -905,18 +993,21 @@ class MomentFeedService:
                     )
                 )
             ).all()
-            author_q = {
-                int(r.mid): AuthorQualitySignal(
-                    avg_engagement=r.avgEngagement,
-                    recent_publish=r.recentPublishCount,
-                    fans=r.fansCount,
-                    level=float(r.currentLevel),
+            author_q = Indexed.of(
+                (
+                    int(r.mid),
+                    AuthorQualitySignal(
+                        avg_engagement=r.avgEngagement,
+                        recent_publish=r.recentPublishCount,
+                        fans=r.fansCount,
+                        level=float(r.currentLevel),
+                    ),
                 )
                 for r in aq_rows
-            }
+            )
 
         # 2.37.0：pending 举报数（bizType=dynamic 按 bizId 统计，通用降权；2.44.0 为 ResourceReportCount 实体）
-        report_counts: dict[int, ResourceReportCount] = {}
+        report_counts: Indexed[ResourceReportCount] = Indexed.empty()
         if cand_ids:
             rp_rows = (
                 await session.exec(
@@ -931,10 +1022,13 @@ class MomentFeedService:
                     .group_by(col(TResourceReport.bizId))
                 )
             ).all()
-            report_counts = {
-                int(b): ResourceReportCount(biz_id=int(b), pending_count=int(c))
+            report_counts = Indexed.of(
+                (
+                    int(b),
+                    ResourceReportCount(biz_id=int(b), pending_count=int(c)),
+                )
                 for b, c in rp_rows
-            }
+            )
 
         candidates: list[FeedCandidate] = []
         for r in res_rows:
@@ -950,6 +1044,8 @@ class MomentFeedService:
                         dyn.dynType is MomentTypeEnum.FORWARD if dyn else False
                     ),
                     rich=_is_rich_content(dyn.contentJson) if dyn else False,
+                    # 2.66.0：正文长度（ML 精排特征，与离线样本 text_len 同口径）
+                    text_len=len(dyn.contentText or "") if dyn else 0,
                 )
             )
 
@@ -970,6 +1066,7 @@ class MomentFeedService:
             viewer_key=build_viewer_key(viewer_mid, uniq_id),
             feed_scene="comprehensive",
             biz_type=InteractionBizTypeEnum.DYNAMIC,
+            ml_config=ml_config,
         )
 
         # 2.32.0：推荐流无 page/offset 语义；updateBaseline/historyOffset/updateNum 置空。
@@ -1045,7 +1142,7 @@ class MomentFeedService:
             await _build_feed_item(
                 r,
                 session=session,
-                is_like=like_states.get(r.dynId),
+                is_like=like_states.value_of(r.dynId),
                 lottery_detail_map=lottery_detail_map,
                 topic_rel_map=topic_rel_map,
             )
@@ -1125,7 +1222,7 @@ class MomentFeedService:
             await _build_feed_item(
                 r,
                 session=session,
-                is_like=like_states.get(r.dynId),
+                is_like=like_states.value_of(r.dynId),
                 lottery_detail_map=lottery_detail_map,
                 topic_rel_map=topic_rel_map,
             )
@@ -1248,7 +1345,7 @@ class MomentFeedService:
     async def get_upstat(
         session: AsyncSession,
         mid: int,
-    ) -> dict[str, int]:
+    ) -> MomentUpStat:
         """统计某用户的空间数据（对标 B 站 `/x/space/upstat`）。
 
         返回对外可见（``auditStatus='normal'`` 且未软删）动态的统计：
@@ -1278,10 +1375,10 @@ class MomentFeedService:
             )
         ).one()
 
-        return {
-            "dynamic_count": int(dynamic_count or 0),
-            "like_count": int(like_count or 0),
-        }
+        return MomentUpStat(
+            dynamic_count=int(dynamic_count or 0),
+            like_count=int(like_count or 0),
+        )
 
     # ==================== 点赞明细 / 转发列表（P8-T9）====================
 
@@ -1334,9 +1431,9 @@ class MomentFeedService:
         items = [
             MomentLikerItem(
                 mid=int(r.mid),
-                uname=(b.uname if (b := briefs.get(r.mid)) else None),
-                face=(b.avatar if (b := briefs.get(r.mid)) else None),
-                like_time=_iso(r.created_at),
+                uname=(b.uname if (b := briefs.of_mid(r.mid)) else None),
+                face=(b.avatar if (b := briefs.of_mid(r.mid)) else None),
+                like_time=r.created_at,
             )
             for r in rows
         ]
@@ -1390,7 +1487,7 @@ class MomentFeedService:
         briefs = await PptrUser.get_many([r.mid for r in rows])
         items: list[MomentForwardItem] = []
         for r in rows:
-            b = briefs.get(r.mid)
+            b = briefs.of_mid(r.mid)
             text = _extract_first_text(r.contentJson)
             items.append(
                 MomentForwardItem(

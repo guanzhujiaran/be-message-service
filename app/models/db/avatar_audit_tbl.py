@@ -15,10 +15,10 @@
 from datetime import datetime
 
 from sqlalchemy import BIGINT, Index, PrimaryKeyConstraint, text
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field
 
 from app.models.db.base_tbl import TimestampMixin
-from sqlalchemy import Enum as SAEnum
 from app.models.enums import ResourceAuditStatusEnum
 
 

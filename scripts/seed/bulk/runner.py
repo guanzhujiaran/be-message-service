@@ -107,7 +107,7 @@ async def run_bulk(args: argparse.Namespace) -> None:
         ):
             try:
                 await f
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"单条动态任务异常（已跳过）: {e}")
 
         # 4. lottery 资源：取真实 lottery_id，跑与动态等价的完整评论套件
@@ -140,7 +140,7 @@ async def run_bulk(args: argparse.Namespace) -> None:
             ):
                 try:
                     await f
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"lottery 资源灌数失败（已跳过）: {e}")
             logger.info(
                 f"  lottery 资源 {len(lottery_ids)} 个评论套件完成"

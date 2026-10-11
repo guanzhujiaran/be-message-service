@@ -8,6 +8,7 @@
 - **非动态通用资源**：`InteractionStatService.incr / decr`（`TInteractionStat`），明细 `dynId=None`。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, delete, select
 
@@ -18,26 +19,25 @@ from app.models.db import (
     TResourceFavorite,
     TResourceLike,
 )
-from bili_common.models import InteractionBizTypeEnum
 from app.services.interaction_actions.base import InteractionActionError
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
 
 __all__ = [
-    "validate_exists",
-    "do_like_generic",
-    "do_like_dynamic",
     "do_dislike",
     "do_favorite",
-    "do_share",
+    "do_like_dynamic",
+    "do_like_generic",
     "do_repost",
+    "do_share",
     "do_view",
+    "validate_exists",
 ]
 
 
 async def validate_exists(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int
+    session, biz_type: InteractionBizTypeEnum, biz_id: str
 ) -> None:
     """资源存在性校验（委托给对应资源类的 ``check_exists``；未实现资源类默认放行）。
 
@@ -55,9 +55,9 @@ async def validate_exists(
 
 
 async def do_like_generic(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int, actor_mid: int, up: int = 1
+    session, biz_type: InteractionBizTypeEnum, biz_id: str, actor_mid: int, up: int = 1
 ) -> tuple[bool, int]:
-    """通用资源点赞 / 取消点赞（幂等；明细 + `TInteractionStat.likeCount`）。"""
+    """通用资源（非动态）点赞 / 取消点赞。取消点赞（幂等；明细 + `TInteractionStat.likeCount`）。"""
     if up not in (1, 2):
         raise InteractionActionError("up 参数不合法（1=点赞, 2=取消点赞）")
     existing = (
@@ -107,7 +107,7 @@ async def do_like_generic(
 
 
 async def do_like_dynamic(
-    session, biz_id: int, actor_mid: int, up: int = 1
+    session, biz_id: str, actor_mid: int, up: int = 1
 ) -> tuple[bool, int]:
     """动态点赞 / 取消点赞（幂等；明细 `bizType=DYNAMIC` + `MomentStatService` 计数）。
 
@@ -171,9 +171,9 @@ async def do_like_dynamic(
 
 
 async def do_dislike(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int, actor_mid: int, up: int = 1
-) -> tuple[bool, int]:
-    """点踩 / 取消点踩（幂等；明细 `TResourceDislike` + `dislikeCount`）。"""
+    session, biz_type: InteractionBizTypeEnum, biz_id: str, actor_mid: int, up: int = 1
+) -> None:
+    """点踩 / 取消点踩。取消点踩（幂等；明细 `TResourceDislike` + `dislikeCount`）。"""
     if up not in (1, 2):
         raise InteractionActionError("up 参数不合法（1=点踩, 2=取消点踩）")
     existing = (
@@ -228,7 +228,7 @@ async def do_dislike(
 async def do_favorite(
     session,
     biz_type: InteractionBizTypeEnum,
-    biz_id: int,
+    biz_id: str,
     actor_mid: int,
     folder_id=None,
     action: str = "add",
@@ -249,7 +249,7 @@ async def _ensure_default_folder(session, actor_mid: int) -> int:
 
 
 async def _favorite_add(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int, actor_mid: int, folder_id
+    session, biz_type: InteractionBizTypeEnum, biz_id: str, actor_mid: int, folder_id
 ) -> tuple[bool, int]:
     """收藏资源到指定收藏夹（幂等）；未指定夹时自动使用（创建）默认夹。"""
     if folder_id is None:
@@ -308,7 +308,7 @@ async def _favorite_add(
 
 
 async def _favorite_remove(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int, actor_mid: int, folder_id
+    session, biz_type: InteractionBizTypeEnum, biz_id: str, actor_mid: int, folder_id
 ) -> tuple[bool, int]:
     """从指定收藏夹取消收藏（幂等）。"""
     if folder_id is None:
@@ -352,7 +352,7 @@ async def _favorite_remove(
     return True, folder_id
 
 
-async def do_share(session, biz_type: InteractionBizTypeEnum, biz_id: int) -> int:
+async def do_share(session, biz_type: InteractionBizTypeEnum, biz_id: str) -> int:
     """分享上报（`shareCount` +1，行为上报不幂等），返回最新计数。"""
     await InteractionStatService.incr(session, biz_type, biz_id, "shareCount", 1)
     await session.commit()
@@ -368,7 +368,7 @@ async def do_share(session, biz_type: InteractionBizTypeEnum, biz_id: int) -> in
 
 
 async def do_repost(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int, attach_to: int | None = None
+    session, biz_type: InteractionBizTypeEnum, biz_id: str, attach_to: int | None = None
 ) -> int:
     """转发 / attach 行为计数（`repostCount` +1，不幂等），返回最新计数。"""
     await InteractionStatService.incr(session, biz_type, biz_id, "repostCount", 1)
@@ -385,7 +385,7 @@ async def do_repost(
 
 
 async def do_view(
-    session, biz_type: InteractionBizTypeEnum, biz_id: int, actor_mid: int
+    session, biz_type: InteractionBizTypeEnum, biz_id: str, actor_mid: int
 ) -> bool:
     """浏览上报（弱依赖计数，跨自然日去重）。返回 True=新计一次 / False=同日重复。"""
     return await InteractionStatService.report_view(
@@ -396,7 +396,7 @@ async def do_view(
 async def do_comment(
     session,
     biz_type: InteractionBizTypeEnum,
-    biz_id: int,
+    biz_id: str,
     actor_mid: int,
     *,
     root: int = 0,

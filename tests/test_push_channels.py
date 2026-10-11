@@ -124,7 +124,7 @@ async def test_channel_push(channel: str):
                 method(title, content)  # 同步实现
             else:
                 await method(title, content)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             pytest.fail(f"渠道 {channel} 推送失败：{e}")
 
     if channel == "smtp":

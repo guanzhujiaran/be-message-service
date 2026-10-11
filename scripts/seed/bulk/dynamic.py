@@ -83,5 +83,5 @@ async def _seed_dynamic(
             if tasks:
                 # 单条动态的点赞/评论/@/浏览并发发起，单条失败不影响整体
                 await asyncio.gather(*tasks, return_exceptions=True)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"动态灌入失败（跳过）: {e}")

@@ -54,7 +54,9 @@ async def handle_interaction_view(
 ) -> None:
     """消费浏览统计消息，去重累计浏览数。"""
     try:
-        biz_id = int(str(payload.bizId).strip())
+        biz_id = str(payload.bizId).strip()
+        if not biz_id:
+            raise ValueError("empty bizId")
     except (TypeError, ValueError):
         logger.error(f"[interaction_view] 非法 bizId={payload.bizId}，ack 丢弃")
         await msg.ack()
@@ -98,7 +100,7 @@ async def handle_interaction_view(
         except asyncio.CancelledError:
             # 服务关停：不 rollback / 不 nack，上抛交由框架处理
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             await session.rollback()
             if not is_retryable(e):
                 # 永久错误（脏消息 / 数据截断 / 约束冲突）：重投也不会成功，直接丢弃并告警

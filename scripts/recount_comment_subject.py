@@ -36,13 +36,13 @@ sys.path.insert(0, str(_HERE.parent))
 import argparse
 import asyncio
 
+from bili_common.models import InteractionBizTypeEnum
 from loguru import logger
 from sqlmodel import col, select, text
 
 from app.core.database import new_session
 from app.models.db import CommentSubject, TInteractionStat
 from app.services.comment import VISIBLE_STATES
-from bili_common.models import InteractionBizTypeEnum
 
 
 def _visible_names() -> str:

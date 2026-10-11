@@ -9,10 +9,11 @@
 
 from datetime import datetime
 
+from bili_common.core.time_utils import OptionalUnixTime, UnixTime
 from sqlmodel import Field, SQLModel
 
-
 from app.models.schemas.base import auto_str
+from app.models.schemas.moment import MomentDetailResp
 
 
 @auto_str
@@ -81,21 +82,21 @@ class SpacePrivacyFlags(SQLModel):
 
     两类语义，前端消费方式不同：
 
-    - **敏感原文类**（``show_personal_info`` / ``show_login_info``）：后端在
-      `viewer != mid` 且开关关闭时**直接不下发对应字段**（不是null），前端无需
-      区分「无权限」与「无数据」；
+    - **敏感原文类**（``show_personal_info``）：后端在 `viewer != mid` 且开关关闭时
+      **直接不下发对应字段**（不是null），前端无需区分「无权限」与「无数据」；
     - **列表/条目类**（``show_follow_list`` / ``show_like_list`` /
       ``show_fans_list``）：后端在关闭时让该类型内容**整类不出现**。
 
-    ``show_favorites`` 复用既有 `TUserFavoriteSetting.showFavorites`（收藏夹整体
-    对外可见性），不另建列，故一并回显方便设置页统一渲染。
+    注：**收藏不在本模型内** —— 2026-10-08 起「收藏」改为**逐个收藏夹**
+    `is_public`（`TFavoriteFolder.is_public`），不再有全局开关。
     """
 
     show_personal_info: bool = Field(
         default=False, description="个人资料：性别/生日/邮箱是否对外"
     )
-    show_login_info: bool = Field(
-        default=False, description="上次登录时间与IP属地是否对外"
+    show_timeline: bool = Field(
+        default=True,
+        description="时间线是否对外（总开关，默认开启，关闭后他人看不到任何条目）",
     )
     show_follow_list: bool = Field(
         default=False, description="时间线「我关注了谁」条目是否对外"
@@ -104,24 +105,22 @@ class SpacePrivacyFlags(SQLModel):
         default=False, description="时间线「我点赞了什么」条目是否对外"
     )
     show_fans_list: bool = Field(default=False, description="粉丝列表是否对外")
-    show_favorites: bool = Field(
-        default=True, description="收藏夹是否对外（复用 TUserFavoriteSetting）"
-    )
 
 
 @auto_str
 class SpacePrivacyUpdateReq(SQLModel):
     """空间可见性开关更新请求（当前登录用户自己的设置，2.58.0）。
 
-    五个开关整体提交（全量覆盖），不做 PATCH 语义 —— 前端设置页一次保存全部开关，
+    四个开关整体提交（全量覆盖），不做 PATCH 语义 —— 前端设置页一次保存全部开关，
     避免「部分更新」与「默认值」混淆。
     """
 
     show_personal_info: bool = Field(
         default=False, description="个人资料：性别/生日/邮箱是否对外"
     )
-    show_login_info: bool = Field(
-        default=False, description="上次登录时间与IP属地是否对外"
+    show_timeline: bool = Field(
+        default=True,
+        description="时间线是否对外（总开关，默认开启，关闭后他人看不到任何条目）",
     )
     show_follow_list: bool = Field(
         default=False, description="时间线「我关注了谁」条目是否对外"
@@ -152,7 +151,8 @@ class SpaceInfoResp(SQLModel):
     moral: int = 0
     silence: int = 0
     coins: int = 0
-    birthday: str = ""
+    # 生日：秒级时间戳（int32），0 表示未设置
+    birthday: int = 0
     official: SpaceOfficial = Field(default_factory=SpaceOfficial)
     vip: SpaceVipWrap = Field(default_factory=SpaceVipWrap)
     pendant: None = None
@@ -168,15 +168,46 @@ class SpaceInfoResp(SQLModel):
     # 邮箱：pptr TUserDetail.email 有数据源，但历来不在空间资料里下发；
     # 受 show_personal_info 控制（viewer==self 时恒下发）
     email: str | None = None
-    # 上次登录时间 + IP 属地（属地由 mmdb 读取时实时解析，不入库）；
-    # 受 show_login_info 控制。last_login_at 为 pptr TUserActInfoLog 最近一条
-    # 登录记录的createdAt。
-    last_login_at: datetime | None = None
+    # 上次登录时间 + IP 属地（属地由 mmdb 读取时实时解析，不入库）。
+    # **固定公开、不设开关**（2026-10-08 调整）；last_login_at 为 pptr
+    # TUserActInfoLog 最近一条登录记录的 createdAt。
+    last_login_at: OptionalUnixTime = None
     ip_location: str | None = None
     # 空间被访问次数（2.58.0：进入他人空间时按 bizType=USER 上报）。
     # 统计数字固定展示、不设开关。
     view_count: int = 0
     privacy_flags: SpacePrivacyFlags = Field(default_factory=SpacePrivacyFlags)
+
+
+@auto_str
+class SpaceTimelineResource(SQLModel):
+    """时间线条目对应的**资源卡**（2.59.0，前端卡片化方案 A）。
+
+    时间线条目从「一行文本」升级为「外层操作卡 + 内层资源卡」后，前端不再自己
+    判断资源类型、也不用二次请求：
+
+    - `biz_type` / `biz_id`：资源定位（`biz_id_str` 由 `@auto_str` 自动派生，
+      19 位雪花 id 前端只能按字符串用）；
+    - `name` / `cover` / `jump_url`：非 dynamic 资源实时回查的展示信息，
+      RPC 弱依赖失败时降级为 `None`（前端不渲染封面 / 标题）；
+    - `moment`：仅 dynamic 资源有值，内容为**完整动态出参**，前端直接喂
+      `MomentCard` 渲染（批量内联，不产生 N+1 请求）。
+    """
+
+    biz_type: str = Field(description="资源类型文字：dynamic / lottery / rpa_* / user")
+    biz_id: int = Field(description="资源 id（dynamic 时 = dynId）")
+    name: str | None = Field(
+        default=None, description="资源标题（非 dynamic 回查，缺失为 None）"
+    )
+    cover: str | None = Field(
+        default=None, description="资源封面图（非 dynamic 回查，缺失为 None）"
+    )
+    jump_url: str | None = Field(
+        default=None, description="站外跳转链接（回查不到为 None）"
+    )
+    moment: MomentDetailResp | None = Field(
+        default=None, description="dynamic 资源的完整动态出参（非 dynamic 为 None）"
+    )
 
 
 @auto_str
@@ -188,8 +219,9 @@ class SpaceTimelineItem(SQLModel):
 
     - `act_type`：follow / like / favorite；
     - follow：`target_mid/name/face` = 被关注用户；
-    - like / favorite：`target_dyn_id` = 动态 id，`target_mid/name/face` = 动态作者，
-      `target_text` = 动态正文摘要；favorite 额外带 `target_folder_name`。
+    - like / favorite：`target_mid/name/face` = 资源作者（dynamic 才有），
+      `target_text` = 动态正文摘要；favorite 额外带 `target_folder_name`；
+    - `target_resource`：内层资源卡（2.59.0 新增，dynamic 时带完整 `moment`）。
     """
 
     act_type: str = Field(
@@ -197,23 +229,27 @@ class SpaceTimelineItem(SQLModel):
     )
     target_mid: int | None = Field(
         default=None,
-        description="目标用户 mid（follow=被关注者；like/favorite=动态作者）",
+        description="目标用户 mid（follow=被关注者；like/favorite=资源作者，非 dynamic 可能为空）",
     )
     target_name: str | None = Field(
         default=None, description="目标用户展示名（对方注销或回查失败时为 null）"
     )
     target_face: str | None = Field(default=None, description="目标用户头像 URL")
     target_text: str | None = Field(
-        default=None, description="动态正文摘要（仅 like / favorite 有）"
+        default=None, description="动态正文摘要（仅 like / favorite 的 dynamic 资源有）"
     )
     target_dyn_id: int | None = Field(
         default=None,
-        description="动态 id（仅 like / favorite 有，前端点进 MOMENT_DETAIL）",
+        description="动态 id（仅 like / favorite 的 dynamic 资源有，前端点进 MOMENT_DETAIL）",
     )
     target_folder_name: str | None = Field(
         default=None, description="收藏夹名称（仅 favorite 有）"
     )
-    acted_at: datetime = Field(description="行为发生时间（created_at）")
+    acted_at: UnixTime = Field(description="行为发生时间（秒级时间戳）")
+    target_resource: SpaceTimelineResource | None = Field(
+        default=None,
+        description="内层资源卡：dynamic 带完整 moment；非 dynamic 带 name/cover/jump_url；follow 为 null",
+    )
 
 
 @auto_str
@@ -239,7 +275,7 @@ class SpaceViewHistoryItem(SQLModel):
         default=None,
         description="资源标题/正文摘要（当前仅 dynamic 回查，其余 bizType 待 P3）",
     )
-    last_view_at: datetime = Field(description="最后访问时间")
+    last_view_at: UnixTime = Field(description="最后访问时间（秒级时间戳）")
     view_count: int = Field(default=1, description="该用户对该资源的累计浏览次数")
 
 
@@ -255,11 +291,11 @@ class SpaceViewHistoryResp(SQLModel):
 
 
 __all__ = [
-    "SpacePrivacyFlags",
-    "SpacePrivacyUpdateReq",
     "SpaceFollowStat",
     "SpaceInfoResp",
     "SpaceOfficial",
+    "SpacePrivacyFlags",
+    "SpacePrivacyUpdateReq",
     "SpaceTimelineItem",
     "SpaceTimelineResp",
     "SpaceUpStat",

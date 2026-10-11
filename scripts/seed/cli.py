@@ -19,19 +19,19 @@ from .full import seed
 
 
 def _run_full_args(args: argparse.Namespace) -> dict:
-    return dict(
-        base_url=args.base_url,
-        admin_mid=args.admin_mid,
-        count=args.full_count,
-        users_n=args.full_users,
-        moment_concurrency=args.full_concurrency,
-        skip_moment=False,
-        skip_comment=False,
-        skip_interact=False,
-        skip_message=False,
-        skip_follow=args.skip_follow,
-        crawler_base_url=args.crawler_base_url,
-    )
+    return {
+        "base_url": args.base_url,
+        "admin_mid": args.admin_mid,
+        "count": args.full_count,
+        "users_n": args.full_users,
+        "moment_concurrency": args.full_concurrency,
+        "skip_moment": False,
+        "skip_comment": False,
+        "skip_interact": False,
+        "skip_message": False,
+        "skip_follow": args.skip_follow,
+        "crawler_base_url": args.crawler_base_url,
+    }
 
 
 def _bulk_namespace(args: argparse.Namespace) -> argparse.Namespace:
@@ -74,7 +74,7 @@ async def _run_bulk(args: argparse.Namespace) -> None:
         await run_bulk(_bulk_namespace(args))
     except KeyboardInterrupt:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # 大数据灌数失败（biliopusdb/连接问题）软降级，不阻断整体
         logger.error(f"大数据灌数阶段失败（已跳过）: {e}")
 

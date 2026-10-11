@@ -35,9 +35,9 @@ from faststream.rabbit.message import RabbitMessage
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
 # 既有循环导入），再按需 import app.mq.*。
-import app.main  # noqa: F401
+import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
 from app.core.broker import broker, message_exchange
-from app.mq.rpc_geoip import rpc_resolve_ip_region  # noqa: F401  触发注册 + 供守卫定位
+from app.mq.rpc_geoip import rpc_resolve_ip_region
 from app.services.infrastructure.geo_ip import GeoIpResult
 
 # 真实路由键（与各 RPC 模块注册时用的完全一致）

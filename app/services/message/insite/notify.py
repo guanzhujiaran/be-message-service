@@ -31,7 +31,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import new_session
 from app.models.db import NotifyCursor, NotifyMessage, NotifyState, UserMessageSetting
-from app.services.message.insite.setting import SettingService
 from app.models.enums import (
     NotifyLevelEnum,
     NotifyStatusEnum,
@@ -44,6 +43,7 @@ from app.models.schemas import (
     NotifyPullResp,
     NotifyUpdateReq,
 )
+from app.services.message.insite.setting import SettingService
 
 
 def _is_vip(user: AuthInfo) -> bool:
@@ -254,12 +254,15 @@ class NotifyService:
                     )
                 )
                 await s.commit()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"向用户 {mid} 发送系统通知失败（弱依赖，已忽略）: {e}")
 
     @staticmethod
-    async def send_welcome(mid: int, nickname: str) -> None:
+    async def send_welcome(mid: int) -> None:
         """向新注册用户发送欢迎注册系统通知（幂等，弱依赖）。
+
+        标题与正文统一使用用户 uid 而非昵称：注册初始化阶段账号还没有 nickname，
+        用昵称会出现「欢迎加入，bili_xxx」这类占位名。
 
         由两条注册通道共用：RPC `create_user`（be-gateway 后台注册）与
         Casdoor 登录回调 `create_local_user_from_casdoor`（OAuth 首次注册），
@@ -275,9 +278,9 @@ class NotifyService:
                     creator_mid=0,
                     respect_setting=False,
                     req=NotifyCreateReq(
-                        title=f"欢迎加入，{nickname}！",
+                        title=f"欢迎加入，uid={mid}！",
                         content=(
-                            f"Hi，{nickname}！欢迎加入 BilibiliExplosion，"
+                            f"Hi，uid={mid}！欢迎加入 BilibiliExplosion，"
                             f"你的账号（uid={mid}）已创建成功。\n"
                             "在这里你可以发布动态、关注感兴趣的作者、参与评论互动，"
                             "快去发布第一条动态吧～"
@@ -288,7 +291,7 @@ class NotifyService:
                         publish_now=True,
                     ),
                 )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"向用户 {mid} 发送欢迎注册通知失败（弱依赖，已忽略）: {e}")
 
     @staticmethod

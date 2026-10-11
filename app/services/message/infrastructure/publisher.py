@@ -43,7 +43,7 @@ async def _publish(payload, routing_key: str, queue) -> bool:
             queue=queue,
         )
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"MQ 投递失败 routing_key={routing_key}: {e}")
         return False
 

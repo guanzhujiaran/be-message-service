@@ -75,4 +75,4 @@ async def send_audit_notice(
     )
 
 
-__all__ = ["send_audit_notice", "DEFAULT_REJECT_TITLE"]
+__all__ = ["DEFAULT_REJECT_TITLE", "send_audit_notice"]

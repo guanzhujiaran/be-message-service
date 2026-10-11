@@ -24,6 +24,8 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionBizTypeEnum
+from bili_common.models.report import ReportAuditStatusEnum
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -36,14 +38,16 @@ from app.models.db import (
     TResourceFeed,
     TResourceReport,
 )
-from bili_common.models import InteractionBizTypeEnum
-from bili_common.models.report import ReportAuditStatusEnum
 from app.models.enums import (
     MomentTypeEnum,
     MomentVisibleScopeEnum,
     ResourceAuditStatusEnum,
 )
 from app.models.schemas.moment import MomentTopicFeedResp
+
+# 装配管线复用 moment_feed（与综合页 / 空间 / 详情共用，避免重复实现与 N+1）
+# 注意：moment_feed 不反向依赖本模块，无环；直接顶部导入即可。
+from app.services.common.indexed import Indexed
 from app.services.moment.edgerank import TOPIC_FEED_PROFILE
 from app.services.moment.feed_engine import (
     AuthorQualitySignal,
@@ -52,12 +56,9 @@ from app.services.moment.feed_engine import (
     build_viewer_key,
     rank_feed,
 )
-
-# 装配管线复用 moment_feed（与综合页 / 空间 / 详情共用，避免重复实现与 N+1）
-# 注意：moment_feed 不反向依赖本模块，无环；直接顶部导入即可。
 from app.services.moment.moment_feed import (
-    _assemble_page,
     _FEED_PAGE_SIZE,
+    _assemble_page,
     _is_rich_content,
     _load_comment_subjects,
     _load_stats,
@@ -227,7 +228,7 @@ class TopicFeedService:
 
         cand_mids = {r.mid for r in feed_rows}
         # 2.47.0：映射为引擎通用信号 AuthorQualitySignal（引擎不再依赖动态专属表）
-        author_q: dict[int, AuthorQualitySignal] = {}
+        author_q: Indexed[AuthorQualitySignal] = Indexed.empty()
         if cand_mids:
             aq_rows = (
                 await session.exec(
@@ -236,17 +237,20 @@ class TopicFeedService:
                     )
                 )
             ).all()
-            author_q = {
-                int(r.mid): AuthorQualitySignal(
-                    avg_engagement=r.avgEngagement,
-                    recent_publish=r.recentPublishCount,
-                    fans=r.fansCount,
-                    level=float(r.currentLevel),
+            author_q = Indexed.of(
+                (
+                    int(r.mid),
+                    AuthorQualitySignal(
+                        avg_engagement=r.avgEngagement,
+                        recent_publish=r.recentPublishCount,
+                        fans=r.fansCount,
+                        level=float(r.currentLevel),
+                    ),
                 )
                 for r in aq_rows
-            }
+            )
 
-        report_counts: dict[int, ResourceReportCount] = {}
+        report_counts: Indexed[ResourceReportCount] = Indexed.empty()
         if cand_ids:
             rp_rows = (
                 await session.exec(
@@ -261,10 +265,13 @@ class TopicFeedService:
                     .group_by(col(TResourceReport.bizId))
                 )
             ).all()
-            report_counts = {
-                int(b): ResourceReportCount(biz_id=int(b), pending_count=int(c))
+            report_counts = Indexed.of(
+                (
+                    int(b),
+                    ResourceReportCount(biz_id=int(b), pending_count=int(c)),
+                )
                 for b, c in rp_rows
-            }
+            )
 
         candidates: list[FeedCandidate] = []
         for r in feed_rows:

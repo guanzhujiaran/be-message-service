@@ -33,7 +33,9 @@ class UserDeactivation(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     mid: int = Field(sa_type=BIGINT, index=True, nullable=False, description="用户 mid")
     # Casdoor 用户名：到期物理删除本地主体后仍需据此构造 Casdoor User 调 delete-user
-    user_name: str | None = Field(default=None, max_length=128, description="Casdoor name")
+    user_name: str | None = Field(
+        default=None, max_length=128, description="Casdoor name"
+    )
     # cooling=冷静期可撤销；pending_casdoor=本地已删、Casdoor 待删（补偿态）
     status: str = Field(
         default="cooling",
@@ -54,7 +56,9 @@ class UserDeactivation(TimestampMixin, table=True):
     casdoor_delete_error: str | None = Field(
         default=None, max_length=512, description="最近一次 Casdoor 删除失败原因"
     )
-    retry_count: int = Field(default=0, nullable=False, description="Casdoor 删除重试次数")
+    retry_count: int = Field(
+        default=0, nullable=False, description="Casdoor 删除重试次数"
+    )
 
 
 __all__ = ["SQLModel", "UserDeactivation"]

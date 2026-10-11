@@ -57,7 +57,7 @@ def download_one(client: httpx.Client, name: str, sha: str, out: Path) -> None:
             raise RuntimeError(f"意外响应 encoding: {data.get('encoding')}")
         raw = "".join(data["content"].split())
         dest.write_bytes(base64.b64decode(raw))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         dest.unlink(missing_ok=True)
         raise RuntimeError(f"{name} 下载失败: {e}") from e
 

@@ -36,7 +36,7 @@ async def _seed_topics(
                     tid = await client.create_topic(admin_mid, name)
                     existing[name] = int(tid)
                     tid = int(tid)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     # 已存在（或响应丢失但后端已建）：回查全量复用
                     existing.update(await _load_existing_topics())
                     if name in existing:
@@ -47,7 +47,7 @@ async def _seed_topics(
             # 2) 确保审核通过：复用的 auditing 话题 / 新建话题都需 normal，否则动态关联会 400
             try:
                 await client.approve_topic(tid)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass  # 已是 normal（或状态异常），忽略
             return tid
 
@@ -61,6 +61,6 @@ async def _seed_topics(
     ):
         try:
             results.append(await f)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     return [t for t in results if isinstance(t, int)]

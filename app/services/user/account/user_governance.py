@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from bili_common.deps.permissions import BizPermOp
+from bili_common.models.interaction import InteractionBizTypeEnum
 from sqlalchemy import func, or_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -17,8 +19,6 @@ from app.models.db.ban_tbl import UserBan
 from app.models.enums import BanDurationTypeEnum, BanServiceEnum, BanStatusEnum
 from app.models.schemas.ban import BanItem, BanServiceStatus, BanStatusResp
 from app.services.user.account.base import PptrUser, _service_like
-from bili_common.deps.permissions import BizPermOp
-from bili_common.models.interaction import InteractionBizTypeEnum
 
 
 class UserGovernanceUser(PptrUser):

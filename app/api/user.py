@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import MsgAdminUser
 from app.models import StandardResponse
-from app.models.str_int import StrInt
 from app.models.schemas import UserBriefOut
+from app.models.str_int import StrInt
 from app.services.user.account import PptrUser
 
 router = APIRouter(prefix="/api/v1/message/admin/user", tags=["message-admin-user"])
@@ -45,7 +45,8 @@ async def batch_user_info(
     mids: Annotated[
         list[StrInt],
         Query(description="要查询的用户 mid 列表，可重复（StrInt 兼容前端 str 传参）"),
-    ] = [],
+        # FastAPI / pydantic 会对默认值做 smart copy，不会跨请求共享同一个 list
+    ] = [],  # noqa: B006
 ) -> StandardResponse[list[UserBriefOut]]:
     """按 mid 批量回查用户展示信息（昵称 / 头像 / 等级 / 大会员 / 性别 / 签名）。
 
@@ -56,8 +57,8 @@ async def batch_user_info(
     会带出脱敏邮箱 / 经验 / 大会员到期 / 角色等私域字段；同一模型在用户侧接口
     下这些字段由序列化期自动剥离。
     """
-    data = await PptrUser.get_many(mids)
-    return StandardResponse(data=list(data.values()))
+    briefs = await PptrUser.get_many(mids)
+    return StandardResponse(data=[slot.brief for slot in briefs])
 
 
 @router.get(

@@ -12,13 +12,13 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from sqlalchemy import update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.exceptions import CommentNotInteractiveException
 from app.models.db import CommentAction, CommentContent, CommentIndex
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import CommentActionEnum
 from app.models.schemas import CommentActionResp, EventReportReq
 from app.services.comment import VISIBLE_STATES

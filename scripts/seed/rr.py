@@ -53,7 +53,7 @@ def _sample(distribution: Sequence[tuple[int, float]]) -> int:
     items: list[tuple[int, int]] = []
     total = 0
     for value, weight in distribution:
-        w = int(round(weight * scale))
+        w = round(weight * scale)
         total += w
         items.append((value, w))
     bucket = _rr.pick(range(total))

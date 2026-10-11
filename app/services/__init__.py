@@ -14,7 +14,6 @@
 """
 
 import app.services.message.infrastructure.publisher as publisher
-from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm import (
     DmInbox,
     DmSessionObject,
@@ -23,6 +22,7 @@ from app.services.message.dm.dm import (
     retry_dead_letters,
 )
 from app.services.message.dm.dm_content import DmContentService
+from app.services.message.insite.activity import ActivityService
 from app.services.message.insite.events import build_dedup_key
 from app.services.message.insite.notify import NotifyService
 from app.services.message.insite.setting import SettingService

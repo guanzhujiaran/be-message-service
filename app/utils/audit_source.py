@@ -17,8 +17,9 @@
 前端路由改名 / 改路径只需同步 `FrontendRouteEnum`，不必动业务代码。
 """
 
-from app.models.biz_type import comment_type_label, comment_type_to_biz_type
 from bili_common.models import InteractionBizTypeEnum
+
+from app.models.biz_type import comment_type_label, comment_type_to_biz_type
 from app.models.enums import FrontendRouteEnum
 from app.models.schemas.audit import AuditSourceInfo
 from app.utils.route_target import build_route_target

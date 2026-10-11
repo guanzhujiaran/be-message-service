@@ -1,7 +1,7 @@
 """收藏夹管理操作（2.47.0 对象化；收藏的「文件夹」聚合操作集）。
 
 收藏夹是**用户维度**（不绑定具体 `biz_type`）的容器，管理操作（创建 / 更新 / 删除 /
-列表 / 收藏明细 / 主页可见性设置 / 他人公开读）从原静态 `FavoriteService` 迁移为
+列表 / 收藏明细 / 他人公开读）从原静态 `FavoriteService` 迁移为
 类对象：接口层直接实例化 `FavoriteFolderAction(session, actor_mid)` 后调用方法。
 
 收藏夹业务约束（计划书 §4.2）：
@@ -14,10 +14,11 @@
   同一资源不重复收藏；同一资源可被收藏到多个不同夹。
 - **favoriteCount 语义（按用户去重）**：用户首次收藏某资源（其它夹也未曾收藏过）才
   `+1`；仅当该用户在所有夹都不再收藏该资源时才 `-1`。
-- **主页收藏可见性**：`TUserFavoriteSetting` 每用户一行，`showFavorites` 默认 1。
+- **收藏夹可见性**：`TFavoriteFolder.is_public` 逐夹控制（默认公开），他人视角只读公开夹；
+  2026-10-08 前的全局开关 `TUserFavoriteSetting` 已删除。
 """
 
-from loguru import logger
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy import func
 from sqlmodel import col, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -27,16 +28,14 @@ from app.models.db import (
     TFavoriteFolder,
     TFolderCoverAudit,
     TResourceFavorite,
-    TUserFavoriteSetting,
 )
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
-from app.services.user.avatar_check import verify_avatar_url
-from app.services.user.folder_cover_audit import FolderCoverAuditService
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
 from app.services.moment.moment_stat import MomentStatService
+from app.services.user.avatar_check import verify_avatar_url
+from app.services.user.folder_cover_audit import FolderCoverAuditService
 
 
 class FavoriteFolderAction:
@@ -105,6 +104,7 @@ class FavoriteFolderAction:
         name: str,
         description: str | None = None,
         cover_url: str | None = None,
+        is_public: bool = True,
     ) -> tuple[int, str | None]:
         """创建收藏夹，返回 (folder_id, cover_audit_status)。
 
@@ -138,6 +138,7 @@ class FavoriteFolderAction:
                 name=final_name,
                 description=description,
                 is_default=0,
+                is_public=bool(is_public),
             )
         )
         if cover_url:
@@ -160,6 +161,7 @@ class FavoriteFolderAction:
         name: str | None = None,
         description: str | None = None,
         cover_url: str | None = None,
+        is_public: bool | None = None,
     ) -> str | None:
         """更新收藏夹（名称/描述/封面；仅本人可改）。返回 cover_audit_status。
 
@@ -195,6 +197,8 @@ class FavoriteFolderAction:
                 if desc_res.rejected:
                     raise ValueError(f"收藏夹描述未通过审核：{desc_res.reason}")
             row.description = description or None
+        if is_public is not None:
+            row.is_public = bool(is_public)
         cover_audit_status: str | None = None
         if cover_url:
             ok, reason = await verify_avatar_url(cover_url, label="封面")
@@ -279,9 +283,15 @@ class FavoriteFolderAction:
                 )
         await session.commit()
 
-    async def list_folders(self) -> list[dict]:
-        """列出我的收藏夹（含各夹收藏数，倒序；每项含 coverAuditStatus）。"""
+    async def list_folders(self, only_public: bool = False) -> list[dict]:
+        """列出我的收藏夹（含各夹收藏数，倒序；每项含 coverAuditStatus）。
+
+        `only_public=True` 时只返回**公开**的收藏夹（他人视角用；本人视角传 False 看全部）。
+        """
         session = self.session
+        conditions = [col(TFavoriteFolder.mid) == self.actor_mid]
+        if only_public:
+            conditions.append(col(TFavoriteFolder.is_public).is_(True))
         rows = (
             await session.exec(
                 select(
@@ -292,7 +302,7 @@ class FavoriteFolderAction:
                     TResourceFavorite,
                     col(TResourceFavorite.folderId) == col(TFavoriteFolder.folder_id),
                 )
-                .where(col(TFavoriteFolder.mid) == self.actor_mid)
+                .where(*conditions)
                 .group_by(TFavoriteFolder.folder_id)
                 .order_by(
                     col(TFavoriteFolder.is_default).desc(),
@@ -322,6 +332,7 @@ class FavoriteFolderAction:
                 "description": row[0].description,
                 "coverUrl": row[0].cover_url,
                 "isDefault": bool(row[0].is_default),
+                "isPublic": bool(row[0].is_public),
                 "favoriteCount": int(row[1] or 0),
                 "coverAuditStatus": (
                     "pending" if row[0].folder_id in pending_folder_ids else None
@@ -371,7 +382,7 @@ class FavoriteFolderAction:
         return int(total), items
 
     async def folders_containing(
-        self, biz_type: InteractionBizTypeEnum | str, biz_id: int
+        self, biz_type: InteractionBizTypeEnum | str, biz_id: str
     ) -> list[str]:
         """某资源被当前用户收藏在哪些收藏夹（返回 folder_id 字符串列表）。"""
         bt = InteractionBizTypeEnum.from_text(biz_type)
@@ -386,68 +397,31 @@ class FavoriteFolderAction:
         ).all()
         return [str(x) for x in rows]
 
-    # ==================== 主页收藏可见性设置 ====================
-
-    async def get_setting(self) -> bool:
-        """获取主页是否显示收藏（默认 True）。"""
-        row = (
-            await self.session.exec(
-                select(TUserFavoriteSetting).where(
-                    col(TUserFavoriteSetting.mid) == self.actor_mid
-                )
-            )
-        ).one_or_none()
-        return bool(row.showFavorites) if row else True
-
-    async def set_setting(self, show_favorites: bool) -> bool:
-        """设置主页是否显示收藏（get_or_create）。返回设置后值。"""
-        session = self.session
-        row = (
-            await session.exec(
-                select(TUserFavoriteSetting).where(
-                    col(TUserFavoriteSetting.mid) == self.actor_mid
-                )
-            )
-        ).one_or_none()
-        if row is None:
-            session.add(
-                TUserFavoriteSetting(
-                    mid=self.actor_mid, showFavorites=1 if show_favorites else 0
-                )
-            )
-        else:
-            row.showFavorites = 1 if show_favorites else 0
-            session.add(row)
-        await session.commit()
-        return show_favorites
-
     # ==================== 他人主页公开读（P4-T11）====================
 
-    async def list_public_folders(self, target_mid: int) -> list[dict] | None:
-        """访客查看某用户主页公开的收藏夹列表（含各夹收藏数，倒序）。
+    async def list_public_folders(self, target_mid: int) -> list[dict]:
+        """访客查看某用户主页**公开的**收藏夹列表（含各夹收藏数，倒序）。
 
-        该用户 `showFavorites=0` 时不公开，返回 None（前端隐藏收藏 tab）。
+        2026-10-08 起不再有全局开关：只返回 `is_public=1` 的夹；
+        一个公开夹都没有时返回空数组（前端据此隐藏收藏 tab）。
         """
-        if not await self.is_public(target_mid):
-            return None
-        return await self._list_folders_of(target_mid)
+        return await self._list_folders_of(target_mid, only_public=True)
 
     async def list_public_items(
         self, target_mid: int, folder_id: int, page: int, page_size: int
     ) -> tuple[int, list[dict]] | None:
-        """访客查看某用户某收藏夹下的资源列表（分页）。
+        """访客查看某用户某**公开**收藏夹下的资源列表（分页）。
 
-        校验：该收藏夹属于该用户，且该用户 `showFavorites=1`（公开）。
-        不公开或夹不属于该用户时返回 None。
+        校验：该收藏夹属于该用户且 `is_public=1`；夹不存在或未公开时返回 None
+        （由路由层转成空列表）。
         """
         session = self.session
-        if not await self.is_public(target_mid):
-            return None
         folder = (
             await session.exec(
                 select(TFavoriteFolder.folder_id).where(
                     col(TFavoriteFolder.folder_id) == folder_id,
                     col(TFavoriteFolder.mid) == target_mid,
+                    col(TFavoriteFolder.is_public).is_(True),
                 )
             )
         ).first()
@@ -480,23 +454,14 @@ class FavoriteFolderAction:
 
     # ==================== 内部辅助 ====================
 
-    async def is_public(self, target_mid: int) -> bool:
-        """该用户主页是否公开展示收藏（showFavorites=1；缺省默认公开）。"""
-        row = (
-            await self.session.exec(
-                select(TUserFavoriteSetting).where(
-                    col(TUserFavoriteSetting.mid) == target_mid
-                )
-            )
-        ).one_or_none()
-        return bool(row.showFavorites) if row else True
-
-    async def _list_folders_of(self, target_mid: int) -> list[dict]:
+    async def _list_folders_of(
+        self, target_mid: int, only_public: bool = False
+    ) -> list[dict]:
         """列出指定用户（含本人）的收藏夹（复用 list_folders 查询，替换持有者 mid）。"""
         saved = self.actor_mid
         self.actor_mid = int(target_mid)
         try:
-            return await self.list_folders()
+            return await self.list_folders(only_public=only_public)
         finally:
             self.actor_mid = saved
 

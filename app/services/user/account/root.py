@@ -21,14 +21,12 @@ class RootAdminUser(CommentAdminUser, DmAdminUser, UserGovernanceUser):
         **DmAdminUser.ROLE_BIZ_PERMS,
         **UserGovernanceUser.ROLE_BIZ_PERMS,
         # 全部审核域全权（与 bili_common.deps.permissions.AUDIT_BIZ_KEYS 对齐）
-        **{
-            biz: ROOT_BIZ_PERM
-            for biz in (
-                CommentAdminUser.ROLE_BIZ_PERMS.keys()
-                | DmAdminUser.ROLE_BIZ_PERMS.keys()
-                | UserGovernanceUser.ROLE_BIZ_PERMS.keys()
-            )
-        },
+        **dict.fromkeys(
+            CommentAdminUser.ROLE_BIZ_PERMS.keys()
+            | DmAdminUser.ROLE_BIZ_PERMS.keys()
+            | UserGovernanceUser.ROLE_BIZ_PERMS.keys(),
+            ROOT_BIZ_PERM,
+        ),
     }
 
 

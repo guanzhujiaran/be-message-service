@@ -9,13 +9,13 @@ from __future__ import annotations
 from app.services.user.account.base import PptrUser
 from app.services.user.account.comment_admin import CommentAdminUser
 from app.services.user.account.dm_admin import DmAdminUser
-from app.services.user.account.user_governance import UserGovernanceUser
 from app.services.user.account.root import RootAdminUser
+from app.services.user.account.user_governance import UserGovernanceUser
 
 __all__ = [
-    "PptrUser",
     "CommentAdminUser",
     "DmAdminUser",
-    "UserGovernanceUser",
+    "PptrUser",
     "RootAdminUser",
+    "UserGovernanceUser",
 ]

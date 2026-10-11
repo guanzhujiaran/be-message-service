@@ -51,7 +51,7 @@ async def count_created_today(
         本自然日内该作者创建的记录条数（不含软删 / 审核等状态过滤）。
     """
     if created_column is None:
-        created_column = getattr(model, "created_at")
+        created_column = model.created_at
     start, end = _today_window()
     stmt = (
         select(func.count())

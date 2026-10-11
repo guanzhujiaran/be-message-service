@@ -40,14 +40,14 @@ from app.models.schemas import (
     DmTopResp,
 )
 from app.models.str_int import StrInt
-from app.services.message.insite.activity import ActivityService
-from app.services.user.account import DmAdminUser
 from app.services.message.dm.dm import (
     DmDailySendLimitError,
     DmInbox,
     DmSessionObject,
     DmStrangerSendLimitError,
 )
+from app.services.message.insite.activity import ActivityService
+from app.services.user.account import DmAdminUser
 
 router = APIRouter(prefix="/api/v1/message/dm", tags=["message-dm"])
 
@@ -91,7 +91,7 @@ async def send_dm(
         return StandardResponse(code=int(e.code), msg=str(e), data=None)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception(f"发送私信失败: {e}")
         return StandardResponse(code=500, msg=f"发送私信失败: {e}")
     return StandardResponse(data=data)

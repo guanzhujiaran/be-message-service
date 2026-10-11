@@ -9,14 +9,13 @@
   （不抛错，保持举报审核流程可走通）。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import col, select
 
 from app.core.database import new_pptr_session
 from app.models.db.report_tbl import TUserReport
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.pptr_db import PptrUserInfo
-from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base import InteractionAclScopeEnum
 from app.services.interaction_actions.base_biz import BaseBiz, biz_action
 
@@ -65,7 +64,7 @@ class UserBiz(BaseBiz):
                         )
                     )
                 ).first()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None, None
         if row is None:
             return None, None

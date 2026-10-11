@@ -15,6 +15,7 @@ seed 数据相对当前时间秒级偏移，保证候选集只含本测试种子
 import datetime
 
 import pytest
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -24,19 +25,17 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import (
+    TInteractionStat,
     TMoment,
+    TMomentTopic,
     TResourceDislike,
+    TResourceFeed,
     TResourceLike,
     TResourceReport,
-    TMomentTopic,
-    TInteractionStat,
-    TResourceFeed,
 )
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    ResourceAuditStatusEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.services.moment.edgerank import (
     FEED_PROFILE,
@@ -52,11 +51,13 @@ from app.services.moment.feed_engine import (
     PersonalSignals,
     apply_dislike_penalty,
     build_extra_from_stat,
+    mmr_rerank,
+    thompson_exploration_bonus,
 )
-from app.services.user.follow import FollowService
 from app.services.moment.moment_feed import MomentFeedService
-from app.services.moment.topic_feed import TopicFeedService
 from app.services.moment.moment_topic import MomentTopicService
+from app.services.moment.topic_feed import TopicFeedService
+from app.services.user.follow import FollowService
 
 # 独立区间，避免与其它模块用例冲突
 E_MID = 920101
@@ -67,7 +68,7 @@ E_TOPIC_B = 9200102
 # 相对当前时间（recommend 候选窗口收窄后只覆盖本测试种子）
 # 时间基准 datetime.now()（本地 CST）——与业务写入/灌数数据一致，避免 UTC 字面值
 # 比 CST 小 8h 导致 seed 动态在库里相对灌数数据看起来更旧而被挤出候选集
-_BASE = datetime.datetime.now()  # noqa: DTZ005
+_BASE = datetime.datetime.now()
 
 _MOMENT_WEIGHT_FIELDS = ("like", "comment", "repost", "view", "favorite", "share")
 
@@ -186,6 +187,22 @@ async def _bind_engine_per_test():
     await pptr_engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_recall(monkeypatch):
+    """隔离候选集与排序扰动，保证本模块「精确顺序」断言可复现（2.65.0）。
+
+    2.65.0 起召回不再被单一时间窗口锁死（互动 top 路 / 兜底路可跨窗口），重排层又
+    引入 Thompson Sampling 采样与 MMR 打散，二者都会把真实库的存量动态拉进候选、
+    或给分数注入波动；本模块用例靠「窗口收窄到 6 分钟」隔离数据，故在此统一：
+    收窄互动 top 路、关闭兜底路、关闭 TS 与 MMR（退化为纯精排顺序）。
+    需要验证新行为的用例可在函数内再次 ``monkeypatch.setattr`` 覆盖。
+    """
+    monkeypatch.setattr(settings, "edgerank_recall_hot_top_window_hours", 0.1)
+    monkeypatch.setattr(settings, "edgerank_recall_fallback_enabled", False)
+    monkeypatch.setattr(settings, "edgerank_ts_enabled", False)
+    monkeypatch.setattr(settings, "edgerank_mmr_enabled", False)
+
+
 # ==================== 纯函数（不依赖 DB）====================
 
 
@@ -201,7 +218,7 @@ def test_decay_monotonic():
 
 def test_compute_moment_score_weight_and_decay():
     """权重与时间衰减共同决定排序：同时间高互动 > 低互动；同互动新 > 旧。"""
-    now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0)
     hot = _stat(like=100, comment=50, repost=10, view=999, favorite=5)
     cold = _stat(like=2, view=3)
     assert compute_moment_score(hot, now, FEED_PROFILE, now=now) > compute_moment_score(
@@ -219,7 +236,7 @@ def test_compute_moment_score_weight_and_decay():
 
 def test_compute_moment_score_zero_interaction():
     """零互动退化为最小基数 × decay，低于任意互动内容。"""
-    now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0)
     s_zero = compute_moment_score(_stat(), now, FEED_PROFILE, now=now)
     s_one = compute_moment_score(_stat(like=1), now, FEED_PROFILE, now=now)
     assert s_zero < s_one
@@ -228,7 +245,7 @@ def test_compute_moment_score_zero_interaction():
 
 def test_compute_moment_score_disabled_fallback():
     """edgerank_enabled=False：返回时间倒序等价分（时间主导，与互动无关）。"""
-    now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0)
     s_new = compute_moment_score(
         _stat(like=1), now, FEED_PROFILE, now=now, enabled=False
     )
@@ -244,7 +261,7 @@ def test_compute_moment_score_disabled_fallback():
 
 def test_compute_topic_score_log_and_hot():
     """话题分：log 压缩 + isHot 加权 + 时间衰减。"""
-    now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0)
 
     class FakeTopic:
         dynCount = 1000
@@ -279,7 +296,7 @@ def test_build_anon_profile_deterministic():
 
 def test_compute_topic_score_disabled_fallback():
     """话题降级：返回时间等价分（新话题分更大）。"""
-    now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0)
 
     class FakeTopic:
         def __init__(self, pub_time):
@@ -495,7 +512,7 @@ async def test_comprehensive_feed_recommend_personalized_follow(monkeypatch):
             me = await MomentFeedService.comprehensive_feed(
                 s, page_size=2, sort="recommend", viewer_mid=viewer
             )
-            assert [it.dynId for it in me.items][0] == cold
+            assert next(it.dynId for it in me.items) == cold
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM msg_user_follow WHERE mid = {viewer}"))
@@ -506,8 +523,8 @@ async def test_comprehensive_feed_anon_randomized_stable(monkeypatch):
     """未登录匿名随机：同 uniq_id 两次请求排序稳定（不因随机每次乱跳）。"""
     monkeypatch.setattr(settings, "edgerank_candidate_window_hours", 0.1)
     async with new_session() as s:
-        a = await _seed_moment(s, E_MID, seconds_ago=60, like=1)
-        b = await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
+        await _seed_moment(s, E_MID, seconds_ago=60, like=1)
+        await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
         await s.commit()
     async with new_session() as s:
         r1 = await MomentFeedService.comprehensive_feed(
@@ -525,13 +542,13 @@ async def test_comprehensive_feed_anon_randomize_disabled(monkeypatch):
     monkeypatch.setattr(settings, "edgerank_anon_randomize_enabled", False)
     async with new_session() as s:
         a = await _seed_moment(s, E_MID, seconds_ago=60, like=2)
-        b = await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
+        await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
         await s.commit()
     async with new_session() as s:
         r = await MomentFeedService.comprehensive_feed(
             s, page_size=2, sort="recommend", viewer_mid=None, uniq_id="anon-y"
         )
-        assert [it.dynId for it in r.items][0] == a
+        assert next(it.dynId for it in r.items) == a
 
 
 async def test_comprehensive_feed_report_penalty(monkeypatch):
@@ -623,7 +640,7 @@ async def test_comprehensive_feed_personal_dislike_penalty(monkeypatch):
             other_feed = await MomentFeedService.comprehensive_feed(
                 s, page_size=2, sort="recommend", viewer_mid=other
             )
-            assert set(it.dynId for it in other_feed.items) == {a, b}
+            assert {it.dynId for it in other_feed.items} == {a, b}
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM TResourceDislike WHERE mid = {viewer}"))
@@ -668,7 +685,7 @@ async def test_comprehensive_feed_personal_dislike_exclude(monkeypatch):
 
 def test_compute_moment_score_author_fans_level_and_report():
     """2.37.0：作者粉丝/等级加权 + 举报数降权进入打分。"""
-    now = datetime.datetime(2026, 8, 21, 12, 0, 0)  # noqa: DTZ001
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0)
     base = _stat(like=1, view=100)
     s0 = compute_moment_score(base, now, FEED_PROFILE, now=now, extra=EdgeRankExtra())
     s1 = compute_moment_score(
@@ -711,14 +728,14 @@ async def test_comprehensive_feed_recommend_personalized_liked_author(monkeypatc
         )
         # 候选：a 作者被点赞过（+1.5）、b 作者未互动（零互动 base 0.1）
         a = await _seed_moment(s, E_MID, seconds_ago=60, like=0)
-        b = await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
+        await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
         await s.commit()
     try:
         async with new_session() as s:
             me = await MomentFeedService.comprehensive_feed(
                 s, page_size=2, sort="recommend", viewer_mid=viewer
             )
-            assert [it.dynId for it in me.items][0] == a
+            assert next(it.dynId for it in me.items) == a
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM TResourceLike WHERE mid = {viewer}"))
@@ -732,7 +749,7 @@ async def test_comprehensive_feed_recommend_personalized_disabled(monkeypatch):
     viewer = 990102
     async with new_session() as s:
         hot = await _seed_moment(s, E_MID, seconds_ago=60, like=2)
-        cold = await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
+        await _seed_moment(s, E_MID2, seconds_ago=60, like=0)
         await FollowService.follow(s, viewer, E_MID2)
         await s.commit()
     try:
@@ -740,7 +757,7 @@ async def test_comprehensive_feed_recommend_personalized_disabled(monkeypatch):
             me = await MomentFeedService.comprehensive_feed(
                 s, page_size=2, sort="recommend", viewer_mid=viewer
             )
-            assert [it.dynId for it in me.items][0] == hot  # 关注加分不生效
+            assert next(it.dynId for it in me.items) == hot  # 关注加分不生效
     finally:
         async with new_session() as s:
             await s.exec(text(f"DELETE FROM msg_user_follow WHERE mid = {viewer}"))
@@ -827,7 +844,7 @@ def test_build_extra_from_stat_uses_all_interaction_fields():
     """
     # favorite/share/coin 各 +1：应显著抬升 engagement
     s1 = _stat(like=2, favorite=100, share=50, coin=10, view=1)
-    eng1, exp1, dr1 = build_extra_from_stat(s1)
+    eng1, exp1, _dr1 = build_extra_from_stat(s1)
     s2 = _stat(like=2, view=1)  # 仅点赞，正向互动少
     eng2, exp2, _ = build_extra_from_stat(s2)
     assert eng1 > eng2, (eng1, eng2)
@@ -883,4 +900,114 @@ async def test_comprehensive_feed_impression_dedup_no_repeat():
             await s.exec(
                 text(f"DELETE FROM TFeedImpression WHERE viewerKey='mid:{E_MID2}'")
             )
+            await s.commit()
+
+
+# ==================== 2.65.0：重排层（Thompson Sampling + MMR）====================
+
+
+def test_thompson_exploration_bonus_zero_exposure_is_zero(monkeypatch):
+    """零曝光内容不参与探索：没有后验（θ 退化成先验 U(0,1)），避免纯噪声盖掉排序。"""
+    monkeypatch.setattr(settings, "edgerank_ts_enabled", True)
+    # pos=neg=0（既没互动也没曝光）
+    assert thompson_exploration_bonus(_stat(), biz_id=1, base_score=5.0) == 0.0
+    # 内容分 <= 0（已沉底 / 被惩罚）不参与探索
+    assert (
+        thompson_exploration_bonus(_stat(like=3, view=10), biz_id=1, base_score=0)
+        == 0.0
+    )
+    # 开关关闭 → 恒 0
+    monkeypatch.setattr(settings, "edgerank_ts_enabled", False)
+    assert (
+        thompson_exploration_bonus(_stat(like=3, view=10), biz_id=1, base_score=5.0)
+        == 0.0
+    )
+
+
+def test_thompson_exploration_bonus_cold_fluctuates_more_than_hot(monkeypatch):
+    """EE 核心：冷内容（数据少）采样波动大 → 探索；热内容（数据多）收敛 → 利用。
+
+    对同一 base_score，统计多条 bizId 的加分标准差：冷内容应显著大于热内容。
+    """
+    monkeypatch.setattr(settings, "edgerank_ts_enabled", True)
+    base = 10.0
+    cold = _stat(like=1, view=5)  # α=2, β=5 → 分布宽
+    hot = _stat(like=200, view=100000)  # 计数截断后仍远宽于 cold 的收敛度
+    spread = lambda s: (  # noqa: E731
+        max(
+            thompson_exploration_bonus(s, biz_id=i, base_score=base) for i in range(200)
+        )
+        - min(
+            thompson_exploration_bonus(s, biz_id=i, base_score=base) for i in range(200)
+        )
+    )
+    assert spread(cold) > spread(hot)
+
+
+def test_thompson_exploration_bonus_is_deterministic_per_biz(monkeypatch):
+    """同 (seed, bizId) 采样稳定：同一观众刷新页面不会看到排序乱跳。"""
+    monkeypatch.setattr(settings, "edgerank_ts_enabled", True)
+    s = _stat(like=4, view=20)
+    a = thompson_exploration_bonus(s, biz_id=777, base_score=3.0, seed="anon-1")
+    b = thompson_exploration_bonus(s, biz_id=777, base_score=3.0, seed="anon-1")
+    c = thompson_exploration_bonus(s, biz_id=777, base_score=3.0, seed="anon-2")
+    assert a == b
+    assert a != c  # 不同观众看到不同探索结果
+
+
+def test_mmr_rerank_diversifies_same_author(monkeypatch):
+    """MMR 打散：同作者高分连排时，插入不同作者的内容（λ 越小打散越强）。"""
+    monkeypatch.setattr(settings, "edgerank_mmr_enabled", True)
+    monkeypatch.setattr(settings, "edgerank_mmr_lambda", 0.5)
+    cand = [
+        FeedCandidate(biz_type="dynamic", biz_id=1, mid=100),
+        FeedCandidate(biz_type="dynamic", biz_id=2, mid=100),
+        FeedCandidate(biz_type="dynamic", biz_id=3, mid=200),
+        FeedCandidate(biz_type="dynamic", biz_id=4, mid=100),
+    ]
+    scores = {1: 4.0, 2: 3.0, 3: 2.0, 4: 1.0}
+    ordered = [c.biz_id for c in mmr_rerank(cand, scores, page_size=4)]
+    # 纯按分应为 [1,2,3,4]；打散后第 2 位让给不同作者的 3（同作者相似度被惩罚）
+    assert ordered[0] == 1
+    assert ordered[1] == 3
+    # 集合不变（只调顺序）
+    assert sorted(ordered) == [1, 2, 3, 4]
+    # λ=1（纯相关性）→ 退化为原顺序
+    monkeypatch.setattr(settings, "edgerank_mmr_lambda", 1.0)
+    assert [c.biz_id for c in mmr_rerank(cand, scores, page_size=4)] == [1, 2, 3, 4]
+
+
+async def test_comprehensive_feed_recall_fallback_when_window_empty(monkeypatch):
+    """2.65.0 兜底召回：时间窗口内无候选时放宽窗口补内容，Feed 不见底。
+
+    构造：把候选窗口收窄到 6 分钟，seed 一条 1 小时前（窗口外）的动态 →
+    纯时间窗口下候选为空；开启兜底路后该动态应被召回。
+    """
+    monkeypatch.setattr(settings, "edgerank_candidate_window_hours", 0.1)
+    monkeypatch.setattr(settings, "edgerank_recall_fallback_enabled", True)
+    monkeypatch.setattr(settings, "edgerank_recall_fallback_window_hours", 0)
+    # 高互动保证召回后能排进首页（库内还有其它模块的 seed 数据）
+    async with new_session() as s:
+        old_id = await _seed_moment(s, E_MID, seconds_ago=3600, like=9999)
+        await s.commit()
+    try:
+        async with new_session() as s:
+            # 兜底关闭（本模块 autouse 默认关闭）：窗口外内容召不回
+            monkeypatch.setattr(settings, "edgerank_recall_fallback_enabled", False)
+            empty = await MomentFeedService.comprehensive_feed(
+                s, page_size=20, sort="recommend", viewer_mid=None
+            )
+            assert old_id not in [it.dynId for it in empty.items]
+            # 兜底开启：窗口外内容被补进候选
+            monkeypatch.setattr(settings, "edgerank_recall_fallback_enabled", True)
+            filled = await MomentFeedService.comprehensive_feed(
+                s, page_size=20, sort="recommend", viewer_mid=None
+            )
+            assert old_id in [it.dynId for it in filled.items]
+    finally:
+        async with new_session() as s:
+            # 先删依赖行（TResourceFeed / TInteractionStat 的 bizId 依赖 dynId）
+            for tbl in ("TResourceFeed", "TInteractionStat"):
+                await s.exec(text(f"DELETE FROM {tbl} WHERE bizId = {old_id}"))
+            await s.exec(text(f"DELETE FROM TMoment WHERE dynId = {old_id}"))
             await s.commit()

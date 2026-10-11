@@ -42,7 +42,7 @@ async def handle_dm_content(payload: DmContentPayload, msg: RabbitMessage) -> No
             )
             try:
                 await session.commit()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # 唯一索引冲突说明死信已存在，忽略即可
                 await session.rollback()
                 logger.debug(f"死信写入跳过 msgkey={payload.msgkey}: {e}")

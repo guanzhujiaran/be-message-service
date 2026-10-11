@@ -15,12 +15,12 @@
 IP 一律按 D3 约定：服务端只存原始 v4/v6，出参在 read 服务层打码，本路由不处理展示。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Depends, Header, Query, Request
 
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import BanServiceEnum, CommentSortEnum
 from app.models.schemas import (
     CommentActionReq,
@@ -41,9 +41,9 @@ from app.models.schemas import (
     UserBriefOut,
 )
 from app.services.comment import CommentService
+from app.services.comment.comment import CommentDailyCreateLimitError
 from app.services.comment.comment_action import CommentActionService
 from app.services.comment.comment_read import CommentReadService
-from app.services.comment.comment import CommentDailyCreateLimitError
 from app.services.interaction_actions import get_biz
 from app.services.user.account import CommentAdminUser
 from app.utils.ip_mask import extract_client_ip
@@ -79,7 +79,7 @@ def resolve_ip_geo_pairs(
         if r is None:
             return None, None
         return r.poi, r.isp
-    except Exception:  # noqa: BLE001 - 解析失败静默降级
+    except Exception:
         return None, None
 
 
@@ -327,7 +327,7 @@ async def comment_latest(
     _viewer: int | None = Depends(resolve_optional_viewer),
     types: str | None = Query(
         default=None,
-        description="逗号分隔的资源类型文字（dynamic/lottery/rpa_action/rpa_workflow/rpa_browser/rpa_plugin），缺省返回全部可挂评论的类型",
+        description="逗号分隔的资源类型文字（dynamic/lottery/rpa_action/rpa_workflow/rpa_browser），缺省返回全部可挂评论的类型",
     ),
     limit: int = Query(
         default=5, ge=1, le=20, description="每个资源类型取最新根评论条数"
@@ -484,7 +484,7 @@ async def at_search(
     由序列化期按访问者身份自动剥离。
     """
     items = await CommentAdminUser.search_by_uname(keyword, limit=limit)
-    return StandardResponse(data=[b for b in items])
+    return StandardResponse(data=list(items))
 
 
 @router.post(

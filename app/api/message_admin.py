@@ -8,6 +8,7 @@
 from datetime import datetime
 
 from bili_common.models import AdminStatusResponse
+from bili_common.models.auto_str import auto_str
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -15,7 +16,6 @@ from app.core.database import SessionDep
 from app.dependencies import CurrentUser, RootUser
 from app.models import StandardResponse
 from app.models.str_int import StrInt
-from bili_common.models.auto_str import auto_str
 from app.services.admin.message_admin import MessageAdminService
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin"])

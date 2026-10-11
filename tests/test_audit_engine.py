@@ -9,7 +9,6 @@
 - 词库自带分类命中（levels.json 映射层级）；敏感词打码；reason 脱敏。
 """
 
-import os
 
 import pytest
 

@@ -336,8 +336,8 @@ async def test_deactivate_rejects_invalid_uid():
 
 async def test_publish_user_deactivate_calls_broker(monkeypatch):
     """publisher 投递注销消息（monkeypatch broker.publish，验证 payload / routing key）。"""
-    from app.core import broker as broker_mod
     import app.services.message.infrastructure.publisher as publisher
+    from app.core import broker as broker_mod
 
     calls: list[dict] = []
 

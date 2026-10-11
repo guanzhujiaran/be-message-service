@@ -24,7 +24,7 @@ from bili_common.rpc.notify import NOTIFY_RPC_CONTRACT
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
 # 既有循环导入），再按需 import app.mq.rpc_notify。
-import app.main  # noqa: F401
+import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
 from app.models.enums import NotifyLevelEnum, NotifyTargetTypeEnum
 from app.models.schemas import NotifyCreateReq
 from app.mq.rpc_notify import rpc_publish_notify

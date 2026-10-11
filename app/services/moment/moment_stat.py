@@ -17,11 +17,12 @@
 所有计数 UPDATE 必须由调用方在**同一事务**内与明细表操作一起提交（计划书 §6.3）。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TInteractionStat
-from bili_common.models import InteractionBizTypeEnum
+from app.services.common.indexed import Indexed
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
@@ -122,10 +123,14 @@ class MomentStatService:
     @staticmethod
     async def batch_read_stats(
         session: AsyncSession, moment_ids: list[int]
-    ) -> dict[int, TInteractionStat]:
-        """批量读取统计（直接读字段值，严禁 COUNT 聚合；返回 {bizId: TInteractionStat}）。"""
+    ) -> Indexed[TInteractionStat]:
+        """批量读取统计（直接读字段值，严禁 COUNT 聚合）。
+
+        返回 `Indexed[TInteractionStat]`（**不返回裸 dict**）：调用方用
+        `value_of(bizId)` 点查，未命中返回 None（= 该动态还没有计数行）。
+        """
         if not moment_ids:
-            return {}
+            return Indexed.empty()
         rows = (
             await session.exec(
                 select(TInteractionStat).where(
@@ -134,7 +139,7 @@ class MomentStatService:
                 )
             )
         ).all()
-        return {r.bizId: r for r in rows}
+        return Indexed.of((int(r.bizId), r) for r in rows)
 
     @staticmethod
     async def ensure_stat_row(session: AsyncSession, moment_id: int) -> None:

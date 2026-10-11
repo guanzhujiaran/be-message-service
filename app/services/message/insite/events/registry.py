@@ -37,7 +37,7 @@ class EventSpec:
     """
 
     event_type: InteractionActionTypeEnum
-    handler_cls: "type[BaseEvent]"
+    handler_cls: type[BaseEvent]
 
     @property
     def blocked_silent(self) -> bool:
@@ -45,10 +45,10 @@ class EventSpec:
         return self.handler_cls.blocked_silent
 
     @property
-    def setting_gate(self) -> "str | None":
+    def setting_gate(self) -> str | None:
         return self.handler_cls.setting_gate
 
 
 # 类型 → 处理器 注册表（空容器，由 handlers 模块填充）：
 # 未登记的类型由 ``base._resolve_handler_cls`` 回落到 GenericEvent（通用内容体）。
-EVENT_REGISTRY: dict[InteractionActionTypeEnum, "EventSpec"] = {}
+EVENT_REGISTRY: dict[InteractionActionTypeEnum, EventSpec] = {}

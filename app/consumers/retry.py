@@ -79,7 +79,7 @@ def message_headers(msg: RabbitMessage) -> dict[str, Any]:
     """读取消息头（拿不到时返回空 dict，不因头缺失中断消费流程）。"""
     try:
         return dict(msg.raw_message.headers or {})
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
 
 
@@ -91,7 +91,7 @@ def retry_count(msg: RabbitMessage) -> int:
         x_death = headers.get("x-death") or []
         counts += [_to_int(d.get("count", 0)) for d in x_death if isinstance(d, dict)]
         return max(counts)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return 0
 
 
@@ -124,7 +124,7 @@ async def republish_with_retry_count(
             headers=headers,
         )
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"MQ 重投失败 routing_key={routing_key} retries={retries}: {e}")
         return False
 

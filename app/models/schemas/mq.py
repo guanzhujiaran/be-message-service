@@ -12,11 +12,11 @@
 （契约见 `bili_common.rpc.notify`），对内由各业务直接调用服务层。
 """
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from sqlmodel import Field, SQLModel
 
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import DmMsgTypeEnum
-from app.models.schemas.base import auto_str, SnowflakeInt
+from app.models.schemas.base import SnowflakeInt, auto_str
 
 
 @auto_str

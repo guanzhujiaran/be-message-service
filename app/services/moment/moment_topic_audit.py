@@ -11,24 +11,24 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
 from app.models.db import TMomentTopic
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
+from app.models.schemas.audit import AuditStatisticsResp
 from app.models.schemas.moment import (
     MomentTopicAuditItem,
     MomentTopicAuditListResp,
 )
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+)
 from app.services.user.account import PptrUser
+from app.services.user.space.briefs import UserBriefs
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -127,7 +127,7 @@ class MomentTopicAuditService:
 
         mids = {r.creatorMid for r in rows if r.creatorMid}
         briefs = await PptrUser.get_many(list(mids))
-        items = [_to_audit_item(r, briefs.get(r.creatorMid)) for r in rows]
+        items = [_to_audit_item(r, briefs.of_mid(r.creatorMid)) for r in rows]
         return MomentTopicAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
         )
@@ -159,8 +159,12 @@ class MomentTopicAuditService:
         await session.commit()
         await session.refresh(topic)
         logger.info(f"管理员 {operator_mid} 审核通过话题 topicId={topic_id}")
-        briefs = await PptrUser.get_many([topic.creatorMid]) if topic.creatorMid else {}
-        return _to_audit_item(topic, briefs.get(topic.creatorMid))
+        briefs = (
+            await PptrUser.get_many([topic.creatorMid])
+            if topic.creatorMid
+            else UserBriefs()
+        )
+        return _to_audit_item(topic, briefs.of_mid(topic.creatorMid))
 
     @staticmethod
     async def reject(
@@ -194,8 +198,12 @@ class MomentTopicAuditService:
         )
         # 弱依赖：通知创建者（独立会话，失败不影响审核结果）
         await _notify_reject(operator_mid, topic, reject_reason)
-        briefs = await PptrUser.get_many([topic.creatorMid]) if topic.creatorMid else {}
-        return _to_audit_item(topic, briefs.get(topic.creatorMid))
+        briefs = (
+            await PptrUser.get_many([topic.creatorMid])
+            if topic.creatorMid
+            else UserBriefs()
+        )
+        return _to_audit_item(topic, briefs.of_mid(topic.creatorMid))
 
 
 __all__ = ["MomentTopicAuditService"]

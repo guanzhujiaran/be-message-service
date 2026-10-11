@@ -13,6 +13,7 @@
 import asyncio
 import base64
 import hashlib
+import hmac
 import inspect
 import json
 import re
@@ -602,7 +603,9 @@ class PushMessageService:
             conn.close()
             logger.info("SMTP 邮件 推送成功！")
         except Exception as e:
-            raise RuntimeError(f"SMTP 邮件 推送失败：host={host} port={port} {e}")
+            raise RuntimeError(
+                f"SMTP 邮件 推送失败：host={host} port={port} {e}"
+            ) from e
 
     async def pushme(self, title: str, content: str) -> None:
         if not self.conf.pushme_key:
@@ -788,7 +791,7 @@ class PushMessageService:
 
     def get_available_methods(self):
         methods = []
-        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+        for name, _method in inspect.getmembers(self, predicate=inspect.ismethod):
             if not name.startswith("_") and name not in (
                 "get_available_methods",
                 "send",
@@ -872,7 +875,7 @@ class PushMessageService:
                     )
                 logger.info(f"推送成功（渠道：{name}）")
                 return True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last_exc = e
                 logger.error(f"渠道 {name} 推送失败，尝试下一种：{e}")
 

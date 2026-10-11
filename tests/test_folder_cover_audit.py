@@ -25,9 +25,9 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import NotifyMessage, TFavoriteFolder, TFolderCoverAudit
-from app.models.enums import ResourceAuditStatusEnum, NotifyTargetTypeEnum
-from app.services.user.folder_cover_audit import FolderCoverAuditService
+from app.models.enums import NotifyTargetTypeEnum, ResourceAuditStatusEnum
 from app.services.interaction_actions.folder import FavoriteFolderAction
+from app.services.user.folder_cover_audit import FolderCoverAuditService
 
 # 独立区间，避免与既有用例冲突
 C_MID = 941001

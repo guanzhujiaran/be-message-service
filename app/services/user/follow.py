@@ -21,9 +21,11 @@ from loguru import logger
 from sqlalchemy import and_, delete, func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.db.follow_tag_tbl import UserFollowTagUser
 from app.models.db.follow_tbl import UserFollow
 from app.models.enums import FollowStatusEnum
 from app.models.schemas.follow import (
@@ -32,14 +34,23 @@ from app.models.schemas.follow import (
     FollowListResp,
     FollowOpResp,
     FollowRelationResp,
+    FollowUserBrief,
 )
-from app.models.schemas.user_brief import UserBriefOut
 from app.services.user.account import PptrUser
+from app.services.user.follow_tag import FollowTagService
+from app.services.user.space.attributes import AttributeKey
+from app.services.user.space.briefs import UserBriefs
+from app.services.user.space.relation import FollowRelationState
 from app.services.user.space_privacy import SpacePrivacyService
 
 
 class FollowService:
     """关注 / 拉黑读写。"""
+
+    #: 他人视角可见的「关注 / 粉丝」列表窗口页数（本人视角不限制）。
+    #: 对齐 B 站：他人在关系页最多翻 5 页；超出窗口后端直接返回空列表（不报错）。
+    #: 详见 docs/be-message-统一计划书.md §4.1
+    VISIBLE_PAGE_LIMIT = 5
 
     # ==================== 写操作 ====================
 
@@ -91,7 +102,8 @@ class FollowService:
         """取关 target_mid。
 
         仅删除 `following` 记录；若存在 `blocked` 记录则保留（取关不等于解除拉黑）。
-        幂等：未关注时也返回成功。
+        **同时清掉我在该对象上的分组关系**（分组只对「正在关注的人」有意义，
+        残留会让分组计数虚高）。幂等：未关注时也返回成功。
         """
         if mid == target_mid:
             raise ValueError("不能取关自己")
@@ -103,6 +115,8 @@ class FollowService:
                 col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
             )
         )
+        # 与关注关系删除同一事务提交（clear_target 内部不 commit）
+        await FollowTagService.clear_target(session, mid, target_mid)
         await session.commit()
         return await FollowService._build_op_resp(session, mid, target_mid)
 
@@ -157,6 +171,9 @@ class FollowService:
                 col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
             )
         )
+        # 3. 拉黑同时解除分组：我的分组里不再保留对方，也让对方的分组里清掉我
+        await FollowTagService.clear_target(session, mid, target_mid)
+        await FollowTagService.clear_target(session, target_mid, mid)
         await session.commit()
         logger.debug(f"用户 {mid} 拉黑 {target_mid}")
         return await FollowService._build_op_resp(session, mid, target_mid)
@@ -187,21 +204,12 @@ class FollowService:
     async def get_relation(
         session: AsyncSession, mid: int, target_mid: int
     ) -> FollowRelationResp:
-        """查询我与 target_mid 的双向关系。"""
+        """查询我与 target_mid 的双向关系（互关 / 拉黑等派生语义由值对象统一给出）。"""
         forward = await FollowService._relation_status(session, mid, target_mid)
         reverse = await FollowService._relation_status(session, target_mid, mid)
-        return FollowRelationResp(
-            mid=mid,
-            target_mid=target_mid,
-            following=forward == FollowStatusEnum.FOLLOWING,
-            followed_by=reverse == FollowStatusEnum.FOLLOWING,
-            mutual=(
-                forward == FollowStatusEnum.FOLLOWING
-                and reverse == FollowStatusEnum.FOLLOWING
-            ),
-            i_blocked=forward == FollowStatusEnum.BLOCKED,
-            blocked_by=reverse == FollowStatusEnum.BLOCKED,
-        )
+        return FollowRelationState.from_statuses(
+            mid, target_mid, forward, reverse
+        ).to_resp()
 
     @staticmethod
     async def get_counts(session: AsyncSession, mid: int) -> FollowCountResp:
@@ -265,38 +273,109 @@ class FollowService:
         )
 
     @staticmethod
+    async def _ledger_visible_to_viewer(
+        session: AsyncSession,
+        owner_mid: int,
+        viewer_mid: int | None,
+        attribute: AttributeKey,
+    ) -> bool:
+        """访问者是否有权查看该关系列表（按空间主人的可见性开关）。
+
+        判定完全交给 `SpaceVisibility`（规则见 `space/attributes.py`）：
+        本人恒可见；他人 / 未登录访客按属性开关，关闭时返回 False，调用方须返回
+        **空列表且 total = 0**（整类不出现，连总数都不暴露，避免
+        「数字可见但内容不可见」的信息泄露）。
+        """
+        visibility = await SpacePrivacyService.visibility_for(
+            session, int(owner_mid), viewer_mid
+        )
+        return visibility.can_view(attribute)
+
+    @staticmethod
+    def _tag_conditions(
+        owner_mid: int, tag_id: int | None
+    ) -> list[ColumnElement[bool]]:
+        """分组过滤条件（`tag_id` 为 None 表示不过滤）。
+
+        - `tag_id == 0`：**默认分组** = 未落到任何分组的关注对象（无关系行）；
+        - `tag_id == -10` / `> 0`：存在对应的分组关系行。
+
+        分组关系归属由 `msg_user_follow_tag_user.mid` 决定（特别关注是共享 tagid，
+        必须带 owner 才能避免跨用户串号）。
+        """
+        if tag_id is None:
+            return []
+        tagged = select(UserFollowTagUser.target_mid).where(
+            col(UserFollowTagUser.mid) == owner_mid,
+            col(UserFollowTagUser.tag_id) == tag_id,
+        )
+        if tag_id == FollowTagService.DEFAULT_TAG_ID:
+            # 「默认分组」= 没有被任何分组收录的人（`tag_id = 0` 本身不落库）
+            return [col(UserFollow.target_mid).not_in(tagged)]
+        return [col(UserFollow.target_mid).in_(tagged)]
+
+    @staticmethod
+    def _beyond_visible_window(
+        owner_mid: int, viewer_mid: int | None, page_num: int
+    ) -> bool:
+        """请求是否落在「他人可见窗口」之外（本人 / 未传 viewer 视为自己，不限制）。
+
+        规则（计划书 §4.1）：看自己不限页；看他人最多 ``VISIBLE_PAGE_LIMIT`` 页。
+        """
+        if viewer_mid is None or viewer_mid == owner_mid:
+            return False
+        return page_num > FollowService.VISIBLE_PAGE_LIMIT
+
+    @staticmethod
     async def list_following(
         session: AsyncSession,
         mid: int,
         page_num: int = 1,
         page_size: int = 20,
+        viewer_mid: int | None = None,
+        tag_id: int | None = None,
     ) -> FollowListResp:
         """我关注的人列表（按关注时间倒序）。
 
         `mutual` 字段会标记该用户是否与我互相关注，前端可据此展示「互相关注」徽标；
         `user` 内联对方展示信息（2.58.0：一次 `PptrUser.get_many` 批量回查 pptr 主数据，
         弱依赖，回查失败降级为 `user=None`，前端按「账号已注销」渲染）。
+
+        2026-10-08：`viewer_mid` 为访问者身份，用于可见性窗口校验——看他人时
+        超过 ``VISIBLE_PAGE_LIMIT`` 页直接返回空列表（`total` 仍为真实总数）；
+        `tag_id` 为分组过滤（`0` = 未分组的默认分组；`-10` 特别关注；`>0` 自建分组），
+        由调用方保证仅自己视角使用。
         """
+        # 可见性门控（设置页「关注列表」开关）：他人且开关关闭 → 整类不出现，total 也不暴露
+        if not await FollowService._ledger_visible_to_viewer(
+            session, mid, viewer_mid, AttributeKey.FOLLOW_LIST
+        ):
+            return FollowListResp(
+                items=[], total=0, page_num=page_num, page_size=page_size
+            )
+
+        conditions = [
+            col(UserFollow.mid) == mid,
+            col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
+        ]
+        conditions.extend(FollowService._tag_conditions(mid, tag_id))
+
         total = int(
             (
                 await session.exec(
-                    select(func.count())
-                    .select_from(UserFollow)
-                    .where(
-                        col(UserFollow.mid) == mid,
-                        col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
-                    )
+                    select(func.count()).select_from(UserFollow).where(*conditions)
                 )
             ).one()
             or 0
         )
+        if FollowService._beyond_visible_window(mid, viewer_mid, page_num):
+            return FollowListResp(
+                items=[], total=total, page_num=page_num, page_size=page_size
+            )
         rows = (
             await session.exec(
                 select(UserFollow)
-                .where(
-                    col(UserFollow.mid) == mid,
-                    col(UserFollow.status) == FollowStatusEnum.FOLLOWING,
-                )
+                .where(*conditions)
                 .order_by(col(UserFollow.created_at).desc())
                 .offset((page_num - 1) * page_size)
                 .limit(page_size)
@@ -312,7 +391,7 @@ class FollowService:
                 mid=r.target_mid,
                 created_at=r.created_at,
                 mutual=r.target_mid in mutual_set,
-                user=briefs.get(r.target_mid),
+                user=FollowUserBrief.from_brief(briefs.of_mid(r.target_mid)),
             )
             for r in rows
         ]
@@ -348,12 +427,23 @@ class FollowService:
         mid: int,
         page_num: int = 1,
         page_size: int = 20,
+        viewer_mid: int | None = None,
     ) -> FollowListResp:
         """我的粉丝列表（按关注时间倒序）。
 
         2.58.0：`user` 内联粉丝展示信息（一次 `PptrUser.get_many` 批量回查，弱依赖，
         回查失败降级为 `user=None`），供 TA 主页的粉丝模块直接展示昵称 / 头像。
+
+        2026-10-08：`viewer_mid` 为访问者身份，用于可见性窗口校验（见 ``list_following``）。
         """
+        # 可见性门控（设置页「粉丝列表」开关）：他人且开关关闭 → 整类不出现，total 也不暴露
+        if not await FollowService._ledger_visible_to_viewer(
+            session, mid, viewer_mid, AttributeKey.FANS_LIST
+        ):
+            return FollowListResp(
+                items=[], total=0, page_num=page_num, page_size=page_size
+            )
+
         total = int(
             (
                 await session.exec(
@@ -367,6 +457,10 @@ class FollowService:
             ).one()
             or 0
         )
+        if FollowService._beyond_visible_window(mid, viewer_mid, page_num):
+            return FollowListResp(
+                items=[], total=total, page_num=page_num, page_size=page_size
+            )
         rows = (
             await session.exec(
                 select(UserFollow)
@@ -392,7 +486,7 @@ class FollowService:
                 mid=r.mid,
                 created_at=r.created_at,
                 mutual=r.mid in mutual_set,
-                user=briefs.get(r.mid),
+                user=FollowUserBrief.from_brief(briefs.of_mid(r.mid)),
             )
             for r in rows
         ]
@@ -424,21 +518,19 @@ class FollowService:
         - ``mutual`` 语义为「TA 与该粉丝是否互相关注」：viewer 是主人时即「我也
           关注了 TA」，viewer 是访客时该标记仅在需要时展示，计算以 target 为基准。
         """
-        # 隐私门控：非主人视角受 show_fans_list 开关约束
-        is_self = viewer_mid is not None and int(viewer_mid) == int(target_mid)
-        if not is_self:
-            flags = await SpacePrivacyService.get_flags(session, target_mid)
-            if not flags.show_fans_list:
-                return FollowListResp(
-                    items=[], total=0, page_num=page_num, page_size=page_size
-                )
+        # 可见性门控（设置页「粉丝列表」开关）：与「关注列表」同一入口，避免规则分叉
+        if not await FollowService._ledger_visible_to_viewer(
+            session, target_mid, viewer_mid, AttributeKey.FANS_LIST
+        ):
+            return FollowListResp(
+                items=[], total=0, page_num=page_num, page_size=page_size
+            )
 
         # 最新 500 个粉丝的窗口总量（用于 has_more / 分页）
         window_total = int(
             (
                 await session.exec(
-                    select(func.count())
-                    .select_from(
+                    select(func.count()).select_from(
                         select(UserFollow)
                         .where(
                             col(UserFollow.target_mid) == target_mid,
@@ -478,7 +570,9 @@ class FollowService:
 
         follower_mids = [r.mid for r in rows]
         # 以空间主人 target 为基准的互关集合
-        mutual_set = await FollowService._mutual_mids(session, target_mid, follower_mids)
+        mutual_set = await FollowService._mutual_mids(
+            session, target_mid, follower_mids
+        )
         briefs = await FollowService._briefs_of(follower_mids)
 
         items = [
@@ -486,7 +580,7 @@ class FollowService:
                 mid=r.mid,
                 created_at=r.created_at,
                 mutual=r.mid in mutual_set,
-                user=briefs.get(r.mid),
+                user=FollowUserBrief.from_brief(briefs.of_mid(r.mid)),
             )
             for r in rows
         ]
@@ -498,19 +592,21 @@ class FollowService:
         )
 
     @staticmethod
-    async def _briefs_of(mids: list[int]) -> dict[int, UserBriefOut]:
-        """批量回查用户展示信息（2.58.0 抽出，关注 / 粉丝 / 黑名单三处共用）。
+    async def _briefs_of(mids: list[int]) -> UserBriefs:
+        """批量回查用户展示信息（关注 / 粉丝 / 黑名单三处共用）。
 
-        弱依赖：pptr 不可用时只告警，返回空 dict —— 调用方按 `user=None` 降级渲染，
-        不让「主数据抖动」拖垮列表接口。
+        弱依赖：pptr 不可用时只告警，返回空 `UserBriefs` —— 调用方按
+        `of_mid(...) is None` 降级渲染「账号已注销」，不让主数据抖动拖垮列表接口。
         """
         if not mids:
-            return {}
+            return UserBriefs()
         try:
-            return await PptrUser.get_many(mids)
-        except Exception as e:  # noqa: BLE001 - 弱依赖，任何异常都不阻断列表
+            fetched = await PptrUser.get_many(mids)
+        except Exception as e:
             logger.warning(f"关注关系列表回查用户信息失败（降级为 null）: {e}")
-            return {}
+            return UserBriefs()
+        # 统一成值对象：显式区分「本批未覆盖」与「覆盖但已注销」
+        return UserBriefs.of([(mid, fetched.get(mid)) for mid in mids])
 
     @staticmethod
     async def list_blocked(
@@ -564,7 +660,7 @@ class FollowService:
             FollowListItem(
                 mid=r.target_mid,
                 created_at=r.created_at,
-                user=briefs.get(r.target_mid),
+                user=FollowUserBrief.from_brief(briefs.of_mid(r.target_mid)),
             )
             for r in rows
         ]
@@ -653,7 +749,7 @@ class FollowService:
                 )
             )
         ).all()
-        forward_set = {r for r in forward_rows}  # type: ignore[union-attr]
+        forward_set = set(forward_rows)  # type: ignore[union-attr]
 
         # 关注我的人中，与 forward_set 相交的部分（X → mid 为 following）
         if not forward_set:
@@ -667,7 +763,7 @@ class FollowService:
                 )
             )
         ).all()
-        return {r for r in reverse_rows}  # type: ignore[union-attr]
+        return set(reverse_rows)  # type: ignore[union-attr]
 
     @staticmethod
     async def _build_op_resp(

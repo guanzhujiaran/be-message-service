@@ -8,14 +8,12 @@
 
 from typing import Annotated
 
+from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Query
-from sqlmodel import col, select
 
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from app.models.str_int import StrInt
-from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.favorite import (
     FavoriteAddReq,
     FavoriteAddResp,
@@ -26,17 +24,15 @@ from app.models.schemas.favorite import (
     FavoriteFolderUpdateReq,
     FavoriteItemListResp,
     FavoriteListItem,
-    FavoriteListReq,
     FavoriteListResp,
     FavoriteRemoveReq,
-    FavoriteSettingReq,
-    FavoriteSettingResp,
 )
+from app.models.str_int import StrInt
+from app.services.interaction_actions import get_biz
+from app.services.interaction_actions.folder import FavoriteFolderAction
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
-from app.services.interaction_actions import get_biz
-from app.services.interaction_actions.folder import FavoriteFolderAction
 
 router = APIRouter(prefix="/api/v1/favorite", tags=["favorite"])
 
@@ -87,7 +83,7 @@ async def create_folder(
     try:
         folder_id, cover_audit_status = await FavoriteFolderAction(
             session, user.mid
-        ).create(req.name, req.description, req.coverUrl)
+        ).create(req.name, req.description, req.coverUrl, req.isPublic)
     except ValueError as e:
         # 封面 URL 下载校验失败等（复用头像校验：http/https、1s 内下载、≤1MB、image/*）
         return StandardResponse(code=422, msg=str(e))
@@ -99,6 +95,7 @@ async def create_folder(
             # 封面先审后发：未审核通过不对外展示（coverAuditStatus=pending 时前端展示「封面待审核」）
             coverUrl=None,
             isDefault=False,
+            isPublic=req.isPublic,
             favoriteCount=0,
             coverAuditStatus=cover_audit_status,
         )
@@ -120,6 +117,7 @@ async def update_folder(
             req.name,
             req.description,
             req.coverUrl,
+            req.isPublic,
         )
     except ValueError as e:
         if str(e) == "收藏夹不存在":
@@ -317,42 +315,12 @@ async def dyn_folders(
     )
 
 
-# ==================== 主页收藏可见性设置 ====================
-
-
-@router.get(
-    "/setting",
-    response_model=StandardResponse[FavoriteSettingResp],
-    summary="主页是否显示收藏",
-)
-async def get_setting(
-    session: SessionDep,
-    user: RequiredUser,
-) -> StandardResponse[FavoriteSettingResp]:
-    show = await FavoriteFolderAction(session, user.mid).get_setting()
-    return StandardResponse(data=FavoriteSettingResp(showFavorites=show))
-
-
-@router.post(
-    "/setting",
-    response_model=StandardResponse[FavoriteSettingResp],
-    summary="设置主页是否显示收藏",
-)
-async def set_setting(
-    session: SessionDep,
-    user: RequiredUser,
-    req: FavoriteSettingReq,
-) -> StandardResponse[FavoriteSettingResp]:
-    show = await FavoriteFolderAction(session, user.mid).set_setting(req.showFavorites)
-    return StandardResponse(data=FavoriteSettingResp(showFavorites=show))
-
-
 # ==================== 他人主页公开读（无需登录）====================
 
 
 @router.get(
     "/user/folders",
-    response_model=StandardResponse[list[FavoriteFolderResp] | None],
+    response_model=StandardResponse[list[FavoriteFolderResp]],
     summary="某用户主页公开的收藏夹列表",
 )
 async def public_folders(
@@ -360,19 +328,18 @@ async def public_folders(
     mid: Annotated[
         StrInt, Query(description="目标用户mid（雪花 ID，StrInt 兼容前端 str 传参）")
     ],
-) -> StandardResponse[list[FavoriteFolderResp] | None]:
-    # 公开读无需登录：以目标用户 mid 构造 action（方法内部按 target_mid 校验可见性）
+) -> StandardResponse[list[FavoriteFolderResp]]:
+    # 公开读无需登录：只返回目标用户 **公开的** 收藏夹（2026-10-08 起逐夹 is_public；
+    # 一个公开夹都没有时返回空数组，前端据此隐藏收藏 tab）。
     folders = await FavoriteFolderAction(session, int(mid)).list_public_folders(
         int(mid)
     )
-    if folders is None:
-        return StandardResponse(code=403, msg="该用户未公开收藏")
     return StandardResponse(data=[FavoriteFolderResp(**f) for f in folders])
 
 
 @router.get(
     "/user/dynamics",
-    response_model=StandardResponse[FavoriteListResp | None],
+    response_model=StandardResponse[FavoriteListResp],
     summary="某用户某收藏夹下的公开资源",
 )
 async def public_dynamics(
@@ -383,15 +350,19 @@ async def public_dynamics(
     folderId: str = Query(description="收藏夹id（字符串）"),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=20, ge=1, le=50),
-) -> StandardResponse[FavoriteListResp | None]:
+) -> StandardResponse[FavoriteListResp]:
     folder_id = await _parse_int(folderId, "folderId")
     if folder_id is None:
         return StandardResponse(code=400, msg="folderId 不合法")
+    # 非公开夹 / 夹不属于该用户 → 空列表（2026-10-08：不再返回 403，避免把「不可见」
+    # 与「出错」混为一谈，前端按空态渲染即可）。
     result = await FavoriteFolderAction(session, int(mid)).list_public_items(
         int(mid), folder_id, page, pageSize
     )
     if result is None:
-        return StandardResponse(code=403, msg="该收藏夹不公开或不存在")
+        return StandardResponse(
+            data=FavoriteListResp(folderId=folderId, total=0, items=[])
+        )
     total, items = result
     return StandardResponse(
         data=FavoriteListResp(

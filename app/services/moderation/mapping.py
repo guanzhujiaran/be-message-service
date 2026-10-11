@@ -18,8 +18,8 @@ from typing import TypeVar
 from app.services.moderation.state_machine import ResourceAuditStatusEnum
 
 __all__ = [
-    "resource_status_of",
     "parse_status",
+    "resource_status_of",
 ]
 
 _EnumT = TypeVar("_EnumT", bound=IntEnum)

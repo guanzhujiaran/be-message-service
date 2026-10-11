@@ -12,32 +12,32 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionBizTypeEnum
 from loguru import logger
 from sqlalchemy import func
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
 from app.models.db import CommentAt, CommentContent, CommentIndex, CommentSubject
-from bili_common.models import InteractionBizTypeEnum
-from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
+from app.models.enums import NotifyLevelEnum, ResourceAuditStatusEnum
 from app.models.schemas import (
     CommentAuditItem,
     CommentSourceResp,
     CommentStatsResp,
 )
+from app.models.schemas.audit import AuditStatisticsResp
 from app.services.comment import (
     DEFAULT_REJECT_REASON,
     CommentService,
     summarize_text,
 )
-from app.services.moment.moment_stat import MomentStatService
 from app.services.message.insite.notify import NotifyService
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
+from app.services.moment.moment_stat import MomentStatService
 from app.services.user.account import CommentAdminUser
 from app.utils.audit_source import build_comment_source
 from app.utils.notify_markup import markup_inline_link
@@ -152,7 +152,7 @@ class CommentAdminService:
                     await CommentAdminService._resend_interact_notify(
                         session, rpid, row
                     )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"评论状态变更通知投递失败（弱依赖）: {e}")
         return True
 
@@ -190,12 +190,11 @@ class CommentAdminService:
     @staticmethod
     async def _load_excerpt(session: AsyncSession, rpid: int) -> str | None:
         """取评论原文，用于在通知里回显"被处理的是哪条内容"。"""
-        content = (
+        return (
             await session.exec(
                 select(CommentContent.message).where(col(CommentContent.rpid) == rpid)
             )
         ).one_or_none()
-        return content
 
     @staticmethod
     async def _resend_interact_notify(
@@ -216,8 +215,8 @@ class CommentAdminService:
         actor_uname: str | None = None
         try:
             profiles = await CommentAdminUser.get_many([row.mid])
-            actor_uname = getattr(profiles.get(row.mid), "uname", None)
-        except Exception:  # noqa: BLE001
+            actor_uname = getattr(profiles.of_mid(row.mid), "uname", None)
+        except Exception:
             actor_uname = None
 
         excerpt = await CommentAdminService._load_excerpt(session, rpid) or ""
@@ -271,7 +270,7 @@ class CommentAdminService:
             await session.exec(
                 select(CommentAt).where(
                     col(CommentAt.rpid) == rpid,
-                    col(CommentAt.notified) == False,  # noqa: E712
+                    col(CommentAt.notified) == False,
                 )
             )
         ).all()
@@ -350,7 +349,7 @@ class CommentAdminService:
                     success += 1
                 else:
                     failed.append(rpid)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"批量评论审核失败 rpid={rpid}: {e}")
                 failed.append(rpid)
         return success, failed
@@ -430,7 +429,7 @@ class CommentAdminService:
                     r.oid, r.type, r.rpid, up_mids.get((r.oid, r.type))
                 ),
                 # 管理端审核：依赖管理员视角序列化保留私域字段（含脱敏邮箱 / 经验等）
-                member=profiles.get(r.mid),
+                member=profiles.of_mid(r.mid),
             )
             for r in rows
         ]
@@ -613,7 +612,7 @@ class CommentAdminService:
         mids = [m for m, _ in top]
         # 作者展示信息从 pptr Postgres 只读取回（本服务不再冗余快照）
         profiles = await CommentAdminUser.get_many(mids)
-        top_authors = [profiles[m] for m in mids if m in profiles]
+        top_authors = [profiles.of_mid(m) for m in mids if m in profiles]
 
         return CommentStatsResp(
             total_comments=total_comments,

@@ -3,18 +3,20 @@
 提供关注 / 取关 / 拉黑 / 解除拉黑、关系查询、关注与粉丝列表、计数等。
 关系数据自包含于 `msg_user_follow`，用户展示信息不在本服务冗余，
 列表接口仅返回 `mid` 与关系建立时间，前端可按 mid 批量回查 pptr 主数据。
+
+列表接口对标 B 站 `x/relation/followings` / `x/relation/fans`：query 用
+`vmid`（被查看者，缺省=自己）+ `pn`（页码）+ `ps`（每页）；
+`order` / `order_type`（最近关注 / 最常访问）本期不做。
 """
 
 from typing import Annotated
 
+from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Query
-
-from app.models.str_int import StrInt
 
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser
 from app.models import StandardResponse
-from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas import (
     BlockReq,
     FollowCountResp,
@@ -22,9 +24,14 @@ from app.models.schemas import (
     FollowOpResp,
     FollowRelationResp,
     FollowReq,
+    FollowTagAssignReq,
+    FollowTagCreateReq,
+    FollowTagResp,
 )
+from app.models.str_int import StrInt
 from app.services.interaction_actions.base_biz import get_biz
 from app.services.user.follow import FollowService
+from app.services.user.follow_tag import FollowTagService
 
 router = APIRouter(prefix="/api/v1/message/follow", tags=["message-follow"])
 
@@ -154,38 +161,163 @@ async def get_counts(
 
 
 @router.get(
-    "/following/list",
+    "/followings",
     response_model=StandardResponse[FollowListResp],
-    summary="我的关注列表",
+    summary="关注列表（缺省 vmid=当前登录用户）",
 )
-async def list_following(
+async def list_followings(
     session: SessionDep,
     user: CurrentUser,
-    page_num: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    pn: int = Query(default=1, ge=1, description="页码，从 1 开始"),
+    ps: int = Query(default=24, ge=1, le=100, description="每页条数"),
+    vmid: Annotated[
+        StrInt | None, Query(description="被查看的用户 mid，缺省=自己")
+    ] = None,
+    tagid: int | None = Query(
+        default=None,
+        description="按分组过滤：-10 特别关注 / 0 默认分组（未分组）/ >0 自建分组；不传=全部",
+    ),
 ) -> StandardResponse[FollowListResp]:
-    """我关注的人列表（按关注时间倒序），含 `mutual` 标记是否互相关注。"""
+    """TA 关注的人列表（按关注时间倒序），含 `mutual` 标记是否互相关注。
+
+    对标 B 站 `GET /x/relation/followings?vmid=&pn=&ps=`（`order` / `order_type`
+    排序参数本期不做，见计划书 §4.1）。
+
+    - `vmid` 缺省=当前登录用户（与改造前行为一致）；
+    - `tagid` 仅自己视角有效（分组是私域数据，他人看不到你如何分组）；
+    - `vmid` 为他人时受**可见性窗口**约束：最多返回前 5 页（`ps=24` 即最新 120 条），
+      超出页码直接返回空列表、`total` 仍为真实总数（见计划书 §4.1）。
+    """
+    owner_mid = vmid or user.mid
+    # 分组过滤只对「看自己」生效：他人视角既无权限也无意义
+    effective_tag_id = tagid if owner_mid == user.mid else None
     data = await FollowService.list_following(
-        session, user.mid, page_num=page_num, page_size=page_size
+        session,
+        owner_mid,
+        page_num=pn,
+        page_size=ps,
+        viewer_mid=user.mid,
+        tag_id=effective_tag_id,
     )
     return StandardResponse(data=data)
 
 
 @router.get(
-    "/followers/list",
+    "/fans",
     response_model=StandardResponse[FollowListResp],
-    summary="我的粉丝列表",
+    summary="粉丝列表（缺省 vmid=当前登录用户）",
 )
-async def list_followers(
+async def list_fans(
     session: SessionDep,
     user: CurrentUser,
-    page_num: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    pn: int = Query(default=1, ge=1, description="页码，从 1 开始"),
+    ps: int = Query(default=24, ge=1, le=100, description="每页条数"),
+    vmid: Annotated[
+        StrInt | None, Query(description="被查看的用户 mid，缺省=自己")
+    ] = None,
 ) -> StandardResponse[FollowListResp]:
-    """关注我的人列表（按关注时间倒序），含 `mutual` 标记是否互相关注。"""
+    """关注 TA 的人列表（按关注时间倒序），含 `mutual` 标记是否互相关注。
+
+    对标 B 站 `GET /x/relation/fans?vmid=&pn=&ps=`；可见性窗口规则与 `followings` 一致：
+    看他人最多 5 页，超出返回空列表。
+    """
+    owner_mid = vmid or user.mid
     data = await FollowService.list_followers(
-        session, user.mid, page_num=page_num, page_size=page_size
+        session,
+        owner_mid,
+        page_num=pn,
+        page_size=ps,
+        viewer_mid=user.mid,
     )
+    return StandardResponse(data=data)
+
+
+# ==================== 关注分组（对标 B 站 x/relation/tags） ====================
+
+
+@router.get(
+    "/tags",
+    response_model=StandardResponse[list[FollowTagResp]],
+    summary="我的关注分组列表",
+)
+async def list_follow_tags(
+    session: SessionDep, user: CurrentUser
+) -> StandardResponse[list[FollowTagResp]]:
+    """我的分组列表（特别关注 → 默认分组 → 自建分组）。
+
+    对标 B 站 `GET /x/relation/tags`：`data` 直接是数组，元素形如
+    `{"tagid": -10, "name": "特别关注", "count": 5, "tip": "..."}`。
+    分组是私域数据，只返回当前登录用户自己的分组。
+    """
+    return StandardResponse(data=await FollowTagService.list_tags(session, user.mid))
+
+
+@router.post(
+    "/tags",
+    response_model=StandardResponse[FollowTagResp],
+    summary="新建关注分组",
+)
+async def create_follow_tag(
+    session: SessionDep, user: CurrentUser, req: FollowTagCreateReq
+) -> StandardResponse[FollowTagResp]:
+    """新建自建分组（名称 1~20 字、不重名、最多 20 个）。"""
+    try:
+        data = await FollowTagService.create_tag(session, user.mid, req.name, req.tip)
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse(data=data)
+
+
+@router.delete(
+    "/tags/{tag_id}",
+    summary="删除关注分组",
+)
+async def delete_follow_tag(
+    session: SessionDep, user: CurrentUser, tag_id: int
+) -> StandardResponse[None]:
+    """删除自建分组（连带清空成员关系）；系统分组（-10 / 0）不可删。"""
+    try:
+        await FollowTagService.delete_tag(session, user.mid, tag_id)
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
+    return StandardResponse()
+
+
+@router.get(
+    "/tags/assigned",
+    response_model=StandardResponse[list[int]],
+    summary="查询某用户当前所属的分组 id 列表",
+)
+async def get_assigned_follow_tags(
+    session: SessionDep,
+    user: CurrentUser,
+    target_mid: Annotated[StrInt, Query(description="目标用户 mid")],
+) -> StandardResponse[list[int]]:
+    """某用户当前被我放在哪些分组（分组设置弹窗预填用；`0` 默认分组不参与）。"""
+    membership = await FollowTagService.membership_of(session, user.mid, target_mid)
+    return StandardResponse(data=list(membership.tag_ids))
+
+
+@router.post(
+    "/tags/assign",
+    response_model=StandardResponse[list[int]],
+    summary="设置某关注对象所属分组（覆盖式）",
+)
+async def assign_follow_tag(
+    session: SessionDep, user: CurrentUser, req: FollowTagAssignReq
+) -> StandardResponse[list[int]]:
+    """把 target_mid 的分组**覆盖式**设置为 `tag_ids`。
+
+    - 只能操作已关注的人；自建分组必须是自己的；
+    - `tag_ids` 传空数组 = 移出全部分组（回到默认分组）；
+    - 返回设置后的分组 id 列表。对标 B 站 `POST /x/relation/tags/addUsers`。
+    """
+    try:
+        data = await FollowTagService.assign(
+            session, user.mid, req.target_mid, req.tag_ids
+        )
+    except ValueError as e:
+        return StandardResponse(code=400, msg=str(e))
     return StandardResponse(data=data)
 
 

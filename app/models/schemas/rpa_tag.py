@@ -6,11 +6,9 @@ be-message 全托管：创建/打标/列表经 RPC 调用 RPA 存储（见
 be-message 侧的请求/响应模型，标签实体本身仍存于 RPA 侧 `rpa_tag` 表。
 """
 
-from sqlmodel import SQLModel, Field
+from sqlmodel import Field, SQLModel
 
-from typing import Optional
-
-from app.models.schemas.base import auto_str, SnowflakeInt
+from app.models.schemas.base import SnowflakeInt, auto_str
 
 
 class RpaTagCreateReq(SQLModel):
@@ -39,7 +37,7 @@ class RpaTagDetachReq(SQLModel):
 class RpaTagListReq(SQLModel):
     """列出标签请求。普通用户仅 `normal`；root 可传 `auditing` / `rejected` / `all`。"""
 
-    auditStatus: Optional[str] = Field(
+    auditStatus: str | None = Field(
         default=None,
         description="过滤状态；None→normal；root 可用 auditing/rejected/all",
     )
@@ -61,12 +59,12 @@ class RpaTagItemResp(SQLModel):
     id: int = Field(description="标签 id")
     name: str = Field(description="标签名称")
     color: str = Field(default="#409EFF", description="标签颜色")
-    createdBy: Optional[SnowflakeInt] = Field(
+    createdBy: SnowflakeInt | None = Field(
         default=None, description="创建者 mid（字符串版见 createdBy_str）"
     )
     auditStatus: str = Field(description="审核状态：auditing / normal / rejected")
-    pubTime: Optional[str] = Field(default=None, description="审核通过上架时间（ISO）")
-    createdAt: Optional[str] = Field(default=None, description="创建时间（ISO）")
+    pubTime: str | None = Field(default=None, description="审核通过上架时间（ISO）")
+    createdAt: str | None = Field(default=None, description="创建时间（ISO）")
 
 
 class RpaTagListResp(SQLModel):

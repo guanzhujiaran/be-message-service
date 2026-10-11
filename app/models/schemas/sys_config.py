@@ -11,10 +11,11 @@
 
 from datetime import datetime
 
+from bili_common.core.time_utils import OptionalUnixTime
 from sqlmodel import Field, SQLModel
 
-from app.models.schemas.base import auto_str, SnowflakeInt
-
+from app.core.config import settings
+from app.models.schemas.base import SnowflakeInt, auto_str
 
 # ==================== 配置值模型 ====================
 
@@ -45,6 +46,62 @@ class CommentRateLimitConfig(SQLModel):
     )
 
 
+# ==================== 推荐机器学习配置（2.66.0）====================
+
+
+class FeedMLConfig(SQLModel):
+    """推荐「机器学习三件套」的运行时开关与权重。
+
+    三件套（LightGBM 精排 / ALS 协同召回 / LinUCB 上下文探索）**默认全关**，
+    需训练产出模型后由管理端在本项打开；权重可随时热调以便灰度：
+
+    - ``ranker_enabled`` + ``ranker_blend_weight``：LightGBM 与 EdgeRank 分的融合
+      （``weight`` 是模型话语权，0=纯规则）；
+    - ``als_enabled`` + ``als_limit``：ALS 协同召回一路及其条数上限；
+    - ``linucb_enabled`` + ``linucb_weight`` + ``linucb_alpha``：上下文老虎机探索
+      （``weight`` 探索强度、``alpha`` 探索系数）。
+    """
+
+    # 默认值一律 default_factory 引用 settings：**settings 是唯一权威默认值来源**。
+    # 否则 DB 里只写了一部分字段时，补齐出来的是这里的字面量、与 settings 漂移。
+    ranker_enabled: bool = Field(
+        default_factory=lambda: settings.ml_ranker_enabled,
+        description="LightGBM 精排开关（需先产出模型文件）",
+    )
+    ranker_blend_weight: float = Field(
+        default_factory=lambda: settings.ml_ranker_blend_weight,
+        ge=0.0,
+        le=1.0,
+        description="模型分话语权（0=纯 EdgeRank）",
+    )
+    als_enabled: bool = Field(
+        default_factory=lambda: settings.ml_als_enabled,
+        description="ALS 协同召回开关（需先产出索引文件）",
+    )
+    als_limit: int = Field(
+        default_factory=lambda: settings.ml_als_limit,
+        ge=1,
+        le=1000,
+        description="ALS 召回条数上限",
+    )
+    linucb_enabled: bool = Field(
+        default_factory=lambda: settings.ml_linucb_enabled,
+        description="LinUCB 上下文探索开关（需先回放训练臂参数）",
+    )
+    linucb_weight: float = Field(
+        default_factory=lambda: settings.ml_linucb_weight,
+        ge=0.0,
+        le=1.0,
+        description="探索分叠加强度（0=关闭）",
+    )
+    linucb_alpha: float = Field(
+        default_factory=lambda: settings.ml_linucb_alpha,
+        ge=0.0,
+        le=5.0,
+        description="UCB 探索系数（越大越探索）",
+    )
+
+
 # ==================== 管理端接口模型 ====================
 
 
@@ -62,7 +119,7 @@ class SysConfigItem(SQLModel):
     updatedBy: SnowflakeInt = Field(
         default=0, description="最后修改者 mid（字符串版见 updatedBy_str）"
     )
-    updated_at: datetime | None = Field(default=None, description="最后更新时间")
+    updated_at: OptionalUnixTime = Field(default=None, description="最后更新时间（秒级时间戳）")
     isDefault: bool = Field(
         default=False, description="是否仍是 settings 默认值（未写入 DB）"
     )
@@ -85,6 +142,7 @@ class SysConfigUpdateReq(SQLModel):
 __all__ = [
     "CommentRateLimitConfig",
     "CommentRateRule",
+    "FeedMLConfig",
     "SysConfigItem",
     "SysConfigListResp",
     "SysConfigUpdateReq",

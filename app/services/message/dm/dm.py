@@ -39,23 +39,24 @@ POST /dm/send
 from datetime import datetime
 from typing import Any
 
+from bili_common.models import ResponseCode
 from loguru import logger
 from sqlalchemy import case
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import OperationalError
 from sqlmodel import col, func, or_, select, update
-from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from bili_common.models import ResponseCode
+import app.services.message.infrastructure.publisher as publisher
 from app.core.config import settings
 from app.core.sharding import generate_msgkey, parse_timestamp_ms
 from app.models.db import DmContentDeadLetter, DmMessageIndex, DmSession
 from app.models.enums import (
-    ResourceAuditStatusEnum,
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
     DmSessionTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas import (
     DmContentPayload,
@@ -66,14 +67,13 @@ from app.models.schemas import (
     DmSessionItem,
     DmSessionListResp,
 )
-import app.services.message.infrastructure.publisher as publisher
-from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm_content import DmContentService
-from app.services.user.follow import FollowService
-from app.models.schemas.user_brief import UserBriefOut
-from app.services.user.account import PptrUser
+from app.services.message.insite.activity import ActivityService
 from app.services.message.insite.notify import NotifyService
 from app.services.message.insite.setting import SettingService
+from app.services.user.account import PptrUser
+from app.services.user.follow import FollowService
+from app.services.user.space.briefs import UserBriefs
 
 # 会话列表展示的正文摘要长度
 _PREVIEW_LEN = 100
@@ -146,9 +146,7 @@ async def _get_session_row(
     return (await session.exec(stmt)).one_or_none()
 
 
-def _to_session_item(
-    row: DmSession, user_cache: dict[int, UserBriefOut]
-) -> DmSessionItem:
+def _to_session_item(row: DmSession, user_cache: UserBriefs) -> DmSessionItem:
     """把会话 ORM 行拼成对外展示的 `DmSessionItem`。
 
     `user_cache` 是 `talker_mid -> UserBriefOut`，由调用方批量拉取后传入，
@@ -157,7 +155,7 @@ def _to_session_item(
     会话对端对当前用户而言是「他人」，其私域字段（邮箱 / 经验 / 大会员到期 /
     角色）由 ``VisibilityMixin`` 在序列化期自动剥离，装配时无需投影。
     """
-    uc = user_cache.get(row.talker_mid)
+    uc = user_cache.of_mid(row.talker_mid)
     return DmSessionItem(
         talker_mid=row.talker_mid,
         talker_name=(uc.uname if uc else None) or row.talker_name,
@@ -370,7 +368,7 @@ class DmSessionObject:
                     title="私信审核中",
                     content="您发送的私信正在审核中，通过后将对方可见。",
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"私信审核中通知投递失败（弱依赖，已忽略）: {e}")
 
         # 发送者本人算一次活跃
@@ -1163,8 +1161,8 @@ class DmInbox:
 
 
 __all__ = [
-    "DmSessionObject",
     "DmInbox",
+    "DmSessionObject",
     "make_session_key",
     "mark_content_ready",
     "retry_dead_letters",

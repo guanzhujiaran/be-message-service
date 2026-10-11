@@ -26,15 +26,15 @@
 """
 
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from math import log
 
+from bili_common.models import InteractionBizTypeEnum
 from pydantic import ConfigDict
 from sqlmodel import SQLModel
 
 from app.core.config import settings
 from app.models.db import TInteractionStat, TMomentTopic
-from bili_common.models import InteractionBizTypeEnum
 
 # 零互动时的最小基数分（低于任意「1 个赞」的分值，保证同时刻有互动内容排在前面）
 _ZERO_INTERACTION_BASE = 0.1
@@ -92,7 +92,7 @@ def _as_naive(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is not None:
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.astimezone(UTC).replace(tzinfo=None)
     return dt
 
 

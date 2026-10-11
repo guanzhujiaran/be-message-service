@@ -45,9 +45,7 @@ async def seed_moment(
     # 建话题 + 审核通过（话题名全局唯一；话题名轮遍 _TOPIC_NAMES，全局唯一用递增序号后缀，
     # 不再用 uuid4 随机后缀——序号由 _rr 游标保证不重复）。
     creator_mid, _ = next(author_cycle)
-    topic_seq = 0
-    for _ in range(2):
-        topic_seq += 1
+    for topic_seq in range(1, 3):
         name = f"{_rr.pick(_TOPIC_NAMES)}_{topic_seq}"
         try:
             tid = await client.create_topic(creator_mid, name)

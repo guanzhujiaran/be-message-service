@@ -19,24 +19,23 @@
 from datetime import datetime
 from typing import Any
 
-from loguru import logger
-from sqlmodel import col, delete, select, update
-from sqlmodel.ext.asyncio.session import AsyncSession
-
-from app.core.config import settings
-from app.core.database import new_session
-from app.core.sharding import generate_moment_id
-from app.models.db import (
-    TMoment,
-    TResourceAuditLog,
-    TMomentTopic,
-    TMomentTopicRel,
-    TResourceFeed,
-)
 from bili_common.models import (
     InteractionActionTypeEnum,
     InteractionBizTypeEnum,
     ResponseCode,
+)
+from loguru import logger
+from sqlmodel import col, select, update
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.core.config import settings
+from app.core.sharding import generate_moment_id
+from app.models.db import (
+    TMoment,
+    TMomentTopic,
+    TMomentTopicRel,
+    TResourceAuditLog,
+    TResourceFeed,
 )
 from app.models.enums import (
     MomentAuditLogActionEnum,
@@ -49,13 +48,19 @@ from app.models.schemas import EventReportReq
 from app.models.schemas.moment import (
     MomentAttachRef,
     MomentContentNode,
+    MomentCreateCheckResp,
     MomentCreateReq,
+    MomentCreateResp,
+    MomentPublishPermission,
+    MomentPublishSetting,
     MomentRemoveReq,
+    MomentRemoveResp,
     MomentRepostReq,
+    MomentRepostResp,
     MomentTopicRef,
     MomentTopReq,
+    MomentTopResp,
 )
-from app.services.user.account import PptrUser
 from app.services.common.daily_limit import count_created_today
 
 # 业务上限（MVP）
@@ -112,7 +117,7 @@ def _to_enum_dyn_type(scene: str) -> MomentTypeEnum:
 def _build_audit_log(
     *,
     biz_type: InteractionBizTypeEnum,
-    biz_id: int,
+    biz_id: int | str,
     operator_mid: int,
     to_status: ResourceAuditStatusEnum,
     action: MomentAuditLogActionEnum,
@@ -142,16 +147,6 @@ def _build_audit_log(
         clientIp=client_ip,
         userAgent=user_agent,
     )
-
-
-def _to_base_resp(dyn: TMoment) -> dict[str, Any]:
-    """把 TMoment 行转换为接口出参字典（含 dynId + dynIdStr 双形态）。"""
-    return {
-        "dynId": dyn.dynId,
-        "dynIdStr": str(dyn.dynId),
-        "auditStatus": dyn.auditStatus.name,
-        "dynType": dyn.dynType.name,
-    }
 
 
 # ==================== 前置校验（P2-T6）====================
@@ -219,6 +214,19 @@ def _resolve_attach(
     return None, nodes
 
 
+def _safe_biz_rid(biz_id: str | int | None) -> int | None:
+    """把 attach 资源 id 安全落到 BIGINT 列 ``TMoment.bizRid``。
+
+    dynamic/lottery/comment 等数字主键正常转 int；RPA 资源的非数字 id
+    （``ca_xxx`` / workflow UUID / browser_id）无法由 BIGINT 承载，返回 None
+    （bizType 仍保留；附加卡不支持引用非数字 id 的 RPA 资源落库，避免 int() 崩溃）。
+    """
+    if biz_id is None:
+        return None
+    s = str(biz_id)
+    return int(s) if s.isdigit() else None
+
+
 async def _validate_attach(
     session: AsyncSession, attach: MomentAttachRef | None
 ) -> None:
@@ -231,7 +239,7 @@ async def _validate_attach(
 
     if attach and attach.bizType and attach.bizId:
         try:
-            biz = get_biz(attach.bizType, session, int(attach.bizId))
+            biz = get_biz(attach.bizType, session, str(attach.bizId))
         except (ValueError, TypeError):
             return
         if not await biz.check_exists():
@@ -354,7 +362,7 @@ async def _decide_content_audit(
                 subject_label="动态",
                 content_excerpt=content_text[:60],
             )
-        except Exception:  # noqa: BLE001 通知弱依赖，不阻塞拒绝
+        except Exception:
             pass
         raise ValueError(f"动态内容未通过审核：{audit_result.reason}")
     if audit_result is not None and audit_result.need_manual:
@@ -389,7 +397,7 @@ def _resolve_ip_geo(
         if r is None:
             return None, None, None, None, None
         return r.poi, r.lat, r.lng, r.poi, r.isp
-    except Exception:  # noqa: BLE001 - 解析失败静默降级
+    except Exception:
         return None, None, None, None, None
 
 
@@ -440,7 +448,7 @@ class MomentPublishService:
         *,
         client_ip: str | None = None,
         user_agent: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MomentCreateResp:
         """创建一条动态（WORD 或 FORWARD）。
 
         新建动态一律 auditStatus='auditing'，pubTime=NULL，仅作者本人空间可见。
@@ -480,7 +488,7 @@ class MomentPublishService:
                 user_agent=user_agent,
             )
         # 弱依赖：发布时解析 @ 节点，批量生产 AT 事件（P6-T8）
-        await MomentPublishService._notify_at_batch(mid, data["dynId"], nodes)
+        await MomentPublishService._notify_at_batch(mid, data.dynId, nodes)
         return data
 
     @staticmethod
@@ -494,7 +502,7 @@ class MomentPublishService:
         *,
         client_ip: str | None = None,
         user_agent: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MomentCreateResp:
         moment_id = await generate_moment_id()
         now = datetime.now()
         content_text = _nodes_to_text(nodes)
@@ -519,7 +527,7 @@ class MomentPublishService:
             bizType=InteractionBizTypeEnum.from_text(attach.bizType)
             if attach and attach.bizType
             else None,
-            bizRid=int(attach.bizId) if attach and attach.bizId else None,
+            bizRid=_safe_biz_rid(attach.bizId) if attach and attach.bizId else None,
             topicId=topic_id,
             lbsPoi=lbs_poi,
             lbsLat=lbs_lat,
@@ -564,7 +572,7 @@ class MomentPublishService:
         logger.info(
             f"用户 {mid} 发布 WORD 动态 dynId={moment_id}（topics={len(topics) if topics else 0}）"
         )
-        return _to_base_resp(dyn)
+        return MomentCreateResp.from_row(dyn)
 
     @staticmethod
     async def _create_forward(
@@ -577,7 +585,7 @@ class MomentPublishService:
         *,
         client_ip: str | None = None,
         user_agent: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MomentCreateResp:
         if not req.repostSrc or req.repostSrc.dynId <= 0:
             raise ValueError("转发动态必须指定 repostSrc.dynId")
         src_dyn = await _get_dynamic_or_404(session, req.repostSrc.dynId)
@@ -610,7 +618,7 @@ class MomentPublishService:
             bizType=InteractionBizTypeEnum.from_text(attach.bizType)
             if attach and attach.bizType
             else None,
-            bizRid=int(attach.bizId) if attach and attach.bizId else None,
+            bizRid=_safe_biz_rid(attach.bizId) if attach and attach.bizId else None,
             topicId=topic_id,
             repostSrcDynId=src_dyn.dynId,
             repostDepth=(src_dyn.repostDepth or 0) + 1,
@@ -655,7 +663,7 @@ class MomentPublishService:
         logger.info(
             f"用户 {mid} 转发动态 srcDynId={src_dyn.dynId} → dynId={moment_id}（topics={len(topics) if topics else 0}）"
         )
-        return _to_base_resp(dyn)
+        return MomentCreateResp.from_row(dyn)
 
     # ==================== 转发：repost 接口（P2-T3）====================
 
@@ -667,7 +675,7 @@ class MomentPublishService:
         *,
         client_ip: str | None = None,
         user_agent: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MomentRepostResp:
         """转发指定动态（FORWARD）。与 create(FORWARD) 共用核心逻辑。"""
         src_dyn = await _get_dynamic_or_404(session, req.srcDynId)
         if (
@@ -731,7 +739,7 @@ class MomentPublishService:
         logger.info(
             f"用户 {mid} 转发动态(repost) srcDynId={src_dyn.dynId} → dynId={moment_id}"
         )
-        return _to_base_resp(dyn)
+        return MomentRepostResp.from_row(dyn)
 
     # ==================== 删除（P2-T4）====================
 
@@ -744,7 +752,7 @@ class MomentPublishService:
         operator_role: str = "owner",
         client_ip: str | None = None,
         user_agent: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> MomentRemoveResp:
         """软删动态（设 deletedAt）。
 
         ``operator_role``（2.22.1）：
@@ -760,7 +768,7 @@ class MomentPublishService:
             raise ValueError("只能删除自己的动态")
         if dyn.deletedAt is not None:
             # 幂等：已删除直接返回成功
-            return {"dynId": dyn.dynId, "dynIdStr": str(dyn.dynId), "success": True}
+            return MomentRemoveResp(dynId=int(dyn.dynId), success=True)
 
         was_normal = dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
         from_status = dyn.auditStatus
@@ -807,7 +815,7 @@ class MomentPublishService:
         await session.commit()
         who = "管理员" if is_admin else f"用户 {mid}"
         logger.info(f"{who} 删除动态 dynId={dyn.dynId}（before={from_status.value}）")
-        return {"dynId": dyn.dynId, "dynIdStr": str(dyn.dynId), "success": True}
+        return MomentRemoveResp(dynId=int(dyn.dynId), success=True)
 
     # ==================== 置顶 / 取消置顶（P2-T5）====================
 
@@ -818,7 +826,7 @@ class MomentPublishService:
         req: MomentTopReq,
         *,
         untop: bool = False,
-    ) -> dict[str, Any]:
+    ) -> MomentTopResp:
         """空间置顶 / 取消置顶。仅本人 + normal 状态可操作。"""
         dyn = await _get_dynamic_or_404(session, req.dynId)
         if dyn.mid != mid:
@@ -829,11 +837,7 @@ class MomentPublishService:
             raise ValueError("仅审核通过的动态可置顶")
         if dyn.isTop == (0 if untop else 1):
             # 已是目标状态，幂等返回
-            return {
-                "dynId": dyn.dynId,
-                "dynIdStr": str(dyn.dynId),
-                "isTop": 0 if untop else 1,
-            }
+            return MomentTopResp(dynId=int(dyn.dynId), isTop=0 if untop else 1)
 
         now = datetime.now()
         dyn.isTop = 0 if untop else 1
@@ -843,7 +847,7 @@ class MomentPublishService:
         await session.refresh(dyn)
         action = "取消置顶" if untop else "置顶"
         logger.info(f"用户 {mid} {action}动态 dynId={dyn.dynId}")
-        return {"dynId": dyn.dynId, "dynIdStr": str(dyn.dynId), "isTop": dyn.isTop}
+        return MomentTopResp(dynId=int(dyn.dynId), isTop=int(dyn.isTop or 0))
 
     # ==================== 发布时 @ 事件通知（P6-T8，弱依赖）====================
 
@@ -870,8 +874,6 @@ class MomentPublishService:
         if not targets:
             return
 
-        briefs = await PptrUser.get_many([actor_mid])
-        actor_name = briefs.get(actor_mid).uname if briefs.get(actor_mid) else None
         for tmid in targets:
             await report_event_weakly(
                 EventReportReq(
@@ -887,16 +889,16 @@ class MomentPublishService:
     # ==================== 发布预校验（P2-T6 出参）====================
 
     @staticmethod
-    async def create_check(mid: int, scene: str) -> dict[str, Any]:
+    async def create_check(mid: int, scene: str) -> MomentCreateCheckResp:
         """发布页预校验：返回允许的场景与（预留的）设置 / 权限信息。"""
         allowed = list(_ALLOWED_SCENES)
         if scene not in _ALLOWED_SCENES:
             raise ValueError(f"暂不支持动态类型 {scene}")
-        return {
-            "setting": {},
-            "permission": {"mid": mid},
-            "allowedScenes": allowed,
-        }
+        return MomentCreateCheckResp(
+            setting=MomentPublishSetting(),
+            permission=MomentPublishPermission(mid=int(mid)),
+            allowedScenes=allowed,
+        )
 
     # ==================== 内部：源动态 repostCount 原子 -1 ====================
 

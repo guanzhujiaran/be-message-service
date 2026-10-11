@@ -5,14 +5,12 @@
 并支持可选图片附件 `pics`（站外 http(s) URL 列表，最多 3 张）。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import Field, SQLModel
 
-from bili_common.models import InteractionBizTypeEnum
-from app.models.str_int import StrInt
-from app.models.schemas.interaction import InteractionResource
-
-
 from app.models.schemas.base import auto_str
+from app.models.schemas.interaction import InteractionResource
+from app.models.str_int import StrInt
 
 
 @auto_str
@@ -40,7 +38,7 @@ class ReportItem(SQLModel):
 
     pk: int
     bizType: InteractionBizTypeEnum
-    bizId: int
+    bizId: str
     accusedMid: int
     reportMid: int
     reasonType: int

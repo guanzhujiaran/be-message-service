@@ -58,7 +58,7 @@ class DmContentService:
                     },
                 )
             return True
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"私信内容写入分片 {table} 失败 msgkey={payload.msgkey}: {e}")
             return False
 
@@ -84,7 +84,7 @@ class DmContentService:
                     # 分片不存在（历史月份库尚未创建）：视为无内容，交由摘要兜底
                     logger.debug(f"私信内容分片 {table} 不存在，跳过")
                     continue
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     logger.warning(f"读取私信内容分片 {table} 失败: {e}")
                     continue
                 for msgkey, content in rows:
@@ -103,7 +103,7 @@ class DmContentService:
         except ProgrammingError:
             # 分片不存在说明内容还没落库，撤回本身依然成立
             return True
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"清空私信内容失败 msgkey={msgkey}: {e}")
             return False
 

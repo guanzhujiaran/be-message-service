@@ -30,10 +30,6 @@ async def seed_interact(
         if fid:
             folder_ids.append(fid)
             await client.approve_folder_cover(fid)
-    # 默认收藏夹（不传 folderId 走默认夹）
-    if users:
-        await client.favorite_setting(users[0][0], True)
-
     # 2) 收藏动态（每人收藏 1~2 条到自己的收藏夹）
     fav_count = 0
     for i, (mid, _) in tqdm(

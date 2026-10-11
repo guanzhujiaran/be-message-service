@@ -18,25 +18,23 @@
 服务端系统，二者都落到同一套 PushMessageService 执行体。
 """
 
-from faststream.rabbit import RabbitQueue
-
 from bili_common.models import (
     PushRpcSendNowParams,
     PushRpcSendNowResult,
     PushRpcSendParams,
     PushRpcSendResult,
     StandardResponse,
+    error_response,
     push_rpc_routing_key_for,
     success_response,
-    error_response,
 )
 from bili_common.models.push_rpc import PushRpcMethodName
 from bili_common.rpc.safe import rpc_safe
+from faststream.rabbit import RabbitQueue
 
-from app.core.broker import broker, message_exchange, message_queue
-from app.core.broker import RK_PUSH
-from app.mq.router import router
+from app.core.broker import RK_PUSH, broker, message_exchange, message_queue
 from app.models import PushMessagePayload
+from app.mq.router import router
 from app.services.message.external.push import PushMessageService
 from app.services.message.external.push_helper import merge_config
 
@@ -78,7 +76,7 @@ async def rpc_push_message(params: PushRpcSendParams) -> StandardResponse:
             routing_key=RK_PUSH,
             queue=message_queue,
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return error_response(code=500, msg=f"发布推送消息失败: {e}")
     return success_response(data=PushRpcSendResult(title=title, queued=True))
 
@@ -110,7 +108,7 @@ async def rpc_send_push_now(params: PushRpcSendNowParams) -> StandardResponse:
     service = PushMessageService(merged, push_type=params.push_type)
     try:
         sent = await service.send(title, params.content)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return error_response(
             code=500,
             msg=f"立即推送失败: {e}",

@@ -15,13 +15,13 @@
 """
 
 from __future__ import annotations
-import geoip2.database
 
 import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import geoip2.database
 from loguru import logger
 
 from app.core.config import settings
@@ -33,7 +33,7 @@ _ASN_DB = "GeoLite2-ASN.mmdb"
 class GeoIpResult:
     """一次 IP 解析结果（属地 + 经纬度 + ISP）。"""
 
-    __slots__ = ("poi", "lat", "lng", "isp")
+    __slots__ = ("isp", "lat", "lng", "poi")
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ def _lookup_isp(ip: str) -> str | None:
         return None
     try:
         resp = reader.asn(ip)
-    except Exception:  # noqa: BLE001 - ASN 未命中常见，静默跳过
+    except Exception:
         return None
     org = (resp.autonomous_system_organization or "").strip()
     return org or None
@@ -105,7 +105,7 @@ def lookup(ip: str | None) -> GeoIpResult:
         return GeoIpResult(poi="未知")
     try:
         resp = reader.city(ip)
-    except Exception:  # noqa: BLE001 - mmdb 未命中（保留地址等）常见，静默跳过
+    except Exception:
         return GeoIpResult(poi="未知")
 
     city = resp.city.names.get("zh-CN") or resp.city.name
@@ -129,4 +129,4 @@ def lookup_poi(ip: str | None) -> str | None:
     return lookup(ip).poi
 
 
-__all__ = ["lookup", "lookup_poi", "GeoIpResult"]
+__all__ = ["GeoIpResult", "lookup", "lookup_poi"]

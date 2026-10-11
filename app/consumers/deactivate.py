@@ -29,7 +29,7 @@ async def handle_user_deactivate(
     try:
         await PptrUser(mid=uid).deactivate()
         logger.info(f"[deactivate] 用户 {uid} 已注销")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"[deactivate] 用户 {uid} 注销失败（已 ack，不再重投）: {e}")
     # 无论成功与否都 ack：注销幂等，失败不 requeue，避免无限打转
     await msg.ack()

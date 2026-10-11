@@ -13,17 +13,17 @@
 import datetime
 
 import pytest
+from seed_biliopus import RealDyn, fetch_real_dyns
 from sqlmodel import text
 
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import TMoment
 from app.models.enums import (
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.services.moment.moment_feed import MomentFeedService
-from seed_biliopus import RealDyn, fetch_real_dyns
 
 D_MID = 920001
 D_MID2 = 920002
@@ -36,7 +36,7 @@ async def _new_moment_id() -> int:
 # 时间基准用当前本地时间（CST）：避免 seed 固定在久远过去而被库中已存在的大量
 # normal 动态（如灌数数据）挤出综合 Feed 第一页，导致「库空」假设的断言失效。
 # 与业务写入（datetime.now()）同一基准。
-_BASE = datetime.datetime.now()  # noqa: DTZ005
+_BASE = datetime.datetime.now()
 
 
 async def _seed(

@@ -12,27 +12,25 @@
 from datetime import datetime
 
 from loguru import logger
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
-from sqlalchemy import distinct, func
 from app.models.db import DmMessageIndex
-from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
+from app.models.enums import NotifyLevelEnum, ResourceAuditStatusEnum
 from app.models.schemas import (
     DmAuditItem,
     DmSessionContextResp,
     DmStatsResp,
 )
+from app.models.schemas.audit import AuditStatisticsResp
 from app.services.comment import summarize_text
 from app.services.message.dm.dm import DmSessionObject
 from app.services.message.insite.notify import NotifyService
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+)
 from app.services.user.account import DmAdminUser
 from app.utils.audit_source import build_dm_source
 from app.utils.notify_markup import markup_inline_link
@@ -130,7 +128,7 @@ class DmAdminService:
                 await DmAdminService._notify_state_changed(
                     sender_row, state, msgkey, note=note
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"私信状态变更通知投递失败（弱依赖）: {e}")
         return True
 
@@ -225,7 +223,7 @@ class DmAdminService:
                     success += 1
                 else:
                     failed.append(msgkey)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"批量私信审核失败 msgkey={msgkey}: {e}")
                 failed.append(msgkey)
         return success, failed
@@ -320,7 +318,7 @@ class DmAdminService:
             return
         profiles = await DmAdminUser.get_many([it.sender_mid for it in items])
         for it in items:
-            it.sender = profiles.get(it.sender_mid)
+            it.sender = profiles.of_mid(it.sender_mid)
 
     # ==================== 内容来源（会话上下文）====================
 

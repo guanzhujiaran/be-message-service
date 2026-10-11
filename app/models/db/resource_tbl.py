@@ -11,12 +11,12 @@
 - 索引 / 唯一约束在 `__table_args__` 显式声明。
 """
 
+from bili_common.models.report import ReportBase
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy import UniqueConstraint, text
 from sqlmodel import Field, Index, PrimaryKeyConstraint
-from bili_common.models.report import ReportBase
 
 from app.models.db.base_tbl import ResourceBase, TimestampMixin
-from sqlalchemy import Enum as SAEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
@@ -170,7 +170,7 @@ class TResourceAuditLog(ResourceBase, TimestampMixin, table=True):
 
 __all__ = [
     "TResourceAuditLog",
-    "TResourceLike",
     "TResourceDislike",
+    "TResourceLike",
     "TResourceReport",
 ]

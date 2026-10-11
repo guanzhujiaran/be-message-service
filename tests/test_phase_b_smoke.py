@@ -15,11 +15,14 @@
 """
 
 import pytest
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from bili_common.models.depends import AuthInfo
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import select, text
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
+import app.services.message.dm.dm as dm_svc_mod
+import app.services.message.infrastructure.publisher as publisher
 from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
@@ -35,7 +38,6 @@ from app.models.db import (
     UserActivity,
     UserMessageSetting,
 )
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import DmMsgStatusEnum, DmMsgTypeEnum, NotifyTargetTypeEnum
 from app.models.schemas import (
     DmSendReq,
@@ -45,14 +47,12 @@ from app.models.schemas import (
     MessageSettingUpdateReq,
     NotifyCreateReq,
 )
-import app.services.message.dm.dm as dm_svc_mod
-import app.services.message.infrastructure.publisher as publisher
-from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm import DmInbox, DmSessionObject
+from app.services.message.insite.activity import ActivityService
 from app.services.message.insite.events import BaseEvent
 from app.services.message.insite.notify import NotifyService
-from app.services.user.account import PptrUser
 from app.services.message.insite.setting import SettingService
+from app.services.user.account import PptrUser
 
 
 # 每个测试函数跑在独立的事件循环里；模块级 engine 会绑死在第一个循环上，
@@ -297,13 +297,14 @@ async def test_notify_level_role_vip_visibility() -> None:
 async def test_event_aggregation_and_dedup() -> None:
     mid = M["event_user"]
     async with new_session() as s:
-        req = lambda actor: EventReportReq(
-            mid=mid,
-            event_type=InteractionActionTypeEnum.LIKE,
-            source_type=InteractionBizTypeEnum.DYNAMIC,
-            source_id="BV1",
-            actor_mid=actor,
-        )
+        def req(actor):
+            return EventReportReq(
+                mid=mid,
+                event_type=InteractionActionTypeEnum.LIKE,
+                source_type=InteractionBizTypeEnum.DYNAMIC,
+                source_id="BV1",
+                actor_mid=actor,
+            )
         # 同一人对同一来源重复上报 → 去重
         r1 = await BaseEvent.from_req(req(800001)).report(s)
         r2 = await BaseEvent.from_req(req(800001)).report(s)
@@ -334,7 +335,7 @@ async def test_event_aggregation_and_dedup() -> None:
         # 删除
         rows = (await s.exec(select(EventMessage).where(EventMessage.mid == mid))).all()
         await BaseEvent.delete(s, mid, [r.id for r in rows])
-        assert await EventService.count_unread(s, mid) == 0
+        assert await BaseEvent.count_unread(s, mid) == 0
 
         # 就地清理本测试产生的事件数据
         await _delete_event(s, mid)

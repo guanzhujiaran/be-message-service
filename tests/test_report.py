@@ -11,6 +11,9 @@
 """
 
 import pytest
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from bili_common.models.report import ReportAuditStatusEnum
+from bili_common.services.report import ReportBaseService
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import col, select, text
@@ -22,15 +25,12 @@ from app.core.database import new_session
 from app.models.db import EventMessage, TResourceFeed
 from app.models.db.comment_tbl import CommentReport
 from app.models.db.moment_tbl import TMoment
-from app.models.db.resource_tbl import TResourceReport
 from app.models.db.report_tbl import TUserReport
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
-from bili_common.models.report import ReportAuditStatusEnum
-from app.models.enums import ResourceAuditStatusEnum, MomentTypeEnum
+from app.models.db.resource_tbl import TResourceReport
+from app.models.enums import MomentTypeEnum, ResourceAuditStatusEnum
 from app.models.schemas import CommentAddReq, ReportCreateReq, ReportReviewReq
-from app.services.comment import CommentService
 from app.services.admin.report import ReportService
-from bili_common.services.report import ReportBaseService
+from app.services.comment import CommentService
 
 _OID = 884_000_100_000
 _MID = 906_100

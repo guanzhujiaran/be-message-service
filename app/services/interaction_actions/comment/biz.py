@@ -10,10 +10,10 @@
 故沿用基类默认（调用时抛「该资源不支持」）。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import col, select
 
 from app.models.db.comment_tbl import CommentContent, CommentIndex, CommentReport
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base import InteractionAclScopeEnum
@@ -84,18 +84,26 @@ class CommentBiz(BaseBiz):
 
     @classmethod
     async def batch_get_resources(
-        cls, session, biz_ids, *, actor_mid=None, rpid_map=None
-    ):
+        cls,
+        session,
+        biz_ids: list[str],
+        *,
+        actor_mid=None,
+        rpid_map: dict[str, str] | None = None,
+    ) -> dict[str, InteractionResource]:
         """评论批量回捞：`CommentIndex` / `CommentContent` 各一次 `IN` 查询（计划书 §5.12）。
 
         覆盖基类「逐条 `get_resource`」的兜底实现，避免 N+1（对齐 `DynamicBiz`）。
         装配口径与 `get_resource` 一致：`title` = 评论正文、`authorMid` = 评论作者、
         `exists` = 索引存在、`interactable` = 状态 normal、`jumpTarget` = 所属顶层资源 + 楼层锚点。
+
+        rpid 恒为数字雪花：内部查 BIGINT 列转 int，入参 / 返回键统一为原始 str id；
+        非数字 id 查不到索引，按 ``exists=False`` 空占位返回。
         """
         from app.utils.route_target import jump_target_for
 
         rpid_map = rpid_map or {}
-        ids = [int(b) for b in biz_ids]
+        ids = [int(b) for b in biz_ids if str(b).isdigit()]
         index_map: dict[int, CommentIndex] = {}
         content_map: dict[int, CommentContent] = {}
         if ids:
@@ -112,27 +120,31 @@ class CommentBiz(BaseBiz):
             ).all()
             content_map = {int(r.rpid): r for r in content_rows}
 
-        out: dict[int, InteractionResource] = {}
-        for bid in ids:
-            idx = index_map.get(bid)
+        out: dict[str, InteractionResource] = {}
+        for bid in biz_ids:
+            sbid = str(bid)
+            int_bid = int(sbid) if sbid.isdigit() else None
+            idx = index_map.get(int_bid) if int_bid is not None else None
             if idx is None:
-                out[bid] = InteractionResource(
+                out[sbid] = InteractionResource(
                     bizType=InteractionBizTypeEnum.COMMENT,
-                    bizId=bid,
+                    bizId=sbid,
                     exists=False,
                     interactable=False,
                 )
                 continue
-            content = content_map.get(bid)
-            out[bid] = InteractionResource(
+            content = content_map.get(int_bid)
+            out[sbid] = InteractionResource(
                 bizType=InteractionBizTypeEnum.COMMENT,
-                bizId=bid,
+                bizId=sbid,
                 authorMid=int(idx.mid),
                 exists=True,
                 interactable=idx.auditStatus is ResourceAuditStatusEnum.NORMAL,
                 title=content.message if content else None,
                 cover=None,
-                jumpTarget=jump_target_for(idx.type, idx.oid, rpid_map.get(bid) or bid),
+                jumpTarget=jump_target_for(
+                    idx.type, idx.oid, rpid_map.get(sbid) or sbid
+                ),
             )
         return out
 

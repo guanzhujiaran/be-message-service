@@ -16,23 +16,22 @@
 from datetime import datetime
 
 from loguru import logger
-from sqlmodel import col, func, select
+from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
 from app.models.db import TFavoriteFolder, TFolderCoverAudit
-from app.models.enums import ResourceAuditStatusEnum, NotifyLevelEnum
+from app.models.enums import NotifyLevelEnum, ResourceAuditStatusEnum
+from app.models.schemas.audit import AuditStatisticsResp
 from app.models.schemas.folder_cover_audit import (
     FolderCoverAuditItem,
     FolderCoverAuditListResp,
     FolderCoverAuditMineResp,
 )
 from app.services.message.insite.notify import NotifyService
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+)
 from app.services.user.account import PptrUser
 
 
@@ -187,7 +186,7 @@ class FolderCoverAuditService:
 
         mids = {r.mid for r in rows}
         briefs = await PptrUser.get_many(list(mids))
-        items = [_to_item(r, briefs.get(r.mid)) for r in rows]
+        items = [_to_item(r, briefs.of_mid(r.mid)) for r in rows]
         return FolderCoverAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
         )
@@ -234,7 +233,7 @@ class FolderCoverAuditService:
         # 弱依赖通知：审核通过
         await FolderCoverAuditService._notify_approved(row)
         briefs = await PptrUser.get_many([row.mid])
-        return _to_item(row, briefs.get(row.mid))
+        return _to_item(row, briefs.of_mid(row.mid))
 
     # ==================== 管理端：审核驳回 ====================
 
@@ -270,7 +269,7 @@ class FolderCoverAuditService:
         # 弱依赖通知：审核驳回
         await FolderCoverAuditService._notify_rejected(row)
         briefs = await PptrUser.get_many([row.mid])
-        return _to_item(row, briefs.get(row.mid))
+        return _to_item(row, briefs.of_mid(row.mid))
 
     # ==================== 内部方法 ====================
 
@@ -284,7 +283,7 @@ class FolderCoverAuditService:
                 content="您提交的收藏夹封面已审核通过并公开显示。",
                 level=NotifyLevelEnum.NORMAL,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"收藏夹封面审核通过通知投递失败（弱依赖，已忽略）: {e}")
 
     @staticmethod
@@ -301,7 +300,7 @@ class FolderCoverAuditService:
                 content="\n".join(lines),
                 level=NotifyLevelEnum.IMPORTANT,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"收藏夹封面审核驳回通知投递失败（弱依赖，已忽略）: {e}")
 
 

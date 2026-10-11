@@ -2,14 +2,15 @@
 
 from datetime import datetime
 
+from bili_common.core.time_utils import OptionalUnixTime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import (
-    ResourceAuditStatusEnum,
     DmMsgStatusEnum,
     DmMsgTypeEnum,
     DmRelationEnum,
     DmSessionTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
 from app.models.schemas.base import auto_str
@@ -69,7 +70,7 @@ class DmSessionItem(SQLModel):
         default=0, description="置顶时间戳(毫秒)，0=未置顶；置顶唯一真相源"
     )
     is_muted: bool = False
-    updated_at: datetime | None = None
+    updated_at: OptionalUnixTime = None
 
 
 class DmSessionListResp(SQLModel):
@@ -107,10 +108,10 @@ class DmMessageItem(SQLModel):
     content_ready: bool = Field(
         default=True, description="内容是否已从分片读到（False 表示当前为摘要兜底）"
     )
-    created_at: datetime | None = None
+    created_at: OptionalUnixTime = None
     audit_state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
-    recalled_at: datetime | None = Field(
-        default=None, description="撤回时间（仅撤回后非空）"
+    recalled_at: OptionalUnixTime = Field(
+        default=None, description="撤回时间（仅撤回后非空，秒级时间戳）"
     )
     recalled_by: int | None = Field(
         default=None,
@@ -203,7 +204,7 @@ class DmAuditItem(SQLModel):
     audit_state: ResourceAuditStatusEnum = ResourceAuditStatusEnum.NORMAL
     msg_ts: int = Field(default=0, description="消息毫秒时间戳")
     content_ready: bool = Field(default=False, description="内容是否已异步落库到分片")
-    created_at: datetime | None = None
+    created_at: OptionalUnixTime = None
     source: AuditSourceInfo | None = Field(
         default=None, description="内容来源，管理端可点击直达该会话上下文"
     )

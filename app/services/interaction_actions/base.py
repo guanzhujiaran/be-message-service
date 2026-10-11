@@ -12,12 +12,10 @@
 `@_acl_checker` 注册校验函数即可，资源方法的权限组合无需改动。
 """
 
+from collections.abc import Awaitable, Callable
 from enum import IntEnum
-from typing import Any, Awaitable, Callable
+from typing import Any
 
-from loguru import logger
-
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.interaction import InteractionResource
 from app.services.user.follow import FollowService
 
@@ -161,7 +159,7 @@ class _BizLike:
 
 
 __all__ = [
+    "InteractionAclScopeEnum",
     "InteractionActionError",
     "InteractionRelationScopeEnum",
-    "InteractionAclScopeEnum",
 ]

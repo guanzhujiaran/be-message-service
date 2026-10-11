@@ -38,6 +38,9 @@ dependencies = [
     "geoip2>=4.8.0",
     "fastapi-i18n>=0.12.0",
     "tqdm>=4.70.0",
+    "lightgbm>=4.7.0",
+    "scikit-learn>=1.9.1",
+    "implicit>=0.7.3",
 ]
 
 [tool.uv]
@@ -73,6 +76,50 @@ markers = [
     "integration: 需要真实 RabbitMQ 的端到端 RPC 集成测试",
 ]
 
+[tool.ruff]
+# 不显式配置的话，检查结果取决于运行环境的默认 / 用户级配置（本机实测会混入
+# SIM/UP/TRY 等规则），结果不可复现 —— 这里锁定项目口径（计划书 §5.27）。
+target-version = "py311"
+line-length = 88
+# ruff 默认已排除 .venv / __pycache__；迁移脚本是生成代码但同样纳入检查。
+
+[tool.ruff.lint]
+select = [
+    "E4",  # pycodestyle：导入相关
+    "E7",  # pycodestyle：缩进等
+    "E9",  # pycodestyle：语法类错误（含 E999）
+    "F",   # pyflakes：未定义名 / 未用导入 / 未用变量
+    "I",   # isort：导入排序
+    "B",   # flake8-bugbear：易踩的坑
+    "UP",  # pyupgrade：语法现代化
+    "SIM", # flake8-simplify：可简化写法
+    "RET", # flake8-return
+    "C4",  # flake8-comprehensions
+    "RUF", # ruff 自带规则
+]
+ignore = [
+    "E501",   # 行宽交给 formatter，linter 不管
+    "E712",   # SQLModel / SQLAlchemy 列比较必须写 col(X) == False：ruff 建议的
+              # `not X` 在 SQL 表达式里语义不同（会改坏查询条件），不能开
+    "B008",   # FastAPI 依赖注入的基本写法（x: int = Query(...) / Depends(...)）
+    "B024",   # 抽象基类的空钩子方法 / 无抽象方法的基类：本项目的 Biz / 状态机基类是
+    "B027",   # 「默认空实现」约定（子类按需覆盖），不是漏写 @abstractmethod
+    "RUF012", # 类级容器（注册表 _registry、常量映射 ROLE_BIZ_PERMS / error_messages、
+              # SQLModel __table_args__、测试记录器）都是**有意共享**的，逐处加 ClassVar
+              # 只有注解收益，噪音大于价值
+    "SIM105", # `except: pass` → contextlib.suppress 属可读性偏好，不强改既有写法
+    "RUF001", # 中文注释 / docstring 的全角标点（，：（））被判为「歧义 Unicode 字符」，
+    "RUF002", # 本项目注释全中文，单这一族就是 2 万+ 条纯噪音（计划书 §5.27）
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# alembic 模板：必须先 sys.path.append 再 import app，且迁移要靠 `import *` 收全表
+"alembic/env.py" = ["E402", "F403"]
+"alembic_pptr/env.py" = ["E402", "F403"]
+# 一次性运维脚本：同样是先补 sys.path 再 import
+"scripts/*" = ["E402"]
+"tests/test_moment_interaction.py" = ["E402"]
 
 [dependency-groups]
 dev = [

@@ -18,9 +18,10 @@
 写入 pptr `TUserDetail.avatar`。
 """
 
+from urllib.parse import urlparse
+
 import httpx
 from loguru import logger
-from urllib.parse import urlparse
 
 # 头像大小上限：1MB
 AVATAR_MAX_BYTES = 1024 * 1024
@@ -74,22 +75,24 @@ async def verify_avatar_url(
 
     timeout = httpx.Timeout(AVATAR_DOWNLOAD_TIMEOUT)
     try:
-        async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=True, transport=transport
-        ) as client:
-            async with client.stream("GET", url) as resp:
-                if resp.status_code != 200:
-                    return False, f"{label}图片下载失败（HTTP {resp.status_code}）"
-                content_type = resp.headers.get("content-type", "")
-                if not content_type.startswith("image/"):
-                    return False, f"{label}链接不是有效的图片"
-                # 流式读取累计大小，超 1MB 立即断连拒绝
-                total = 0
-                async for chunk in resp.aiter_bytes(chunk_size=_READ_CHUNK):
-                    total += len(chunk)
-                    if total > AVATAR_MAX_BYTES:
-                        logger.warning(f"{label}图片超过 1MB 被拒: {url}")
-                        return False, f"{label}图片不能超过 1MB"
+        async with (
+            httpx.AsyncClient(
+                timeout=timeout, follow_redirects=True, transport=transport
+            ) as client,
+            client.stream("GET", url) as resp,
+        ):
+            if resp.status_code != 200:
+                return False, f"{label}图片下载失败（HTTP {resp.status_code}）"
+            content_type = resp.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                return False, f"{label}链接不是有效的图片"
+            # 流式读取累计大小，超 1MB 立即断连拒绝
+            total = 0
+            async for chunk in resp.aiter_bytes(chunk_size=_READ_CHUNK):
+                total += len(chunk)
+                if total > AVATAR_MAX_BYTES:
+                    logger.warning(f"{label}图片超过 1MB 被拒: {url}")
+                    return False, f"{label}图片不能超过 1MB"
     except httpx.TimeoutException:
         logger.warning(f"{label}图片下载超时（>{AVATAR_DOWNLOAD_TIMEOUT}s）: {url}")
         return False, f"{label}图片下载超时或网络异常"
@@ -101,8 +104,8 @@ async def verify_avatar_url(
 
 
 __all__ = [
-    "AVATAR_MAX_BYTES",
-    "AVATAR_DOWNLOAD_TIMEOUT",
     "ALLOWED_IMAGE_EXTENSIONS",
+    "AVATAR_DOWNLOAD_TIMEOUT",
+    "AVATAR_MAX_BYTES",
     "verify_avatar_url",
 ]

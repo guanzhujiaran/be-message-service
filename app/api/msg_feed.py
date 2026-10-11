@@ -8,15 +8,15 @@
                     （活跃用户实时推送，非活跃用户定时批量推送）。
 """
 
+from bili_common.models import InteractionActionTypeEnum
 from fastapi import APIRouter
 
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from bili_common.models import InteractionActionTypeEnum
 from app.models.schemas import EventUnreadResp, UserActivityResp
-from app.services.message.insite.activity import ActivityService
 from app.services.message.dm.dm import DmInbox
+from app.services.message.insite.activity import ActivityService
 from app.services.message.insite.events import BaseEvent
 from app.services.message.insite.notify import NotifyService
 

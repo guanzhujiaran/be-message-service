@@ -12,6 +12,7 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 from sqlmodel import col, delete, select
 
@@ -22,11 +23,10 @@ from app.models.db import (
     TResourceFeed,
     TResourceReport,
 )
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.interaction import InteractionResource
 from app.models.schemas.moment import MomentRepostReq
@@ -96,28 +96,38 @@ class DynamicBiz(BaseBiz):
 
     @classmethod
     async def batch_get_resources(
-        cls, session, biz_ids, *, actor_mid=None, rpid_map=None
-    ):
-        """动态批量回捞：一次 IN 查询，按 dynId 装配快照（计划书 §5.11 / C20）。"""
+        cls,
+        session,
+        biz_ids: list[str],
+        *,
+        actor_mid=None,
+        rpid_map: dict[str, str] | None = None,
+    ) -> dict[str, InteractionResource]:
+        """动态批量回捞：一次 IN 查询，按 dynId 装配快照（计划书 §5.11 / C20）。
+
+        入参 / 返回键统一为 str（dynId 恒数字）；内部查 BIGINT 列时转 int，
+        返回字典键保持调用方传入的原始 str id。
+        """
+        from bili_common.models import InteractionBizTypeEnum
         from sqlmodel import select as _select
 
-        from app.models.schemas.interaction import InteractionResource
         from app.services.message.insite.events.source_meta import _first_pic
         from app.utils.route_target import jump_target_for
-        from bili_common.models import InteractionBizTypeEnum
 
         rpid_map = rpid_map or {}
         moment_map: dict[int, TMoment] = {}
-        if biz_ids:
+        int_ids = [int(b) for b in biz_ids if str(b).isdigit()]
+        if int_ids:
             rows = (
                 await session.exec(
-                    _select(TMoment).where(col(TMoment.dynId).in_(biz_ids))
+                    _select(TMoment).where(col(TMoment.dynId).in_(int_ids))
                 )
             ).all()
-            moment_map = {m.dynId: m for m in rows}
-        out: dict[int, InteractionResource] = {}
+            moment_map = {int(m.dynId): m for m in rows}
+        out: dict[str, InteractionResource] = {}
         for bid in biz_ids:
-            dyn = moment_map.get(bid)
+            sbid = str(bid)
+            dyn = moment_map.get(int(sbid)) if sbid.isdigit() else None
             exists = (
                 dyn is not None
                 and dyn.deletedAt is None
@@ -135,16 +145,16 @@ class DynamicBiz(BaseBiz):
                 cover = _first_pic(dyn.contentJson)
                 author_mid = int(dyn.mid)
                 interactable = dyn.auditStatus == ResourceAuditStatusEnum.NORMAL
-            out[bid] = InteractionResource(
+            out[sbid] = InteractionResource(
                 bizType=InteractionBizTypeEnum.DYNAMIC,
-                bizId=bid,
+                bizId=sbid,
                 authorMid=author_mid,
                 exists=exists,
                 interactable=interactable,
                 title=title,
                 cover=cover,
                 jumpTarget=jump_target_for(
-                    InteractionBizTypeEnum.DYNAMIC, bid, rpid_map.get(bid)
+                    InteractionBizTypeEnum.DYNAMIC, sbid, rpid_map.get(sbid)
                 ),
             )
         return out

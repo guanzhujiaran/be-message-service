@@ -24,18 +24,17 @@
 64 位整数一律以字符串出参，避免浏览器 `Number.MAX_SAFE_INTEGER` 精度丢失。
 """
 
-from sqlalchemy import BIGINT, JSON, Text
-from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
+from bili_common.models import InteractionBizTypeEnum
 from bili_common.models.report import ReportBase
+from sqlalchemy import BIGINT, JSON, Text
+from sqlalchemy import Enum as SAEnum
+from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 
 from app.models.db.base_tbl import TimestampMixin
-from sqlalchemy import Enum as SAEnum
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
-    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
-    MomentReportReasonEnum,
+    ResourceAuditStatusEnum,
 )
 
 

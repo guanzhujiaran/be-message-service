@@ -7,6 +7,7 @@ Alembic 的 env.py 与启动期 Schema 校验都从这里导入，
 from app.models.db.admin_tbl import MessageAdmin
 from app.models.db.avatar_audit_tbl import TUserAvatarAudit
 from app.models.db.ban_tbl import UserBan
+from app.models.db.bandit_arm_tbl import TFeedBanditArm
 from app.models.db.base_tbl import ResourceBase, TimestampMixin
 from app.models.db.comment_tbl import (
     CommentAction,
@@ -22,10 +23,11 @@ from app.models.db.event_tbl import EventMessage, EventReadCursor
 from app.models.db.favorite_tbl import (
     TFavoriteFolder,
     TResourceFavorite,
-    TUserFavoriteSetting,
 )
+from app.models.db.feed_event_tbl import TFeedEventLog
 from app.models.db.feed_impression_tbl import TFeedImpression
 from app.models.db.folder_cover_audit_tbl import TFolderCoverAudit
+from app.models.db.follow_tag_tbl import UserFollowTag, UserFollowTagUser
 from app.models.db.follow_tbl import UserFollow
 from app.models.db.interaction_tbl import TInteractionStat, TInteractionViewLog
 from app.models.db.moment_tbl import (
@@ -35,14 +37,14 @@ from app.models.db.moment_tbl import (
     TMomentTopicRel,
 )
 from app.models.db.notify_tbl import NotifyCursor, NotifyMessage, NotifyState
+from app.models.db.report_tbl import TUserReport
+from app.models.db.resource_feed_tbl import TResourceFeed
 from app.models.db.resource_tbl import (
     TResourceAuditLog,
     TResourceDislike,
     TResourceLike,
     TResourceReport,
 )
-from app.models.db.resource_feed_tbl import TResourceFeed
-from app.models.db.report_tbl import TUserReport
 from app.models.db.setting_tbl import UserActivity, UserMessageSetting
 from app.models.db.space_privacy_tbl import TUserSpacePrivacy
 from app.models.db.sys_config_tbl import SysConfig
@@ -66,7 +68,6 @@ __all__ = [  # noqa: RUF022
     # 收藏
     "TFavoriteFolder",
     "TResourceFavorite",  # 原 TMomentFavorite，2.55.0 泛化为通用资源收藏明细
-    "TUserFavoriteSetting",
     # 通用交互计数（2.17.0；2.36.0 起动态并入）
     "TInteractionStat",
     # 通用浏览去重（2.23.0）
@@ -75,6 +76,10 @@ __all__ = [  # noqa: RUF022
     "TResourceFeed",
     # 通用 Feed 曝光记录（2.47.0，曝光去重防重复刷到）
     "TFeedImpression",
+    # Feed 行为事件流水（2.66.0，推荐模型训练样本源）
+    "TFeedEventLog",
+    # LinUCB 臂参数（2.66.0，上下文探索）
+    "TFeedBanditArm",
     "DmContentDeadLetter",
     "DmMessageIndex",
     # 私信
@@ -103,6 +108,9 @@ __all__ = [  # noqa: RUF022
     "UserBan",
     # 用户关注 / 拉黑
     "UserFollow",
+    # 关注分组（tag）与分组-成员关系
+    "UserFollowTag",
+    "UserFollowTagUser",
     # 设置与活跃度
     "UserMessageSetting",
     # 空间对外可见性（2.58.0）

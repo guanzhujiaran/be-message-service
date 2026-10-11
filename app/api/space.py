@@ -14,9 +14,9 @@ from fastapi import APIRouter, Header, Query
 from app.core.database import SessionDep
 from app.dependencies import CurrentUser
 from app.models import StandardResponse
-from app.models.str_int import StrInt
 from app.models.schemas.follow import FollowListResp
 from app.models.schemas.space import SpaceTimelineResp, SpaceViewHistoryResp
+from app.models.str_int import StrInt
 from app.services.user.follow import FollowService
 from app.services.user.space_timeline import SpaceTimelineService
 from app.services.user.space_view_history import SpaceViewHistoryService

@@ -93,8 +93,6 @@ from app.models.schemas.favorite import (
     FavoriteListReq,
     FavoriteListResp,
     FavoriteRemoveReq,
-    FavoriteSettingReq,
-    FavoriteSettingResp,
 )
 from app.models.schemas.folder_cover_audit import (
     FolderCoverAuditApproveReq,
@@ -111,6 +109,10 @@ from app.models.schemas.follow import (
     FollowOpResp,
     FollowRelationResp,
     FollowReq,
+    FollowTagAssignReq,
+    FollowTagCreateReq,
+    FollowTagResp,
+    FollowUserBrief,
 )
 from app.models.schemas.interaction import InteractionStatusItem, InteractionStatusResp
 from app.models.schemas.mq import (
@@ -210,6 +212,9 @@ __all__ = [
     "CommentLatestResp",
     "CommentListResp",
     "CommentOperationResp",
+    # 运行时系统配置（2.64.0）
+    "CommentRateLimitConfig",
+    "CommentRateRule",
     "CommentReportReq",
     "CommentReportResp",
     "CommentSourceResp",
@@ -228,8 +233,6 @@ __all__ = [
     # MQ 载体
     "DmContentPayload",
     "DmDeleteReq",
-    "InteractionViewPayload",
-    "UserDeactivatePayload",
     "DmMessageItem",
     "DmMessageListResp",
     "DmNotifyPayload",
@@ -245,30 +248,6 @@ __all__ = [
     "DmStatsResp",
     "DmTopReq",
     "DmTopResp",
-    # 收藏
-    "FavoriteAddReq",
-    "FavoriteAddResp",
-    "FavoriteDynFoldersResp",
-    "FavoriteFolderCreateReq",
-    "FavoriteFolderDeleteReq",
-    "FavoriteFolderResp",
-    "FavoriteFolderUpdateReq",
-    "FavoriteItemListResp",
-    "FavoriteListItem",
-    "FavoriteListReq",
-    "FavoriteListResp",
-    "FavoriteRemoveReq",
-    "FavoriteSettingReq",
-    "FavoriteSettingResp",
-    # 收藏夹封面审核（2.28.0）
-    "FolderCoverAuditApproveReq",
-    "FolderCoverAuditItem",
-    "FolderCoverAuditListResp",
-    "FolderCoverAuditMineResp",
-    "FolderCoverAuditRejectReq",
-    # 多业务资源交互（2.17.0）
-    "InteractionStatusItem",
-    "InteractionStatusResp",
     "EventAggregateItem",
     "EventAggregateResp",
     "EventItem",
@@ -285,6 +264,25 @@ __all__ = [
     "EventReportResp",
     "EventUnreadResp",
     "EventUserBrief",
+    # 收藏
+    "FavoriteAddReq",
+    "FavoriteAddResp",
+    "FavoriteDynFoldersResp",
+    "FavoriteFolderCreateReq",
+    "FavoriteFolderDeleteReq",
+    "FavoriteFolderResp",
+    "FavoriteFolderUpdateReq",
+    "FavoriteItemListResp",
+    "FavoriteListItem",
+    "FavoriteListReq",
+    "FavoriteListResp",
+    "FavoriteRemoveReq",
+    # 收藏夹封面审核（2.28.0）
+    "FolderCoverAuditApproveReq",
+    "FolderCoverAuditItem",
+    "FolderCoverAuditListResp",
+    "FolderCoverAuditMineResp",
+    "FolderCoverAuditRejectReq",
     "FollowCountResp",
     "FollowListItem",
     "FollowListResp",
@@ -292,15 +290,18 @@ __all__ = [
     "FollowRelationResp",
     # 用户关注 / 拉黑
     "FollowReq",
+    # 关注分组
+    "FollowTagAssignReq",
+    "FollowTagCreateReq",
+    "FollowTagResp",
+    "FollowUserBrief",
+    # 多业务资源交互（2.17.0）
+    "InteractionStatusItem",
+    "InteractionStatusResp",
+    "InteractionViewPayload",
     # 消息设置
     "MessageSettingResp",
     "MessageSettingUpdateReq",
-    # 运行时系统配置（2.64.0）
-    "CommentRateLimitConfig",
-    "CommentRateRule",
-    "SysConfigItem",
-    "SysConfigListResp",
-    "SysConfigUpdateReq",
     "NotifyAdminItem",
     "NotifyAdminListResp",
     # 系统通知
@@ -311,8 +312,11 @@ __all__ = [
     "NotifyPullResp",
     "NotifyPushPayload",
     "NotifyUpdateReq",
-    "SystemNotifyItem",
-    "SystemNotifyListResp",
+    # 统一举报（2.14.0）
+    "ReportCreateReq",
+    "ReportItem",
+    "ReportListResp",
+    "ReportReviewReq",
     # 用户空间信息
     "SpaceFollowStat",
     "SpaceInfoResp",
@@ -327,17 +331,18 @@ __all__ = [
     "SpaceVip",
     "SpaceVipLabel",
     "SpaceVipWrap",
-    # 统一举报（2.14.0）
-    "ReportCreateReq",
-    "ReportItem",
-    "ReportListResp",
-    "ReportReviewReq",
+    "SysConfigItem",
+    "SysConfigListResp",
+    "SysConfigUpdateReq",
+    "SystemNotifyItem",
+    "SystemNotifyListResp",
     "UnbanReq",
     "UserActLogItem",
-    # 用户展示简档：单一输出模型（§5.12）
-    "UserBriefOut",
     "UserActLogListResp",
     "UserActivityResp",
+    # 用户展示简档：单一输出模型（§5.12）
+    "UserBriefOut",
+    "UserDeactivatePayload",
     "UserExpRecordItem",
     "UserExpRecordListResp",
 ]

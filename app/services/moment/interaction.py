@@ -8,15 +8,16 @@
   均遵循「明细表幂等 + 计数原子 ±1」范式。
 """
 
-from sqlmodel import col, select
-from sqlmodel.ext.asyncio.session import AsyncSession
-
-from app.models.db import TInteractionStat, TInteractionViewLog, TMoment
 from bili_common.models import InteractionBizTypeEnum
 from bili_common.services.interaction import (
     DYNAMIC_BIZ_TYPE,
     InteractionStatService,
 )
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.models.db import TInteractionStat, TInteractionViewLog
+from app.services.common.indexed import Indexed
+from app.services.moment.values import ResourceCountPair
 
 
 class BeMessageInteractionStatService(InteractionStatService):
@@ -34,25 +35,25 @@ class BeMessageInteractionStatService(InteractionStatService):
 # 动态资源计数读（复用 MomentStatService 语义，此处提供便捷封装避免循环导入）
 async def get_dynamic_stat_counts(
     session: AsyncSession, dyn_ids: list[int]
-) -> dict[int, dict[str, int]]:
-    """批量读取动态资源计数（bizType=dynamic 用 TInteractionStat）。"""
+) -> Indexed[ResourceCountPair]:
+    """批量读取动态资源计数（bizType=dynamic 用 TInteractionStat）。
+
+    返回 `Indexed[ResourceCountPair]`：每个 dynId 都有一项（无计数行时计数为 0），
+    调用方 `value_of(dynId)` 点查即可，不再嵌套 dict。
+    """
     from app.services.moment.moment_stat import MomentStatService
 
-    rows = await MomentStatService.batch_read_stats(session, dyn_ids)
-    return {
-        d: {
-            "likeCount": int(rows[d].likeCount if d in rows else 0),
-            "favoriteCount": int(rows[d].favoriteCount if d in rows else 0),
-        }
-        for d in dyn_ids
-    }
+    stats = await MomentStatService.batch_read_stats(session, dyn_ids)
+    return Indexed.of(
+        (int(dyn_id), ResourceCountPair.from_stat(stats.value_of(dyn_id)))
+        for dyn_id in dyn_ids
+    )
 
 
 __all__ = [
     "DYNAMIC_BIZ_TYPE",
-    "InteractionBizTypeEnum",
-    "InteractionResourceValidator",
-    "InteractionStatService",
     "BeMessageInteractionStatService",
+    "InteractionBizTypeEnum",
+    "InteractionStatService",
     "get_dynamic_stat_counts",
 ]

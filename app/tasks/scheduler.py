@@ -26,6 +26,7 @@
 """
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from bili_common.models import InteractionBizTypeEnum
 from loguru import logger
 from sqlalchemy import and_, case, func, text, update
 from sqlmodel import col, select
@@ -36,12 +37,11 @@ from app.core.sharding import ensure_current_month_shards
 from app.models.db import (
     CommentIndex,
     MomentAuthorQuality,
-    TMoment,
     TInteractionStat,
+    TMoment,
     UserDeactivation,
     UserFollow,
 )
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import FollowStatusEnum, ResourceAuditStatusEnum
 from app.models.pptr_db import PptrUserLevel
 from app.services.comment import VISIBLE_STATES
@@ -85,7 +85,7 @@ async def prewarm_shard_job() -> None:
     """预热当月分片，跨月时自动把新月份的 100 张表建好。"""
     try:
         await ensure_current_month_shards()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"预热私信内容分片失败: {e}")
 
 
@@ -130,7 +130,7 @@ async def comment_hot_score_job() -> None:
                     )
                 await session.commit()
         logger.info("评论热度分批量重算完成")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"评论热度分重算失败: {e}")
 
 
@@ -229,7 +229,7 @@ async def author_quality_job() -> None:
                         )
                     ).all()
                     level_map = {int(m): int(lv or 0) for m, lv in lrows}
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.warning("作者等级回查失败，按 0 处理")
             # 全量重建：删除 + 批量插入（聚合表可安全重建）
             await session.exec(text("DELETE FROM moment_author_quality"))
@@ -247,7 +247,7 @@ async def author_quality_job() -> None:
                 )
             await session.commit()
             logger.info(f"作者质量聚合完成：{len(rows)} 位作者")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"作者质量聚合失败: {e}")
 
 
@@ -284,7 +284,7 @@ async def deactivate_expire_job() -> None:
                 if fresh is not None:
                     await deactivation_service.mark_pending_casdoor(s, fresh)
                     await s.commit()
-        except Exception as e:  # noqa: BLE001 - 单用户失败不影响整批
+        except Exception as e:
             logger.error(f"[deactivate-expire] 用户 {mid} 本地物理删除失败: {e}")
             continue
 
@@ -320,7 +320,7 @@ async def _delete_casdoor_with_compensation(
 
     try:
         await casdoor_service.delete_casdoor_user(user_name or "")
-    except Exception as e:  # noqa: BLE001 - Casdoor 不可用：记录待补偿
+    except Exception as e:
         async with new_session() as s:
             target = row
             if target is None:
@@ -329,7 +329,9 @@ async def _delete_casdoor_with_compensation(
             if target is not None:
                 await deactivation_service.mark_casdoor_error(s, target, str(e))
                 await s.commit()
-                over_limit = (target.retry_count or 0) >= settings.casdoor_delete_max_retry
+                over_limit = (
+                    target.retry_count or 0
+                ) >= settings.casdoor_delete_max_retry
             else:
                 over_limit = False
         if over_limit:
@@ -337,7 +339,9 @@ async def _delete_casdoor_with_compensation(
                 f"[deactivate-expire] 用户 {mid} Casdoor 删除重试已超上限，需人工介入: {e}"
             )
         else:
-            logger.warning(f"[deactivate-expire] 用户 {mid} Casdoor 删除失败，待补偿: {e}")
+            logger.warning(
+                f"[deactivate-expire] 用户 {mid} Casdoor 删除失败，待补偿: {e}"
+            )
         return
 
     # 删除成功：清除注销记录

@@ -9,19 +9,20 @@
 from datetime import datetime
 from typing import Annotated
 
+from bili_common.models import InteractionBizTypeEnum
+from bili_common.models.auto_str import Private
+from bili_common.core.time_utils import UnixTime
 from sqlmodel import Field, SQLModel
 
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
-    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
     MomentReportReasonEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.audit import AuditSourceInfo
 from app.models.schemas.base import auto_str
 from app.models.schemas.user_brief import UserBriefOut
-from bili_common.models.auto_str import Private
 from app.models.str_int import StrInt
 
 # ==================== 公共片段 ====================
@@ -107,7 +108,7 @@ class CommentItem(SQLModel):
     plat: str | None = Field(default=None, max_length=32, description="来源平台")
     device: str | None = Field(default=None, max_length=64, description="来源设备")
 
-    ctime: datetime = Field(description="发布时间")
+    ctime: UnixTime = Field(description="发布时间（秒级时间戳）")
 
     replies: list["CommentItem"] = Field(
         default_factory=list, description="楼中楼预览（一级评论下最多 N 条）"
@@ -367,7 +368,7 @@ class CommentAuditItem(SQLModel):
     message: str
     state: ResourceAuditStatusEnum
     like_count: int = 0
-    ctime: datetime
+    ctime: UnixTime
     ip_v4: Annotated[str | None, Private(admin_only=True)] = None
     ip_v6: Annotated[str | None, Private(admin_only=True)] = None
     plat: str | None = Field(default=None, max_length=32, description="来源平台")

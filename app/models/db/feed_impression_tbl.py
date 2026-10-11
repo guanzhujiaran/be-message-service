@@ -19,12 +19,12 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy import BIGINT, Index, PrimaryKeyConstraint, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field
 
 from app.models.db.base_tbl import TimestampMixin
-from bili_common.models import InteractionBizTypeEnum
 
 
 class TFeedImpression(TimestampMixin, table=True):

@@ -475,14 +475,6 @@ class SeedClient:
             f"favorite add mid={mid} dyn={dyn_id}",
         )
 
-    async def favorite_setting(self, mid: int, show: bool) -> None:
-        await self._req(
-            lambda: self._post(
-                "/api/v1/favorite/setting", mid, {"showFavorites": show}
-            ),
-            f"favorite setting mid={mid}",
-        )
-
     # ==================== 关注 / 拉黑 ====================
 
     async def follow(self, mid: int, target_mid: int) -> None:
@@ -719,7 +711,8 @@ class SeedClient:
         for it in items[:3]:
             try:
                 await self._req(
-                    lambda: self._post(
+                    # 默认参数绑定循环变量：避免 lambda 延迟绑定（B023）
+                    lambda it=it: self._post(
                         "/api/v1/user/avatar/audit/approve",
                         self.admin_mid,
                         {"pk": it["pk"], "remark": "SEED approve"},

@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col
-
-from app.models.db import TMoment, TInteractionViewLog
-from app.models.schemas.space import SpaceViewHistoryItem, SpaceViewHistoryResp
 from bili_common.models import InteractionBizTypeEnum
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
+
+from app.models.db import TInteractionViewLog, TMoment
+from app.models.schemas.space import SpaceViewHistoryItem, SpaceViewHistoryResp
+from app.services.common.indexed import Indexed
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 50
@@ -66,7 +66,7 @@ class SpaceViewHistoryService:
             for r in rows
             if r.bizType == InteractionBizTypeEnum.DYNAMIC and r.bizId
         ]
-        titles: dict[int, str] = {}
+        titles: Indexed[str] = Indexed.empty()
         if dyn_ids:
             mrows = (
                 await session.exec(
@@ -75,13 +75,13 @@ class SpaceViewHistoryService:
                     )
                 )
             ).all()
-            titles = {int(d): (t or "") for d, t in mrows}
+            titles = Indexed.of((int(d), t or "") for d, t in mrows)
 
         items = []
         for r in rows:
             biz_id = int(r.bizId)
             title = (
-                titles.get(biz_id)
+                titles.value_of(biz_id)
                 if r.bizType == InteractionBizTypeEnum.DYNAMIC
                 else None
             )

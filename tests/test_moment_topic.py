@@ -14,6 +14,8 @@
 """
 
 import pytest
+from bili_common.models import InteractionBizTypeEnum
+from seed_biliopus import fetch_real_dyns
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -23,11 +25,9 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.core.sharding import generate_moment_id
 from app.models.db import TMoment, TMomentTopic, TResourceFeed
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    ResourceAuditStatusEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas.moment import (
     MomentAtListResp,
@@ -38,7 +38,6 @@ from app.models.schemas.moment import (
 from app.services.moment.moment_feed import MomentFeedService
 from app.services.moment.moment_topic import MomentTopicService
 from app.services.moment.topic_feed import TopicFeedService
-from seed_biliopus import fetch_real_dyns, fetch_real_topics
 
 # 独立区间，避免与 Phase 2 用例（D_MID=910001）冲突
 T_MID = 920001

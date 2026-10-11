@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from bili_common.models import InteractionBizTypeEnum
-
 # 每张聚合卡片（aggregate 接口）最多展示的触发者头像数
 _MAX_ACTORS_PER_GROUP = 3
 # msgfeed 单条 users[] 后端返回上限（前端 B 站样式最多展示 2 个，后端多给便于扩展）

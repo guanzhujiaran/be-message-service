@@ -12,7 +12,6 @@ from app.services.interaction_actions.lottery.biz import LotteryBiz
 from app.services.interaction_actions.others_lot_dyn.biz import OthersLotDynBiz
 from app.services.interaction_actions.rpa_action.biz import RpaActionBiz
 from app.services.interaction_actions.rpa_browser.biz import RpaBrowserBiz
-from app.services.interaction_actions.rpa_plugin.biz import RpaPluginBiz
 from app.services.interaction_actions.rpa_tag.biz import RpaTagBiz
 from app.services.interaction_actions.rpa_workflow.biz import RpaWorkflowBiz
 from app.services.interaction_actions.user.biz import UserBiz
@@ -24,7 +23,6 @@ __all__ = [
     "OthersLotDynBiz",
     "RpaActionBiz",
     "RpaBrowserBiz",
-    "RpaPluginBiz",
     "RpaTagBiz",
     "RpaWorkflowBiz",
     "UserBiz",

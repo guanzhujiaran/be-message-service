@@ -154,7 +154,7 @@ async def ensure_database() -> bool:
             )
         logger.info(f"消息系统主库 {db_name} 已就绪")
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"创建主库 {db_name} 失败: {e}")
         return False
     finally:
@@ -167,7 +167,7 @@ async def test_connection() -> bool:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"MySQL 连接测试失败: {e}")
         return False
 
@@ -178,24 +178,24 @@ async def test_pptr_connection() -> bool:
         async with pptr_engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"pptr Postgres 连接测试失败: {e}")
         return False
 
 
 __all__ = [
-    "engine",
-    "async_session_maker",
-    "get_session",
+    "PptrSessionDep",
     "SessionDep",
-    "new_session",
+    "async_session_maker",
+    "engine",
     "ensure_database",
-    "test_connection",
+    "get_pptr_session",
+    "get_session",
+    "new_pptr_session",
+    "new_session",
     # pptr Postgres（由 be-message 接管）
     "pptr_engine",
     "pptr_session_maker",
-    "get_pptr_session",
-    "PptrSessionDep",
-    "new_pptr_session",
+    "test_connection",
     "test_pptr_connection",
 ]

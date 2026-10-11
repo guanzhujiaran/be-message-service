@@ -5,6 +5,7 @@
 """
 
 from bili_common.models import InteractionBizTypeEnum
+
 from app.services.interaction_actions.base import InteractionActionError
 from app.services.interaction_actions.common.generic_biz import GenericResourceBiz
 

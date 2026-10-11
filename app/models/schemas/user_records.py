@@ -12,8 +12,8 @@
 
 from datetime import datetime
 
+from bili_common.core.time_utils import UnixTime
 from sqlmodel import Field, SQLModel
-
 
 from app.models.schemas.base import auto_str
 
@@ -22,7 +22,7 @@ from app.models.schemas.base import auto_str
 class UserActLogItem(SQLModel):
     """单条登录 / 行为记录（TUserActInfoLog）。"""
 
-    time: datetime = Field(description="行为发生时间（timezone-aware）")
+    time: UnixTime = Field(description="行为发生时间（秒级时间戳）")
     ip: str = Field(
         default="", description="客户端 IP（脱敏后，IPv4→a.b.*.*，IPv6→a:b:*）"
     )
@@ -47,7 +47,7 @@ class UserActLogListResp(SQLModel):
 class UserExpRecordItem(SQLModel):
     """单条经验变动记录（TUserExpRecord）。"""
 
-    time: datetime = Field(description="经验增加时间（timezone-aware）")
+    time: UnixTime = Field(description="经验增加时间（秒级时间戳）")
     action_type: int = Field(
         description="行为类型 int（对应 ExpActionType：1=daily_login）"
     )

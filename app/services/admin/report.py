@@ -18,26 +18,25 @@
 import json
 from datetime import datetime
 
+from bili_common.models import InteractionBizTypeEnum
+from bili_common.models.report import (
+    ReportAuditStatusEnum,
+    ReportReasonEnum,
+    ReportReviewDecisionEnum,
+)
+from bili_common.services.report import ReportBaseService
 from loguru import logger
 from sqlmodel import col, func, select
-
-from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
 from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.core.config import settings
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas import (
-    EventReportReq,
     ReportCreateReq,
     ReportItem,
     ReportListResp,
     ReportReviewReq,
 )
-from app.models.schemas.user_brief import UserBriefOut
+from app.models.schemas.audit import AuditStatisticsResp
 from app.models.schemas.interaction import InteractionResource
 from app.services.interaction_actions.base_biz import (
     BaseBiz,
@@ -47,13 +46,13 @@ from app.services.interaction_actions.base_biz import (
     get_biz_class,
     replace_at_mentions,
 )
-from bili_common.models.report import (
-    ReportAuditStatusEnum,
-    ReportReasonEnum,
-    ReportReviewDecisionEnum,
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
 )
-from bili_common.services.report import ReportBaseService
 from app.services.user.account import PptrUser
+from app.services.user.space.briefs import UserBriefs
 
 PIC_LIMIT = 3
 
@@ -96,7 +95,7 @@ def _status_name(value) -> str:
         return ReportAuditStatusEnum.PENDING.name.lower()
 
 
-async def _load_user_briefs(rows) -> dict[int, UserBriefOut]:
+async def _load_user_briefs(rows) -> UserBriefs:
     """批量回查举报人 / 被举报人展示信息（§5.19）。
 
     一次 ``PptrUser.get_many`` 覆盖本页全部 mid（直连 pptr 只读，不冗余用户快照）；
@@ -119,7 +118,7 @@ async def _load_user_briefs(rows) -> dict[int, UserBriefOut]:
         return {}
 
 
-async def _load_resources(session, rows) -> dict[tuple[int, int], InteractionResource]:
+async def _load_resources(session, rows) -> dict[tuple[int, str], InteractionResource]:
     """按 bizType 分组批量回捞被举报资源快照（§5.19，复用 base_biz 公共批量装配）。
 
     返回 ``(bizType 值, bizId) -> InteractionResource``；经
@@ -135,10 +134,10 @@ async def _load_resources(session, rows) -> dict[tuple[int, int], InteractionRes
         except Exception:
             continue
         if r.bizId:
-            metas.append((bt, int(r.bizId), None))
+            metas.append((bt, str(r.bizId), None))
     snaps = await batch_get_resource_snapshots(session, metas)
-    out: dict[tuple[int, int], InteractionResource] = {
-        (rt, int(bid)): snap for (rt, bid), snap in snaps.items()
+    out: dict[tuple[int, str], InteractionResource] = {
+        (rt, str(bid)): snap for (rt, bid), snap in snaps.items()
     }
     # 评论正文 @提及替换（复用 base_biz 公共 ``replace_at_mentions``，与事件提醒同源）：
     # 把 title 里的 `@{mid}` 占位符替换为实际昵称，批量回查避免 N+1；
@@ -152,7 +151,7 @@ async def _load_resources(session, rows) -> dict[tuple[int, int], InteractionRes
             profiles = await PptrUser.get_many(at_mids)
             nickname_map = {
                 int(mid): (b.uname or "").strip()
-                for mid, b in profiles.items()
+                for mid, b in profiles.pairs()
                 if (b.uname or "").strip()
             }
             if nickname_map:
@@ -382,7 +381,7 @@ class ReportService:
         return json.dumps(pics, ensure_ascii=False)
 
     @staticmethod
-    async def _linkage(session, biz_obj, biz_id: int) -> bool:
+    async def _linkage(session, biz_obj, biz_id: str | int) -> bool:
         """举报达阈值仅「加入审核队列」（2.40.0）——**不改变资源状态**。
 
         举报记录保持 pending（管理端举报列表即审核队列，按 status 过滤待处理）；
@@ -406,15 +405,15 @@ class ReportService:
     @staticmethod
     async def _load_report_counts(
         session, items: list
-    ) -> dict[tuple[str, int], tuple[int, int]]:
+    ) -> dict[tuple[InteractionBizTypeEnum, str], tuple[int, int]]:
         """按 (bizType, bizId) 聚合被举报**次数 + 人数**双口径（2.40.0）。
 
         口径：``(COUNT(*), COUNT(DISTINCT reportMid))``——次数为累计举报，
         人数为去重举报人（同一人多次举报只记一次）。
         多资源共用同一张表，故按 bizType 分组聚合。
         """
-        result: dict[tuple[str, int], tuple[int, int]] = {}
-        by_model: dict[type, set[str]] = {}
+        result: dict[tuple[InteractionBizTypeEnum, str], tuple[int, int]] = {}
+        by_model: dict[type, set[InteractionBizTypeEnum]] = {}
         for it in items:
             try:
                 model = _model_for(it.bizType)
@@ -441,14 +440,14 @@ class ReportService:
                     )
                 ).all()
                 for b, c, p in rows:
-                    result[(bt, int(b))] = (int(c), int(p))
+                    result[(bt, str(b))] = (int(c), int(p))
         return result
 
     @staticmethod
     def _to_item(
         r,
-        users: dict[int, UserBriefOut] | None = None,
-        resources: dict[tuple[int, int], InteractionResource] | None = None,
+        users: UserBriefs | None = None,
+        resources: dict[tuple[int, str], InteractionResource] | None = None,
     ) -> ReportItem:
         """举报记录行 → 展示项。
 
@@ -466,14 +465,14 @@ class ReportService:
         try:
             resource_key = (
                 int(InteractionBizTypeEnum.from_text(r.bizType)),
-                int(r.bizId),
+                str(r.bizId),
             )
         except (TypeError, ValueError):
             resource_key = None
         return ReportItem(
             pk=int(r.pk),
             bizType=r.bizType,
-            bizId=int(r.bizId),
+            bizId=str(r.bizId),
             accusedMid=int(r.accusedMid),
             reportMid=int(r.reportMid),
             reasonType=int(r.reasonType),

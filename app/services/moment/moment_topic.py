@@ -15,16 +15,15 @@
 
 from datetime import datetime
 
+from bili_common.models import ResponseCode
 from loguru import logger
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from bili_common.models import ResponseCode
 from app.core.config import settings
+from app.core.sharding import generate_topic_id
 from app.models.db import TMoment, TMomentTopic
 from app.models.enums import ResourceAuditStatusEnum
-from app.services.common.daily_limit import count_created_today
-from app.services.moment.edgerank import TOPIC_SQUARE_PROFILE, compute_topic_score
 from app.models.schemas.moment import (
     MomentAtListResp,
     MomentAtSearchResp,
@@ -40,10 +39,11 @@ from app.models.schemas.moment import (
     MomentTopicMineResp,
     MomentTopicSquareResp,
 )
-from app.core.sharding import generate_topic_id
 from app.models.schemas.user_brief import UserBriefOut
-from app.services.user.follow import FollowService
+from app.services.common.daily_limit import count_created_today
+from app.services.moment.edgerank import TOPIC_SQUARE_PROFILE, compute_topic_score
 from app.services.user.account import PptrUser
+from app.services.user.follow import FollowService
 
 # POI 面板单页上限
 _POI_PAGE_SIZE = 20
@@ -400,13 +400,17 @@ class MomentTopicService:
         briefs = await PptrUser.get_many(following_mids + follower_mids)
 
         following = [
-            _brief_to_at_item(briefs[it.mid], remark="互相关注" if it.mutual else None)
+            _brief_to_at_item(
+                briefs.of_mid(it.mid), remark="互相关注" if it.mutual else None
+            )
             if it.mid in briefs
             else MomentAtUserItem(mid=it.mid, remark="互相关注" if it.mutual else None)
             for it in following_resp.items
         ]
         followers = [
-            _brief_to_at_item(briefs[it.mid], remark="互相关注" if it.mutual else None)
+            _brief_to_at_item(
+                briefs.of_mid(it.mid), remark="互相关注" if it.mutual else None
+            )
             if it.mid in briefs
             else MomentAtUserItem(mid=it.mid, remark="互相关注" if it.mutual else None)
             for it in followers_resp.items

@@ -32,7 +32,7 @@ async def handle_comment_notify(payload: dict, msg: RabbitMessage) -> None:
         EventReportReq.model_validate(payload)
         logger.debug("评论通知备用通道收到合法载荷（当前无生产者投递）")
         await msg.ack()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"评论通知消费失败: {e}\n{traceback.format_exc()}")
         await msg.nack(requeue=False)
 
@@ -43,7 +43,7 @@ async def handle_comment_audit(payload: dict, msg: RabbitMessage) -> None:
         rpid = int(str(payload.get("rpid", "")).strip())
         logger.debug(f"评论异步复审任务 rpid={rpid}（当前无生产者投递，备用通道）")
         await msg.ack()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"评论复审消费失败: {e}\n{traceback.format_exc()}")
         await msg.nack(requeue=False)
 
@@ -54,7 +54,7 @@ async def handle_comment_count(payload: dict, msg: RabbitMessage) -> None:
         oid = payload.get("oid")
         logger.debug(f"评论计数任务 oid={oid}（当前无生产者投递，备用通道）")
         await msg.ack()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"评论计数消费失败: {e}\n{traceback.format_exc()}")
         await msg.nack(requeue=False)
 

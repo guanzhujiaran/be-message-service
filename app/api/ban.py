@@ -29,13 +29,13 @@ from app.dependencies import (
 )
 from app.models import StandardResponse
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
-from app.models.str_int import StrInt
 from app.models.schemas import (
     BanCreateReq,
     BanListResp,
     BanStatusResp,
     UnbanReq,
 )
+from app.models.str_int import StrInt
 from app.services.user.account import UserGovernanceUser
 
 router = APIRouter(prefix="/api/v1/message/admin", tags=["message-admin-ban"])
@@ -54,6 +54,13 @@ class _UnbanRes(SQLModel):
 _SERVICE_BAN_BIZ: dict[str, InteractionBizTypeEnum] = {
     "comment": InteractionBizTypeEnum.COMMENT,
     "dm": InteractionBizTypeEnum.DM,
+}
+
+# 服务维度 → 权限名 的映射，仅用于鉴权失败时回显「缺哪个权限」（见模块 docstring）。
+# 键与 `_SERVICE_BAN_BIZ` 保持一致：鉴权失败时返回的服务名必在此表中。
+_SERVICE_BAN_PERM: dict[str, str] = {
+    "comment": "comment:ban",
+    "dm": "dm:ban",
 }
 
 
@@ -93,7 +100,7 @@ async def ban_users(
 
     missing = _check_ban_permissions(user, req.ban_services)
     if missing is not None:
-        needed = _SERVICE_BAN_PERM[missing].value
+        needed = _SERVICE_BAN_PERM[missing]
         return StandardResponse(
             code=403, msg=f"缺少封禁权限：{needed}（服务 {missing}）"
         )
@@ -127,7 +134,7 @@ async def unban_users(
     target_services = req.ban_services or list(_SERVICE_BAN_PERM.keys())
     missing = _check_ban_permissions(user, target_services)
     if missing is not None:
-        needed = _SERVICE_BAN_PERM[missing].value
+        needed = _SERVICE_BAN_PERM[missing]
         return StandardResponse(
             code=403, msg=f"缺少解封权限：{needed}（服务 {missing}）"
         )

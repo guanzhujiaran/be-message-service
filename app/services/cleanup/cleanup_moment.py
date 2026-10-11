@@ -14,20 +14,19 @@
 注意：本模块只操作 be-message 主库，调用方传入可用的 `AsyncSession`。
 """
 
-from sqlalchemy import or_
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, delete, select
 
 from app.models.db import (
-    TMoment,
-    TResourceLike,
-    TResourceDislike,
-    TResourceAuditLog,
     TInteractionStat,
     TInteractionViewLog,
+    TMoment,
+    TResourceAuditLog,
+    TResourceDislike,
     TResourceFeed,
+    TResourceLike,
 )
-from bili_common.models import InteractionBizTypeEnum
 
 
 class CleanupMomentService:

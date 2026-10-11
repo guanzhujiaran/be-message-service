@@ -18,22 +18,21 @@
 评论区上万条时 `COUNT(*)` 会扫掉整段索引，是最典型的慢查询来源。
 """
 
-from typing import Sequence
-
 import re
+from collections.abc import Sequence
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.models.db import CommentAction, CommentContent, CommentIndex
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     CommentActionEnum,
     CommentAttrBit,
     CommentSortEnum,
-    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas import (
     CommentCountResp,
@@ -43,9 +42,9 @@ from app.models.schemas import (
     CommentListResp,
     CommentSubListResp,
 )
-from app.models.schemas.user_brief import UserBriefOut
 from app.services.comment import VISIBLE_STATES, CommentService
 from app.services.user.account import CommentAdminUser
+from app.services.user.space.briefs import UserBriefs
 
 # 正文里 #话题# 的匹配（对齐 B 站：话题名由两个 # 包裹，中间不含 #）
 _TOPIC_PATTERN = re.compile(r"#([^#\n]+)#")
@@ -532,12 +531,12 @@ class CommentReadService:
         row: CommentIndex,
         *,
         content: CommentContent | None,
-        profiles: dict[int, UserBriefOut],
+        profiles: UserBriefs,
         action: CommentActionEnum,
     ) -> CommentItem:
         """把「索引行 + 正文行 + 用户快照」拼成一条视图模型。"""
         at_users = [
-            profiles[at_mid]
+            profiles.of_mid(at_mid)
             for at_mid in (content.at_mids if content else [])
             if at_mid in profiles
         ]
@@ -548,7 +547,7 @@ class CommentReadService:
         at_name_to_mid: dict[str, int] = {}
         if content and content.at_mids:
             mid_to_brief = {
-                at_mid: profiles[at_mid]
+                at_mid: profiles.of_mid(at_mid)
                 for at_mid in content.at_mids
                 if at_mid in profiles
             }
@@ -574,12 +573,12 @@ class CommentReadService:
             type=row.type,
             mid=row.mid,
             # 评论对他人可见：member 的私域字段由序列化期按访问者身份自动剥离
-            member=profiles.get(row.mid),
+            member=profiles.of_mid(row.mid),
             root=str(row.root),
             parent=str(row.parent),
             dialog=str(row.dialog),
             floor=row.floor,
-            reply_to=profiles.get(row.reply_to_mid) if row.reply_to_mid else None,
+            reply_to=profiles.of_mid(row.reply_to_mid) if row.reply_to_mid else None,
             message=message,
             pictures=list(content.pictures) if content else [],
             at_users=at_users,

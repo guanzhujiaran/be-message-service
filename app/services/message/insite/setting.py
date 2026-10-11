@@ -124,11 +124,8 @@ class SettingService:
         if start is None or end is None:
             return True
         hour = datetime.now().hour
-        if start <= end:
-            in_dnd = start <= hour < end
-        else:
-            # 跨零点的免打扰区间，如 22:00 ~ 08:00
-            in_dnd = hour >= start or hour < end
+        # 跨零点的免打扰区间（如 22:00 ~ 08:00）走 else 分支
+        in_dnd = start <= hour < end if start <= end else hour >= start or hour < end
         return not in_dnd
 
     @staticmethod

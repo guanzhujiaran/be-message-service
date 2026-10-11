@@ -25,6 +25,7 @@ from enum import IntEnum
 
 from app.services.audit.link_checker import LinkCheckResult, check_links
 from app.services.audit.word_filter import WordLevel, word_filter
+from app.services.common.indexed import Keyed
 
 
 class AuditDecision(IntEnum):
@@ -61,9 +62,9 @@ class AuditResult:
 
     decision: AuditDecision
     #: 命中的敏感词（按风险层级归类，**原文**，供落库 / 审计）
-    hit_words: dict[WordLevel, list[str]] = field(default_factory=dict)
+    hit_words: Keyed[WordLevel, tuple[str, ...]] = field(default_factory=Keyed.empty)
     #: 命中的敏感词（按**词库自带分类**归类，`{分类名: 命中词原文}`）
-    hit_categories: dict[str, list[str]] = field(default_factory=dict)
+    hit_categories: Keyed[str, tuple[str, ...]] = field(default_factory=Keyed.empty)
     #: 链接检查结果
     links: LinkCheckResult | None = None
     #: 用户风控画像
@@ -115,12 +116,12 @@ def audit_text(
         AuditResult（含判定、命中词、链接结果、原因）。
     """
     risk = risk or UserRisk()
-    hit_words = word_filter.match(text) if text else {}
-    # match_categories 返回 {分类: (层级, 命中词)}；这里只取命中词（层级已并入 hit_words/决策）
-    raw_categories = word_filter.match_categories(text) if text else {}
-    hit_categories: dict[str, list[str]] = {
-        cat: hits for cat, (_level, hits) in raw_categories.items()
-    }
+    hit_words = word_filter.match(text) if text else Keyed.empty()
+    # match_categories 返回 Keyed[分类, CategoryMatch]；这里只留命中词（层级已并入 hit_words/决策）
+    raw_categories = word_filter.match_categories(text) if text else Keyed.empty()
+    hit_categories: Keyed[str, tuple[str, ...]] = Keyed.of(
+        (category, match.words) for category, match in raw_categories
+    )
     links = check_links(text) if (check_link and text) else None
 
     # ① 链接黑名单：明确违规
@@ -135,7 +136,7 @@ def audit_text(
         )
 
     # ② 高危敏感词：明确违规
-    high_hits = hit_words.get(WordLevel.HIGH) or []
+    high_hits = hit_words.value_or(WordLevel.HIGH, ())
     if high_hits:
         return AuditResult(
             decision=AuditDecision.REJECT,
@@ -147,7 +148,7 @@ def audit_text(
         )
 
     # ③ 中风险敏感词：通常进人工；用户风控从严时直接拒
-    medium_hits = hit_words.get(WordLevel.MEDIUM) or []
+    medium_hits = hit_words.value_or(WordLevel.MEDIUM, ())
     if medium_hits:
         if risk.strict:
             return AuditResult(
@@ -179,7 +180,7 @@ def audit_text(
         )
 
     # ⑤ 低风险敏感词：仅记录，判定仍为通过
-    low_hits = hit_words.get(WordLevel.LOW) or []
+    low_hits = hit_words.value_or(WordLevel.LOW, ())
     if low_hits and risk.strict:
         return AuditResult(
             decision=AuditDecision.AUDIT,
@@ -203,8 +204,8 @@ def audit_text(
 
 
 def _hits_reason(
-    hit_words: dict[WordLevel, list[str]],
-    hit_categories: dict[str, list[str]],
+    hit_words: Keyed[WordLevel, tuple[str, ...]],
+    hit_categories: Keyed[str, tuple[str, ...]],
 ) -> str:
     """把命中词压缩为供通知 / 理由展示的简短文本（词一律打码，不泄露原文）。
 
@@ -218,7 +219,7 @@ def _hits_reason(
     # ① 有分类：用分类名 + 打码词
     if hit_categories:
         parts = []
-        for cat, words in hit_categories.items():
+        for cat, words in hit_categories:
             masked = "、".join(sorted({mask_word(w) for w in _compact_hits(words)}))
             parts.append(f"{cat}：{masked}")
         return "；".join(parts)
@@ -226,7 +227,7 @@ def _hits_reason(
     label = {WordLevel.HIGH: "高危", WordLevel.MEDIUM: "疑似", WordLevel.LOW: "低风险"}
     parts = []
     for level in (WordLevel.HIGH, WordLevel.MEDIUM, WordLevel.LOW):
-        words = hit_words.get(level) or []
+        words = hit_words.value_or(level, ())
         if words:
             masked = "、".join(sorted({mask_word(w) for w in _compact_hits(words)}))
             parts.append(f"{label[level]}词：{masked}")

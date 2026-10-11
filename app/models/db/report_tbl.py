@@ -10,10 +10,9 @@
 > 通用逻辑共用 bili-common。
 """
 
+from bili_common.models.report import ReportBase
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Index
-
-from bili_common.models.report import ReportBase
 
 
 class TUserReport(ReportBase, table=True):

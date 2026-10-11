@@ -4,11 +4,9 @@
 会触发 JS 精度丢失）。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from pydantic import Field
 from sqlmodel import SQLModel
-
-from bili_common.models import InteractionBizTypeEnum
-
 
 from app.models.schemas.base import auto_str
 from app.models.str_int import StrInt
@@ -25,6 +23,9 @@ class FavoriteFolderCreateReq(SQLModel):
     coverUrl: str | None = Field(
         default=None, max_length=1000, description="封面图片链接（仅存URL，不转存图片）"
     )
+    isPublic: bool = Field(
+        default=True, description="是否公开（True=他人可见,False=仅本人可见）"
+    )
 
 
 @auto_str
@@ -38,6 +39,9 @@ class FavoriteFolderUpdateReq(SQLModel):
     )
     coverUrl: str | None = Field(
         default=None, max_length=1000, description="封面图片链接（传空字符串清除）"
+    )
+    isPublic: bool | None = Field(
+        default=None, description="是否公开（None=不改；True=公开,False=仅本人可见）"
     )
 
 
@@ -59,6 +63,7 @@ class FavoriteFolderResp(SQLModel):
         default=None, description="封面图片链接（仅存审核通过后公开的封面）"
     )
     isDefault: bool = Field(default=False, description="是否默认收藏夹")
+    isPublic: bool = Field(default=True, description="是否公开（False=仅本人可见）")
     favoriteCount: int = Field(default=0, description="该夹收藏的动态数")
     coverAuditStatus: str | None = Field(
         default=None,
@@ -174,22 +179,6 @@ class FavoriteDynFoldersResp(SQLModel):
     )
 
 
-@auto_str
-class FavoriteSettingReq(SQLModel):
-    """设置主页是否显示收藏。"""
-
-    showFavorites: bool = Field(
-        default=True, description="主页是否显示收藏tab：True=显示,False=隐藏"
-    )
-
-
-@auto_str
-class FavoriteSettingResp(SQLModel):
-    """主页收藏可见性。"""
-
-    showFavorites: bool = Field(default=True, description="主页是否显示收藏tab")
-
-
 __all__ = [
     "FavoriteAddReq",
     "FavoriteAddResp",
@@ -203,6 +192,4 @@ __all__ = [
     "FavoriteListReq",
     "FavoriteListResp",
     "FavoriteRemoveReq",
-    "FavoriteSettingReq",
-    "FavoriteSettingResp",
 ]

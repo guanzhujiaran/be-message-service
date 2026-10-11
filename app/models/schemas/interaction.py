@@ -4,12 +4,10 @@
 非动态资源（RPA 等）随详情经 RPC 获取一并返回。
 """
 
+from bili_common.models import InteractionBizTypeEnum
+from bili_common.rpc.rpa import ResourceDetail
 from sqlmodel import Field, SQLModel
 
-from bili_common.rpc.rpa import ResourceDetail
-
-
-from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.base import auto_str
 
 
@@ -25,7 +23,7 @@ class InteractionResource(SQLModel):
     """
 
     bizType: InteractionBizTypeEnum = Field(description="资源类型")
-    bizId: int = Field(description="资源 id（动态时 = dynId）")
+    bizId: str = Field(description="资源 id（字符串：动态=dynId，rpa_action=action_id，rpa_workflow=workflow_id 等）")
     authorMid: int | None = Field(
         default=None, description="资源作者 mid（未知/非动态资源可为空）"
     )

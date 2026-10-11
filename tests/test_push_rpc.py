@@ -13,8 +13,6 @@
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
 # 既有循环导入），再按需 import app.mq.rpc_external_push。
-import app.main  # noqa: F401
-from app.mq.rpc_external_push import _with_label
 from bili_common.models import (
     PushRpcMethodName,
     PushRpcSendNowParams,
@@ -23,6 +21,9 @@ from bili_common.models import (
     PushRpcSendResult,
     push_rpc_routing_key_for,
 )
+
+import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
+from app.mq.rpc_external_push import _with_label
 
 
 def test_routing_key_generation():

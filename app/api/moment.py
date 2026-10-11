@@ -39,19 +39,16 @@
 由统一异常中间件转标准响应；路由层只负责 400/403/404 的语义映射。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Header, Query, Request
 
-from app.models.str_int import StrInt
-
 from app.core.database import SessionDep
-from app.dependencies import ActiveUser, RequiredUser, OptionalUser, RootUser
+from app.dependencies import ActiveUser, OptionalUser, RequiredUser, RootUser
 from app.models import StandardResponse
-from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.interaction import (
     InteractionStatusItem,
     InteractionStatusResp,
 )
-from app.models.schemas.mq import InteractionViewPayload
 from app.models.schemas.moment import (
     MomentAtListResp,
     MomentAtSearchResp,
@@ -74,21 +71,21 @@ from app.models.schemas.moment import (
     MomentThumbResp,
     MomentTopicCreateReq,
     MomentTopicCreateResp,
+    MomentTopicDetailResp,
     MomentTopicFeedResp,
     MomentTopicMineResp,
     MomentTopicSquareResp,
     MomentTopReq,
     MomentTopResp,
-    MomentTopicDetailResp,
 )
-from app.services.message.infrastructure.publisher import publish_interaction_view
+from app.models.schemas.mq import InteractionViewPayload
+from app.models.str_int import StrInt
 from app.services.interaction_actions import get_biz
 from app.services.interaction_actions.interaction_status import (
     InteractionStatusService,
     resolve_target,
 )
-from app.services.moment.moment_feed import MomentFeedService
-from app.services.moment.topic_feed import TopicFeedService
+from app.services.message.infrastructure.publisher import publish_interaction_view
 from app.services.moment.moment_publish import (
     MomentDailyCreateLimitError,
     MomentPublishService,
@@ -97,6 +94,7 @@ from app.services.moment.moment_topic import (
     MomentTopicDailyCreateLimitError,
     MomentTopicService,
 )
+from app.services.moment.topic_feed import TopicFeedService
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/community", tags=["moment"])
@@ -132,7 +130,7 @@ async def create_dynamic(
         return StandardResponse(code=int(e.code), msg=str(e), data=None)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
-    return StandardResponse(data=MomentCreateResp(**data))
+    return StandardResponse(data=data)
 
 
 @router.post(
@@ -152,7 +150,7 @@ async def remove_dynamic(
         )
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
-    return StandardResponse(data=MomentRemoveResp(**data))
+    return StandardResponse(data=data)
 
 
 @router.post(
@@ -184,7 +182,7 @@ async def admin_remove_dynamic(
         )
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
-    return StandardResponse(data=MomentRemoveResp(**data))
+    return StandardResponse(data=data)
 
 
 @router.post(
@@ -208,7 +206,7 @@ async def repost_dynamic(
         data = await biz.repost(content=req.content)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
-    return StandardResponse(data=MomentRepostResp(**data))
+    return StandardResponse(data=data)
 
 
 @router.post(
@@ -254,7 +252,7 @@ async def create_check(
         data = await MomentPublishService.create_check(user.mid, req.scene)
     except ValueError as e:
         return StandardResponse(code=400, msg=str(e))
-    return StandardResponse(data=MomentCreateCheckResp(**data))
+    return StandardResponse(data=data)
 
 
 # ==================== 互动类（P4-T7；2.56.0 全面通用化，计划书 §5.13）====================
@@ -382,13 +380,9 @@ async def interaction_status(
     原「任一缺失 → 整批 400」会把归属服务（lottery / others_lot_dyn 走同步 RPC）的
     可用性抖动放大成整页互动态缺失。校验只保留在有写副作用的单资源接口与写接口。
     """
-    # bizIds 为逗号分隔的雪花 ID 字符串，含非数字片段时 int() 抛 ValueError：
-    # 必须兜住并转 400 错误响应（业务码 400 = INVALID_PARAM），否则会穿透到全局
-    # 兜底处理器变成 500。
-    try:
-        ids = [int(x.strip()) for x in bizIds.split(",") if x.strip()]
-    except ValueError:
-        return StandardResponse(code=400, msg="bizIds 不合法")
+    # bizIds 为逗号分隔的资源业务 id 字符串（雪花 id / ca_xxx / workflow UUID /
+    # browser_id 等），统一按字符串承载；空白片段忽略，全空返回 400。
+    ids = [x.strip() for x in bizIds.split(",") if x.strip()]
     if not ids:
         return StandardResponse(code=400, msg="bizIds 不能为空")
     ids = ids[:50]
@@ -427,18 +421,17 @@ async def interaction_status_detail(
     避免把归属服务的可用性问题伪装成业务错误、打挂详情页。
     """
     biz_type = bizType
-    try:
-        biz_id_int = int(biz_id)
-    except ValueError:
+    biz_id_str = biz_id.strip()
+    if not biz_id_str:
         return StandardResponse(code=400, msg="bizId 不合法")
 
     # 防乱调：资源不存在 / 校验不可用 → 跳过浏览投递（弱依赖，不阻断状态读取）
     missing = await InteractionStatusService.verify_resources_exist(
-        session, biz_type, [biz_id_int]
+        session, biz_type, [biz_id_str]
     )
 
     item = await InteractionStatusService.query_status_item(
-        session, biz_type, biz_id_int, user.mid if user else 0
+        session, biz_type, biz_id_str, user.mid if user else 0
     )
     if missing or item is None:
         return StandardResponse(data=item)
@@ -450,7 +443,7 @@ async def interaction_status_detail(
     if user:
         await publish_interaction_view(
             InteractionViewPayload(
-                bizType=biz_type, bizId=str(biz_id_int), mid=user.mid
+                bizType=biz_type, bizId=biz_id_str, mid=user.mid
             )
         )
     return StandardResponse(data=item)

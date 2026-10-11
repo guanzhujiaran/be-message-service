@@ -34,15 +34,15 @@ import socket
 from urllib.parse import urlparse
 
 import pytest
+from bili_common.rpc.base import geoip_rpc_routing_key_for
+from bili_common.rpc.geoip import GeoIpRpcMethodName
 from faststream.rabbit import RabbitBroker
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
 # 既有循环导入），再按需 import app.mq.*。
-import app.main  # noqa: F401
+import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
 from app.core.broker import broker
 from app.core.config import settings
-from bili_common.rpc.base import geoip_rpc_routing_key_for
-from bili_common.rpc.geoip import GeoIpRpcMethodName
 
 GEOIP_RK = geoip_rpc_routing_key_for(GeoIpRpcMethodName.RESOLVE_IP_REGION)
 REQUEST_TIMEOUT = 10.0
@@ -148,7 +148,7 @@ async def test_rpc_error_is_returned_as_envelope_not_timeout():
                 timeout=probe_timeout,
             )
             body = json.loads(resp.body.decode())
-        except Exception as e:  # noqa: BLE001 - 超时同样属于「没拿到信封」
+        except Exception as e:
             pytest.fail(
                 f"参数非法时应回错误信封而不是异常/超时: {type(e).__name__}: {e}"
             )

@@ -7,10 +7,11 @@
 第三方抽奖动态是**站外 B 站动态**，本站不能下架它，故 `hide()` 与 lottery 一样 no-op。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from loguru import logger
 
-from bili_common.models import InteractionBizTypeEnum
 from app.models.schemas.interaction import InteractionResource
+from app.services.common.indexed import Indexed, OthersLotDynDisplay
 from app.services.interaction_actions.common.generic_biz import GenericResourceBiz
 
 __all__ = ["OthersLotDynBiz"]
@@ -32,7 +33,7 @@ class OthersLotDynBiz(GenericResourceBiz):
         try:
             client = await get_lottery_rpc_client()
             return await client.others_lot_dyn_exists(did)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     async def check_exists_state(self) -> bool | None:
@@ -49,7 +50,7 @@ class OthersLotDynBiz(GenericResourceBiz):
         try:
             client = await get_lottery_rpc_client()
             existing = await client.get_existing_others_lot_dyn_ids([did])
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         if existing is None:
             return None
@@ -57,30 +58,37 @@ class OthersLotDynBiz(GenericResourceBiz):
 
     async def _load_meta(self) -> tuple[str | None, str | None]:
         """经 RPC 取卡片标题（作者名 + 「的抽奖动态」）；第三方动态无封面。"""
-        detail = (await self._details([int(self.biz_id)])).get(int(self.biz_id))
-        if not detail:
+        detail = await self._detail_of(int(self.biz_id))
+        if detail is None:
             return None, None
-        name = detail.get("name")
-        cover = detail.get("cover")
-        return (str(name) if name else None), (str(cover) if cover else None)
+        return (
+            str(detail.name) if detail.name else None,
+            str(detail.cover) if detail.cover else None,
+        )
 
     async def _load_author_mid(self) -> int | None:
         """动态作者 mid（t_lotdyninfo.up_uid）。"""
-        detail = (await self._details([int(self.biz_id)])).get(int(self.biz_id))
-        am = detail.get("authorMid") if detail else None
-        return int(am) if am is not None else None
+        detail = await self._detail_of(int(self.biz_id))
+        return (
+            int(detail.author_mid) if detail and detail.author_mid is not None else None
+        )
 
     @staticmethod
-    async def _details(dyn_ids: list[int]) -> dict[int, dict[str, object | None]]:
-        """批量取详情（内部复用，弱依赖：失败返回空 dict）。"""
+    async def _details(dyn_ids: list[int]) -> Indexed[OthersLotDynDisplay]:
+        """批量取详情（内部复用，弱依赖：失败返回空集合）。"""
         from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
 
         try:
             client = await get_lottery_rpc_client()
             return await client.get_others_lot_dyn_details(dyn_ids)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[OthersLotDynBiz] 详情回捞失败（降级）: {dyn_ids} {e}")
-            return {}
+            return Indexed.empty()
+
+    @staticmethod
+    async def _detail_of(dyn_id: int) -> OthersLotDynDisplay | None:
+        """单条详情（内部小工具，避免调用方写 `.value_of()` 杂音）。"""
+        return (await OthersLotDynBiz._details([dyn_id])).value_of(dyn_id)
 
     @classmethod
     async def batch_get_resources(
@@ -94,11 +102,11 @@ class OthersLotDynBiz(GenericResourceBiz):
         details = await cls._details(ids)
         out: dict[int, InteractionResource] = {}
         for bid in ids:
-            detail = details.get(bid)
+            detail = details.value_of(bid)
             exists = detail is not None
-            am = detail.get("authorMid") if detail else None
-            name = detail.get("name") if detail else None
-            cover = detail.get("cover") if detail else None
+            am = detail.author_mid if detail else None
+            name = detail.name if detail else None
+            cover = detail.cover if detail else None
             out[bid] = InteractionResource(
                 bizType=InteractionBizTypeEnum.OTHERS_LOT_DYN,
                 bizId=bid,

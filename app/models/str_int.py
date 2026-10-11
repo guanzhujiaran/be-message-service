@@ -21,7 +21,7 @@ OpenAPI schema 表现为 `anyOf[integer, string]`，hey-api 生成的前端 SDK 
 路径参数（`x: StrInt`）与 pydantic 模型字段（`x: StrInt = Field(...)`）不受影响。
 """
 
-from typing import Annotated, Union
+from typing import Annotated
 
 from pydantic import BeforeValidator
 
@@ -36,10 +36,11 @@ def _coerce_snowflake(v):
         try:
             return int(v)
         except (ValueError, TypeError):
-            raise ValueError(f"invalid snowflake id string: {v!r}")
+            # 转换语义：原始 int() 解析异常无排障价值，用 from None 截断链
+            raise ValueError(f"invalid snowflake id string: {v!r}") from None
     if isinstance(v, float):
         return int(v)
     raise ValueError(f"cannot coerce {type(v).__name__} to snowflake id")
 
 
-StrInt = Annotated[Union[int, str], BeforeValidator(_coerce_snowflake)]
+StrInt = Annotated[int | str, BeforeValidator(_coerce_snowflake)]

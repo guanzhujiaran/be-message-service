@@ -16,12 +16,12 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 from sqlmodel import col, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import TMoment, TResourceAuditLog, TResourceFeed
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     MomentAuditLogActionEnum,
     MomentAuditLogOperatorRoleEnum,
@@ -29,11 +29,6 @@ from app.models.enums import (
     ResourceAuditStatusEnum,
 )
 from app.models.schemas.audit import AuditStatisticsResp
-from app.services.moderation.audit_statistics import (
-    agg_rows_to_resp,
-    status_key,
-    type_key,
-)
 from app.models.schemas.moment import (
     MomentAuditDetailResp,
     MomentAuditItem,
@@ -41,9 +36,12 @@ from app.models.schemas.moment import (
     MomentAuditLogItem,
     MomentAuditLogListResp,
 )
-from app.services.moment.moment_stat import MomentStatService
+from app.services.moderation.audit_statistics import (
+    agg_rows_to_resp,
+    status_key,
+    type_key,
+)
 from app.services.user.account import PptrUser
-
 
 _AUDIT_STATUS_STR_MAP: dict[str, ResourceAuditStatusEnum] = {
     "normal": ResourceAuditStatusEnum.NORMAL,
@@ -137,8 +135,8 @@ async def _safe_author_brief(mid: int):
     """
     try:
         briefs = await PptrUser.get_many([mid])
-        return briefs.get(mid)
-    except Exception as e:  # noqa: BLE001
+        return briefs.of_mid(mid)
+    except Exception as e:
         logger.warning(f"审核取作者信息失败（弱依赖，已降级）mid={mid}: {e}")
         return None
 
@@ -267,7 +265,7 @@ class MomentAuditService:
 
         mids = {r.mid for r in rows}
         briefs = await PptrUser.get_many(list(mids))
-        items = [_to_audit_item(r, briefs.get(r.mid)) for r in rows]
+        items = [_to_audit_item(r, briefs.of_mid(r.mid)) for r in rows]
         return MomentAuditListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
         )
@@ -367,7 +365,7 @@ class MomentAuditService:
         """
         dyn = await _get_any(session, moment_id)
         briefs = await PptrUser.get_many([dyn.mid] if dyn else [])
-        item = _to_audit_item(dyn, briefs.get(dyn.mid)) if dyn is not None else None
+        item = _to_audit_item(dyn, briefs.of_mid(dyn.mid)) if dyn is not None else None
         logs = (
             await session.exec(
                 select(TResourceAuditLog)
@@ -379,7 +377,7 @@ class MomentAuditService:
             )
         ).all()
         return MomentAuditDetailResp(
-            item=item, logs=[_to_audit_log_item(l) for l in logs]
+            item=item, logs=[_to_audit_log_item(log) for log in logs]
         )
 
 

@@ -24,10 +24,10 @@ Postgres，渲染关注列表时由 `PptrUser` 直连只读批量回查（一次
 """
 
 from sqlalchemy import BIGINT, Index, UniqueConstraint
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, SQLModel
 
 from app.models.db.base_tbl import TimestampMixin
-from sqlalchemy import Enum as SAEnum
 from app.models.enums import FollowStatusEnum
 
 

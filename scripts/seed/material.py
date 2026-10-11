@@ -129,7 +129,7 @@ async def _load_material_pools() -> None:
             f"素材池已从 biliopusdb.t_lotdyninfo 加载：正文 {len(sentences)} / "
             f"评论语 {len(shorts)}（共 {len(cleaned)} 条去重）"
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"biliopusdb 素材池加载失败，使用内置兜底: {e}")
 
     # 2) bilidb.t_topic_item → 话题名（自动探测话题名列）
@@ -161,5 +161,5 @@ async def _load_material_pools() -> None:
         if names:
             _TOPIC_NAMES = list(dict.fromkeys(names))
         logger.info(f"话题名已从 bilidb.t_topic_item 加载：{len(_TOPIC_NAMES)} 个")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"bilidb.t_topic_item 话题名加载失败，使用内置兜底: {e}")

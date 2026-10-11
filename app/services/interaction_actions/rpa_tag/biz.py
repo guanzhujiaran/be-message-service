@@ -1,6 +1,7 @@
 """RPA 资源标签（RPA_TAG）资源类（2.49.0）。"""
 
 from bili_common.models import InteractionBizTypeEnum
+
 from app.services.interaction_actions.common.generic_biz import GenericResourceBiz
 
 __all__ = ["RpaTagBiz"]

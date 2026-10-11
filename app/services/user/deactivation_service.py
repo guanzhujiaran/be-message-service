@@ -66,9 +66,7 @@ async def submit_deactivation(
         raise ValueError(f"用户 {mid} 注销记录处于 {existing.status}，不可重复提交")
 
     now = datetime.datetime.now()
-    delete_after = now + datetime.timedelta(
-        days=settings.account_deactivate_grace_days
-    )
+    delete_after = now + datetime.timedelta(days=settings.account_deactivate_grace_days)
     row = UserDeactivation(
         mid=mid,
         user_name=user_name,
@@ -126,9 +124,7 @@ async def list_pending_casdoor(
     )
 
 
-async def mark_pending_casdoor(
-    session: AsyncSession, row: UserDeactivation
-) -> None:
+async def mark_pending_casdoor(session: AsyncSession, row: UserDeactivation) -> None:
     """本地物理删除成功后，把记录置为 Casdoor 待删补偿态。"""
     row.status = PENDING_CASDOOR
     row.casdoor_delete_error = None

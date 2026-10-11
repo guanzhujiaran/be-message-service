@@ -43,9 +43,8 @@ from bili_common.models import (
     pptr_routing_key_for,
     success_response,
 )
-from faststream.rabbit import RabbitQueue
-
 from bili_common.rpc.safe import rpc_safe
+from faststream.rabbit import RabbitQueue
 from loguru import logger
 
 from app.core.broker import message_exchange
@@ -61,13 +60,14 @@ async def _push_new_user_notify(*, user_name: str, uid: int, uname: str = "") ->
     委托 `NotifyService.send_welcome` 统一实现（Casdoor 登录注册通道共用同一逻辑），
     避免 OAuth 通道漏发欢迎消息。弱依赖，失败仅记 ERROR 告警，不阻断创建用户 RPC。
 
+    `user_name` / `uname` 仅保留用于日志兼容，不再进入通知文案（注册初始化阶段无昵称）。
+
     Returns:
         bool: 是否发布成功。
     """
-    nickname = uname or user_name
     try:
-        await NotifyService.send_welcome(uid, nickname)
-    except Exception as e:  # noqa: BLE001
+        await NotifyService.send_welcome(uid)
+    except Exception as e:
         logger.error(f"新建用户 {uid} 的欢迎系统通知发布失败（弱依赖，已忽略）: {e}")
         return False
     return True
@@ -140,7 +140,7 @@ async def rpc_get_user_card(params: PptrGetUserCardParams) -> StandardResponse:
             msg=f"用户不存在 uid={params.uid}",
             data={"uid": params.uid},
         )
-    info, detail, vip, level = row
+    info, detail, _vip, _level = row
     return success_response(
         data=PptrUserCard(
             uid=int(info.uid),

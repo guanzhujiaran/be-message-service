@@ -61,7 +61,7 @@ async def push_message(req: PushMessage, user: CurrentUser) -> StandardResponse:
             routing_key="message.push",
             queue=message_queue,
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return StandardResponse(code=500, msg=f"发布推送消息失败: {e}")
     return StandardResponse(data={"title": title})
 
@@ -102,7 +102,7 @@ async def test_push(req: TestPushRequest, user: CurrentUser) -> StandardResponse
                 message="测试推送已发送，请检查对应渠道是否收到",
             )
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return StandardResponse(
             code=500,
             msg=f"测试推送失败: {e}",
@@ -153,7 +153,7 @@ async def submit_feedback(req: FeedbackRequest, user: CurrentUser) -> StandardRe
         return StandardResponse(
             data=TestPushResponse(success=True, message="反馈已提交给站长"),
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return StandardResponse(
             code=500,
             msg=f"提交反馈失败: {e}",

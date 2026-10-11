@@ -37,7 +37,7 @@ async def _seed_bulk_dm(
                 mk = await client.dm_send(sender[0], receiver[0], receiver[1])
                 await client.approve_dm(mk)
                 return True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 msg = str(e)
                 if any(k in msg for k in ("拉黑", "黑名单", "陌生", "对方已")):
                     logger.info(
@@ -71,7 +71,7 @@ async def _seed_bulk_dm(
             try:
                 if await f:
                     total += 1
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
     logger.success(
         f"[大数据灌数] 私信填充完成：遍历用户对取前 {len(directed)} 对（每对 1 条），"

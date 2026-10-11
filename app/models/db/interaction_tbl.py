@@ -8,14 +8,13 @@
 统一「明细表幂等 + 计数原子 ±1」范式（计划书 §4.2 / §4.10）。
 """
 
-from sqlalchemy import BIGINT, PrimaryKeyConstraint, UniqueConstraint
-from sqlmodel import Field, SQLModel
-
-from app.models.db.base_tbl import TimestampMixin
 from bili_common.models.interaction_stat import (
     InteractionStatBase,
     InteractionViewLogBase,
 )
+from sqlalchemy import PrimaryKeyConstraint, UniqueConstraint
+
+from app.models.db.base_tbl import TimestampMixin
 
 
 class TInteractionStat(InteractionStatBase, TimestampMixin, table=True):

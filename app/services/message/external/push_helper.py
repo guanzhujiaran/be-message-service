@@ -18,9 +18,9 @@ def _is_set(value) -> bool:
     """
     if value in (None, "", 0, []):
         return False
-    if isinstance(value, str) and value.startswith("<") and value.endswith(">"):
-        return False
-    return True
+    return not (
+        isinstance(value, str) and value.startswith("<") and value.endswith(">")
+    )
 
 
 def merge_config(message: PushMessagePayload) -> PushChannelConfig:

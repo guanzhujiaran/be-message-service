@@ -18,9 +18,9 @@
 """
 
 import os
-
 from typing import Annotated
 
+from bili_common.core.time_utils import to_unix_timestamp
 from bili_common.models import (
     VALID_ROLES,
     VALID_SEX_VALUES,
@@ -35,40 +35,38 @@ from bili_common.models import (
     UserSearchParams,
 )
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import SessionDep, new_pptr_session, new_session
 from app.dependencies import AdminUser, CurrentUser
-from app.models.str_int import StrInt
 from app.models.schemas import (
-    SpaceFollowStat,
     SpaceInfoResp,
     SpacePrivacyFlags,
     SpacePrivacyUpdateReq,
-    SpaceUpStat,
     UserActLogListResp,
     UserExpRecordListResp,
 )
-from app.services.user import casdoor_service
-from app.services.user import deactivation_service
-from app.services.infrastructure import jwt_service
-import app.services.message.infrastructure.publisher as publisher
-from app.services.moment.moment_feed import MomentFeedService
-from app.services.user.avatar_audit import AvatarAuditService
-from app.services.user.avatar_check import verify_avatar_url
-from app.services.user.casdoor_service import CasdoorError
-from app.services.user.follow import FollowService
-from app.services.user.space_privacy import SpacePrivacyService
-from app.services.user.account import PptrUser
-from app.services.audit import audit_text
 from app.models.schemas.follow import (
     BlockReq,
     FollowListResp,
     FollowOpResp,
     FollowRelationResp,
 )
-from pydantic import BaseModel
+from app.models.str_int import StrInt
+from app.services.audit import audit_text
+from app.services.infrastructure import jwt_service
+from app.services.moment.moment_feed import MomentFeedService
+from app.services.user import casdoor_service, deactivation_service
+from app.services.user.account import PptrUser
+from app.services.user.avatar_audit import AvatarAuditService
+from app.services.user.avatar_check import verify_avatar_url
+from app.services.user.casdoor_service import CasdoorError
+from app.services.user.follow import FollowService
+from app.services.user.space import SpaceStatSummary
+from app.services.user.space_privacy import SpacePrivacyService
 from app.utils.ip_mask import extract_client_ip
 
 router = APIRouter(prefix="/api/v1/user", tags=["pptr-user-gateway"])
@@ -257,7 +255,7 @@ async def get_user_info(user: CurrentUser) -> StandardResponse[dict]:
     - userid    <- TUserInfo.user_name（注册名，前端展示为「用户名」）
     - usersign  <- TUserDetail.sign（个性签名）
     - sex       <- TUserDetail.sex
-    - birthday  <- TUserDetail.birthday（ISO 字符串）
+    - birthday  <- TUserDetail.birthday（秒级 int32 时间戳，0/未设置时为 0）
     - mid       <- TUserInfo.uid
     - email     <- TUserDetail.email
     - avatar    <- TUserDetail.avatar
@@ -268,9 +266,7 @@ async def get_user_info(user: CurrentUser) -> StandardResponse[dict]:
         raise HTTPException(status_code=404, detail="用户不存在")
     info, detail, _vip, _level = profile
 
-    birthday = ""
-    if detail and detail.birthday:
-        birthday = detail.birthday.isoformat()
+    birthday = to_unix_timestamp(detail.birthday) or 0 if detail else 0
 
     return StandardResponse(
         data={
@@ -411,7 +407,7 @@ async def add_blocklist(
             session, mid=uid, target_mid=int(req.target_mid)
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return StandardResponse(data=data, msg="已拉黑")
 
 
@@ -430,7 +426,7 @@ async def remove_blocklist(
     try:
         data = await FollowService.unblock(session, mid=uid, target_mid=target_mid)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return StandardResponse(data=data, msg="已解除拉黑")
 
 
@@ -479,7 +475,7 @@ async def deactivate_account(
         )
         await session.commit()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     grace = settings.account_deactivate_grace_days
     return StandardResponse(
         data=str(uid),
@@ -703,26 +699,29 @@ async def get_space_info(
     # 串行执行——同一个 AsyncSession 不支持并发 await（会抛
     # "This session is provisioning a new connection"）。
     counts = await FollowService.get_counts(session, int(mid))
-    data.follow_stat = SpaceFollowStat(
+    upstat = await MomentFeedService.get_upstat(session, int(mid))
+    # 「用户空间统计」聚成一个值对象（来源跨关注 / 动态 / 访问计数三个域），
+    # 由它自己转成对外的 follow_stat / upstat 两个子结构，路由层不关心字段拼接。
+    summary = SpaceStatSummary(
         following_count=counts.following_count,
         follower_count=counts.follower_count,
         mutual_count=counts.mutual_count,
-    )
-    upstat = await MomentFeedService.get_upstat(session, int(mid))
-    data.upstat = SpaceUpStat(
-        dynamic_count=int(upstat.get("dynamic_count") or 0),
-        like_count=int(upstat.get("like_count") or 0),
-    )
+        dynamic_count=upstat.dynamic_count,
+        like_count=upstat.like_count,
+    ).with_view_count(await SpacePrivacyService.get_view_count(session, int(mid)))
+    data.follow_stat = summary.to_follow_stat()
+    data.upstat = summary.to_up_stat()
+    data.view_count = summary.view_count
 
-    # ---- 2.58.0：对外可见性（开关 + 上次登录 + 属地 + 被访问次数）----
-    # 统计数字（关注/粉丝/获赞/动态/被访问次数）固定展示、不受开关控制；
-    # 敏感字段（邮箱 / 上次登录 / 属地）按开关裁剪，本人恒可见。
-    data.privacy_flags = await SpacePrivacyService.get_flags(session, int(mid))
+    # ---- 2.58.0：对外可见性（开关 + 上次登录 + 属地）----
+    # 统计数字固定展示、不受开关控制；敏感字段由可见性上下文按属性描述符裁剪
+    # （本人恒可见）。`data.privacy_flags` 需要完整回显给前端设置页 / 视角预览。
+    visibility = await SpacePrivacyService.visibility_for(session, int(mid), viewer)
+    data.privacy_flags = visibility.flags
     login_info = await SpacePrivacyService.load_login_info(int(mid))
     data.last_login_at = login_info.last_login_at
     data.ip_location = login_info.ip_location
-    data.view_count = await SpacePrivacyService.get_view_count(session, int(mid))
-    SpacePrivacyService.apply_flags_to_info(data, data.privacy_flags, int(mid), viewer)
+    visibility.mask_profile(data)
     return StandardResponse(data=data)
 
 
@@ -753,11 +752,11 @@ async def update_my_space_privacy(
     user: CurrentUser,
     req: SpacePrivacyUpdateReq,
 ) -> StandardResponse[SpacePrivacyFlags]:
-    """整体覆盖当前登录用户的五个可见性开关，返回设置后的值。
+    """整体覆盖当前登录用户的四个可见性开关，返回设置后的值。
 
     全量提交（不做 PATCH）：前端设置页一次保存全部开关，避免「部分更新」与
-    「默认值」混淆。收藏夹可见性复用既有 `TUserFavoriteSetting.showFavorites`，
-    由 `GET/POST /favorite/setting` 单独维护，不在本接口范围内。
+    「默认值」混淆。收藏不在本接口范围内（2026-10-08 起改为逐夹
+    `TFavoriteFolder.is_public`，由收藏夹自己的接口维护）。
     """
     flags = await SpacePrivacyService.update_flags(session, int(user.mid), req)
     return StandardResponse(data=flags)
@@ -931,8 +930,6 @@ async def logout(
 
 # ==================== Casdoor 登录回调（由 pptr 代理）====================
 
-from fastapi.responses import JSONResponse, RedirectResponse
-
 
 @router.get(
     "/casdoor/callback",
@@ -1078,7 +1075,7 @@ async def casdoor_callback(
                 logger.info(
                     f"[Casdoor callback] 用户 {local_user.uid} 冷静期登录，已自动撤销注销"
                 )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"[Casdoor callback] 自动撤销注销失败（放行登录）: {e}")
 
     # 6. 签发本地 JWT

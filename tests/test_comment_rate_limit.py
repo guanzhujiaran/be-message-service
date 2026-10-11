@@ -27,6 +27,7 @@ import itertools
 from datetime import datetime, timedelta
 
 import pytest
+from bili_common.models import InteractionBizTypeEnum
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import text
@@ -35,12 +36,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_session
-from app.models.enums import ResourceAuditStatusEnum
 from app.models.db import CommentContent, CommentIndex
+from app.models.enums import ResourceAuditStatusEnum
 from app.models.schemas import CommentRateLimitConfig
 from app.services.comment.comment import _check_rate_limit
 from app.services.common import runtime_config
-from bili_common.models import InteractionBizTypeEnum
 
 # 独立 mid / oid / rpid 区间，避免与其他用例互相干扰（真实 rpid 是雪花 ID，量级 1e18）
 _MID_ROOT = 991_100_001

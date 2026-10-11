@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from enum import IntEnum
 from threading import Lock
+
+from app.services.common.indexed import Keyed
 
 # 项目根（be-message-service/），词表路径从此处派生
 _PROJECT_ROOT = os.path.abspath(
@@ -149,24 +152,39 @@ def _usable_word(word: str, whitelist: set[str]) -> bool:
     return word not in whitelist
 
 
-def load_category_levels() -> dict[str, str]:
-    """加载 `levels.json`（分类 → 层级名），不存在 / 解析失败返回空字典。"""
+@dataclass(frozen=True, slots=True)
+class CategoryMatch:
+    """单个分类的匹配结果（层级 + 命中词原文，命中词不可变 tuple）。"""
+
+    level: WordLevel
+    words: tuple[str, ...]
+
+    def __bool__(self) -> bool:
+        return bool(self.words)
+
+
+def load_category_levels() -> Keyed[str, str]:
+    """加载 `levels.json`（分类 → 层级名）。
+
+    返回 `Keyed[str, str]`（**不返回裸 dict**）；文件不存在 / 解析失败返回空集合，
+    调用方用 `value_or(category, default)` 取默认层级。
+    """
     path = os.path.join(_effective_words_dir(), LEVELS_FILE)
     if not os.path.isfile(path):
-        return {}
+        return Keyed.empty()
     try:
         import json
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return {str(k): str(v) for k, v in data.items()}
-    except Exception:  # noqa: BLE001
-        return {}
-    return {}
+            return Keyed.of((str(k), str(v)) for k, v in data.items())
+    except Exception:
+        return Keyed.empty()
+    return Keyed.empty()
 
 
-def _level_from_name(name: str) -> "WordLevel":
+def _level_from_name(name: str) -> WordLevel:
     """层级名 → WordLevel（未知 / 缺省按 MEDIUM，避免误杀）。"""
     key = (name or "").strip().lower()
     if key in ("high", "h", "3", "reject", "拒绝"):
@@ -243,13 +261,13 @@ def _load_words_from_path(path: str) -> list[str]:
     comma_delimited = _is_comma_delimited(path)
     words: list[str] = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#"):
                     continue
                 words.extend(_split_line(stripped, comma_delimited=comma_delimited))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
     return words
 
@@ -300,7 +318,7 @@ class WordFilter:
                     and os.path.isfile(os.path.join(d, f))
                     and f not in _RESERVED_FILENAMES
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             for filename in names:
                 category = os.path.splitext(filename)[0]
@@ -364,45 +382,45 @@ class WordFilter:
 
     # ---------------- 匹配 ----------------
 
-    def match_categories(self, text: str) -> dict[str, tuple[WordLevel, list[str]]]:
-        """按**词库自带分类**匹配，返回 `{分类名: (层级, 命中词列表)}`（仅含命中的分类）。
+    def match_categories(self, text: str) -> Keyed[str, CategoryMatch]:
+        """按**词库自带分类**匹配，返回 `Keyed[str, CategoryMatch]`（仅含命中的分类）。
 
         分类名可直接作为「命中理由」告知用户（如「广告类」「涉政类」）。
         """
         if not text:
-            return {}
+            return Keyed.empty()
         try:
             self.load()
-        except Exception:  # noqa: BLE001
-            return {}
-        out: dict[str, tuple[WordLevel, list[str]]] = {}
-        for category, (level, trie) in self._categories.items():
-            hits = trie.match_all(text)
-            if hits:
-                out[category] = (level, hits)
-        return out
+        except Exception:
+            return Keyed.empty()
+        return Keyed.of(
+            (category, CategoryMatch(level=level, words=tuple(hits)))
+            for category, (level, trie) in self._categories.items()
+            if (hits := trie.match_all(text))
+        )
 
-    def match(self, text: str) -> dict[WordLevel, list[str]]:
-        """对文本做三层匹配（三层词库 + 分类词库按层级归并），返回 `{层级: 命中词列表}`。"""
+    def match(self, text: str) -> Keyed[WordLevel, tuple[str, ...]]:
+        """三层匹配（三层词库 + 分类词库按层级归并），返回 `Keyed[WordLevel, tuple[str, ...]]`。"""
         if not text:
-            return {}
+            return Keyed.empty()
         try:
             self.load()
-        except Exception:  # noqa: BLE001
+        except Exception:
             # 词库构建 / 加载失败：降级为空匹配，宁可放行不误杀
-            return {}
-        out: dict[WordLevel, list[str]] = {}
+            return Keyed.empty()
+        # 局部累积容器：只在函数内使用，返回前统一转成值对象（不跨边界传 dict）
+        merged: dict[WordLevel, list[str]] = {}
         for level in (WordLevel.HIGH, WordLevel.MEDIUM, WordLevel.LOW):
             hits = self._tries[level].match_all(text)
             if hits:
-                out[level] = hits
+                merged[level] = list(hits)
         # 分类词库按层级归并进三层结果（去重且保持顺序）
-        for _category, (level, hits) in self.match_categories(text).items():
-            merged = out.setdefault(level, [])
-            for w in hits:
-                if w not in merged:
-                    merged.append(w)
-        return out
+        for _category, match in self.match_categories(text):
+            bucket = merged.setdefault(match.level, [])
+            for word in match.words:
+                if word not in bucket:
+                    bucket.append(word)
+        return Keyed.of((level, tuple(words)) for level, words in merged.items())
 
     @property
     def loaded(self) -> bool:
@@ -413,16 +431,17 @@ class WordFilter:
 word_filter = WordFilter()
 
 __all__ = [
-    "WordLevel",
+    "MIN_WORD_LEN",
+    "WHITELIST_FILE",
+    "WORDS_DIR",
+    "CategoryMatch",
     "Trie",
     "TrieNode",
     "WordFilter",
-    "word_filter",
-    "load_words_from_file",
+    "WordLevel",
+    "categories_dir",
     "load_category_levels",
     "load_whitelist",
-    "WHITELIST_FILE",
-    "MIN_WORD_LEN",
-    "categories_dir",
-    "WORDS_DIR",
+    "load_words_from_file",
+    "word_filter",
 ]

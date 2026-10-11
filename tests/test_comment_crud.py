@@ -15,6 +15,7 @@ IP 只存原始地址、枚举落 VARCHAR 等约束在 test_phase_e_enums.py 中
 from datetime import datetime
 
 import pytest
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import col, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -29,13 +30,11 @@ from app.models.db import (
     CommentSubject,
     TMoment,
 )
-from app.models.pptr_user import PptrUserDetail, PptrUserInfo
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    ResourceAuditStatusEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
+from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService
 from app.services.comment.comment_read import CommentReadService
@@ -124,7 +123,7 @@ async def _ensure_moment(session, oid: int, mid: int) -> None:
         await session.exec(select(TMoment.dynId).where(TMoment.dynId == oid))
     ).one_or_none()
     if exists is None:
-        now = datetime.utcnow()  # noqa: DTZ003
+        now = datetime.utcnow()
         session.add(
             TMoment(
                 dynId=oid,
@@ -403,7 +402,7 @@ async def test_list_main_and_detail_and_count() -> None:
                     params={"m": _AUTHOR},
                 )
                 await ps.commit()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         await _cleanup(oid, {_AUTHOR})
 

@@ -71,7 +71,7 @@ async def invoke_rpc(
         return StandardResponse(code=504, msg=f"RPC 调用超时: {e}")
     except ConnectionError as e:
         return StandardResponse(code=503, msg=f"RPC 连接不可用: {e}")
-    except Exception as e:  # noqa: BLE001 - 调试接口必须把任何异常原样回显给调用方
+    except Exception as e:
         return StandardResponse(code=500, msg=f"{type(e).__name__}: {e}")
 
     return StandardResponse(data=result)

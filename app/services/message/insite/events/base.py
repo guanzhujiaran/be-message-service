@@ -27,7 +27,7 @@ import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
@@ -44,7 +44,7 @@ from app.models.db import (
     EventReadCursor,
     UserFollow,
 )
-from app.models.enums import ResourceAuditStatusEnum, FollowStatusEnum
+from app.models.enums import FollowStatusEnum, ResourceAuditStatusEnum
 from app.models.schemas import (
     EventAggregateItem,
     EventItem,
@@ -59,6 +59,12 @@ from app.models.schemas import (
     EventReportResp,
     EventUserBrief,
 )
+
+# 读取侧公共装配：资源快照批量回捞 / @提及昵称替换（与举报审核共用，base_biz.py）
+from app.services.interaction_actions.base_biz import (
+    batch_get_resource_snapshots,
+    replace_at_mentions,
+)
 from app.services.message.insite.setting import SettingService
 from app.services.user.account import PptrUser
 from app.services.user.follow import FollowService
@@ -70,16 +76,14 @@ from .constants import (
 )
 from .registry import EVENT_REGISTRY
 
-# 读取侧公共装配：资源快照批量回捞 / @提及昵称替换（与举报审核共用，base_biz.py）
-from app.services.interaction_actions.base_biz import (
-    batch_get_resource_snapshots,
-    replace_at_mentions,
-)
+if TYPE_CHECKING:
+    # 仅注解引用：运行时在函数内延迟导入（避免与 interaction_actions 循环依赖）
+    from app.models.schemas.interaction import InteractionResource
 
 # ==================== 评论资源快照回捞（计划书 §5.12）====================
 
 
-async def _load_comment_resources(session, rpids) -> "dict[int, InteractionResource]":
+async def _load_comment_resources(session, rpids) -> dict[int, InteractionResource]:
     """按 rpid 批量回捞**评论**快照（计划书 §5.12）。
 
     与顶层资源快照（:func:`batch_get_resource_snapshots`，base_biz 公共装配）共用同一套
@@ -112,8 +116,8 @@ async def _load_comment_resources(session, rpids) -> "dict[int, InteractionResou
 
 
 async def _resolve_event_identities(
-    session, rows, comment_index: "dict[int, CommentIndex] | None" = None
-) -> "dict[int, tuple[int, str, str]]":
+    session, rows, comment_index: dict[int, CommentIndex] | None = None
+) -> dict[int, tuple[int, str, str]]:
     """把一批 ``EventMessage`` 解析为跳转身份 ``(resource_type, resource_id, rpid)``。
 
     评论锚定事件按 ``biz_id=rpid`` 经 ``CommentIndex`` 取顶层 ``resource_type``
@@ -129,9 +133,8 @@ async def _resolve_event_identities(
             is_comment_anchored(r.event_type, r.source_type)
             and r.biz_id
             and str(r.biz_id).isdigit()
-        ):
-            if comment_index is None or int(r.biz_id) not in comment_index:
-                need.add(int(r.biz_id))
+        ) and (comment_index is None or int(r.biz_id) not in comment_index):
+            need.add(int(r.biz_id))
     extra: dict[int, CommentIndex] = {}
     if need:
         res = await session.exec(
@@ -179,13 +182,13 @@ class MsgfeedBuildContext:
     user_map: dict[int, object] = field(default_factory=dict)
     follow_targets: set[int] = field(default_factory=set)
     comment_index: dict[int, CommentIndex] = field(default_factory=dict)
-    comment_resources: "dict[int, InteractionResource]" = field(default_factory=dict)
+    comment_resources: dict[int, InteractionResource] = field(default_factory=dict)
     comment_content: dict[int, str] = field(default_factory=dict)
     dyn_cache: dict[int, object] = field(default_factory=dict)
 
     def user_brief(self, actor_mid: int) -> EventUserBrief:
         """按 mid 回查得到的触发者简况（昵称 / 头像 / 粉丝数 / 是否关注）。"""
-        info = self.user_map.get(int(actor_mid))
+        info = self.user_map.of_mid(int(actor_mid))
         return EventUserBrief(
             mid=actor_mid,
             nickname=(info.uname if info else None),
@@ -237,7 +240,7 @@ def is_comment_anchored(
     return source_type_to_biz_type(source_type) is InteractionBizTypeEnum.COMMENT
 
 
-def _comment_author(ctx: "MsgfeedBuildContext", rpid: int) -> int:
+def _comment_author(ctx: MsgfeedBuildContext, rpid: int) -> int:
     """按 rpid 取评论作者 mid（读 ``CommentBiz`` 批量回捞的评论快照，计划书 §5.12）。
 
     快照缺失（评论不存在 / 已被物理删除）或无作者时返回 ``0``，前端据此跳过作者展示。
@@ -278,7 +281,7 @@ async def report_event_weakly(req: EventReportReq) -> None:
     try:
         async with new_session() as ns:
             await BaseEvent.from_req(req).report(ns)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning(
             f"事件上报失败（弱依赖，已忽略）: event_type={req.event_type} mid={req.mid}",
             exc_info=True,
@@ -390,15 +393,14 @@ class BaseEvent(ABC):
         # `blocked_silent` 由 handler 类属性声明（如 ReplyEvent / AtEvent），
         # 不再依赖底层枚举元数据。@ 本身仍然允许（动态 AT 节点 / 评论 @ 关系照常落库与渲染），
         # 这里只拦「提醒投递」这一步；双向任一向拉黑即静默。
-        if self.blocked_silent:
-            if await FollowService.is_blocked_relation(
-                session, self.mid, self.actor_mid
-            ):
-                logger.debug(
-                    f"用户 {self.mid} 与 {self.actor_mid} 存在黑名单关系，"
-                    f"跳过 {self.event_type} 提醒"
-                )
-                return EventReportResp(accepted=False, duplicated=False)
+        if self.blocked_silent and await FollowService.is_blocked_relation(
+            session, self.mid, self.actor_mid
+        ):
+            logger.debug(
+                f"用户 {self.mid} 与 {self.actor_mid} 存在黑名单关系，"
+                f"跳过 {self.event_type} 提醒"
+            )
+            return EventReportResp(accepted=False, duplicated=False)
 
         dedup_key = self.build_dedup_key()
         row = EventMessage(
@@ -677,7 +679,7 @@ class BaseEvent(ABC):
                 if r.actor_mid in seen:
                     continue
                 seen.add(r.actor_mid)
-                info = user_map.get(r.actor_mid)
+                info = user_map.of_mid(r.actor_mid)
                 actors.append(
                     EventUserBrief(
                         mid=r.actor_mid,
@@ -968,7 +970,7 @@ class BaseEvent(ABC):
                 profiles = await PptrUser.get_many(need_mids)
                 nickname_map = {
                     int(mid): (brief.uname or "").strip()
-                    for mid, brief in profiles.items()
+                    for mid, brief in profiles.pairs()
                     if (brief.uname or "").strip()
                 }
             comment_author_names = {
@@ -1005,7 +1007,7 @@ class BaseEvent(ABC):
         )
 
         total_items: list[EventMsgfeedItem] = []
-        for etype, stype, sid, cnt, _unread, latest_id in groups:
+        for etype, stype, sid, cnt, _unread, _latest_id in groups:
             handler = cls._for_type(etype, stype)
             rows = bucket.get((etype, stype, sid), [])
             latest = rows[0]

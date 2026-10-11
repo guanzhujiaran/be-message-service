@@ -21,42 +21,39 @@ import re
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
+from bili_common.models import (
+    InteractionActionTypeEnum,
+    InteractionBizTypeEnum,
+    ResponseCode,
+)
 from loguru import logger
-from sqlalchemy import func, update
+from sqlalchemy import update
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
-from app.core.database import new_session
 from app.core.sharding import generate_msgkey
 from app.exceptions import CommentNotInteractiveException
 from app.models.db import (
     CommentAt,
     CommentContent,
     CommentIndex,
-    CommentReport,
     CommentSubject,
     TMoment,
 )
-from bili_common.models import (
-    InteractionActionTypeEnum,
-    InteractionBizTypeEnum,
-    ResponseCode,
-)
-from app.services.common import runtime_config
-from app.services.common.daily_limit import count_created_today
 from app.models.enums import (
     CommentAttrBit,
-    ResourceAuditStatusEnum,
     CommentSubjectStateEnum,
     MomentReportReasonEnum,
     NotifyLevelEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas import CommentAddReq, CommentAddResp, EventReportReq
-from app.services.comment.comment_audit import audit_text
-from app.services.user.follow import FollowService
-from app.services.moment.moment_stat import MomentStatService
+from app.services.common import runtime_config
+from app.services.common.daily_limit import count_created_today
 from app.services.message.insite.notify import NotifyService
+from app.services.moment.moment_stat import MomentStatService
+from app.services.user.follow import FollowService
 from app.utils.audit_source import build_comment_source
 from app.utils.notify_markup import markup_inline_link
 from app.utils.ua_parse import parse_user_agent
@@ -556,7 +553,7 @@ class CommentService:
                     .values(notified=True)
                 )
                 await session.commit()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"评论通知投递失败（弱依赖，已忽略）: {e}")
 
         logger.debug(

@@ -13,25 +13,36 @@
 必须登录**（需知道"我"是谁），使用 RequiredUser。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Header, Query
 
-from app.models.str_int import StrInt
-from loguru import logger
-
+from app.core.config import settings
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
+from app.models.enums import FeedEventTypeEnum
+from app.models.schemas.ml_status import FeedMLStatusResp
 from app.models.schemas.moment import (
+    FeedEventReportReq,
     MomentDetailResp,
     MomentDetailsReq,
     MomentFeedResp,
     MomentForwardListResp,
     MomentLikerListResp,
 )
-from app.services.user.follow import FollowService
+from app.models.str_int import StrInt
+from app.services.moment.feed_engine import build_viewer_key
+from app.services.moment.feed_event import FeedEventItem, FeedEventService
+from app.services.moment.ml_status import get_status as get_ml_status
 from app.services.moment.moment_feed import MomentFeedService
+from app.services.user.follow import FollowService
 
 router = APIRouter(prefix="/api/v1/community", tags=["moment-feed"])
+
+_EVENT_TYPE_MAP: dict[str, FeedEventTypeEnum] = {
+    "click": FeedEventTypeEnum.CLICK,
+    "dwell": FeedEventTypeEnum.DWELL,
+}
 
 
 async def _resolve_viewer(x_bili_mid: str | None) -> int | None:
@@ -140,6 +151,70 @@ async def feed_all(
         lng=lng,
     )
     return StandardResponse(data=data)
+
+
+@router.post(
+    "/feed/events",
+    response_model=StandardResponse[int],
+    summary="Feed 行为批量上报（click / dwell，匿名可上报）",
+)
+async def report_feed_events(
+    session: SessionDep,
+    req: FeedEventReportReq,
+    x_bili_mid: str | None = Header(default=None),
+) -> StandardResponse[int]:
+    """2.66.0 机器学习埋点：前端上报点击 / 停留（曝光由服务端下发时写）。
+
+    单批上限 ``settings.ml_event_batch_limit``（默认 100）；超出部分**直接截断**
+    （埋点是弱依赖，不因客户端异常数据报错）。观众标识与 Feed 去重同一口径：
+    登录 ``mid:{mid}``、匿名 ``anon:{uniq_id}``。
+    """
+    viewer = await _resolve_viewer(x_bili_mid)
+    viewer_key = build_viewer_key(viewer, req.uniqId)
+    if viewer_key is None:
+        return StandardResponse(code=400, msg="缺少观众标识（未登录需传 uniqId）")
+    if not settings.ml_event_enabled:
+        return StandardResponse(data=0)
+
+    items: list[FeedEventItem] = []
+    for ev in req.events[: settings.ml_event_batch_limit]:
+        event_type = _EVENT_TYPE_MAP.get(ev.event.strip().lower())
+        if event_type is None:
+            continue
+        items.append(
+            FeedEventItem(
+                biz_id=int(ev.bizId),
+                event=event_type,
+                position=ev.position,
+                value_ms=ev.valueMs,
+            )
+        )
+    written = await FeedEventService.report_client_events(
+        session,
+        viewer_key=viewer_key,
+        biz_type=InteractionBizTypeEnum.DYNAMIC,
+        feed_scene=req.scene or "comprehensive",
+        items=items,
+    )
+    return StandardResponse(data=written)
+
+
+@router.get(
+    "/feed/ml-status",
+    response_model=StandardResponse[FeedMLStatusResp],
+    summary="推荐机器学习状态（三件套开关 / 模型就绪 / 离线指标）",
+)
+async def feed_ml_status(session: SessionDep) -> StandardResponse[FeedMLStatusResp]:
+    """只读状态接口（2.66.0）：回答「开关开了有没有模型在跑」。
+
+    - ``config``：当前生效的运行时配置（``feed_ml`` 配置项，管理端可热更新）；
+    - ``ranker`` / ``als``：模型文件是否就绪 + 上次离线训练指标；
+    - ``linucbArms`` / ``eventSamples``：臂参数行数 / 曝光样本量（样本太少时模型不可信）。
+
+    **开关本身不通过本接口修改**——写入走既有运行时配置中心
+    （``POST /api/v1/message/admin/sys-config``），本接口仅观测。
+    """
+    return StandardResponse(data=await get_ml_status(session))
 
 
 @router.get(

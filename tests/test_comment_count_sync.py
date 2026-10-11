@@ -7,6 +7,7 @@
 """
 
 import pytest
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import col, select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -16,11 +17,9 @@ from app.core.config import settings
 from app.core.database import new_session
 from app.models.db import CommentIndex, CommentSubject
 from app.models.db.moment_tbl import TMoment
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
-    ResourceAuditStatusEnum,
-    ResourceAuditStatusEnum,
     MomentTypeEnum,
+    ResourceAuditStatusEnum,
 )
 from app.models.schemas import CommentAddReq
 from app.services.comment import CommentService

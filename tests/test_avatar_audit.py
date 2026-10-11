@@ -20,7 +20,7 @@ from app.core import database as db_mod
 from app.core.config import settings
 from app.core.database import new_pptr_session, new_session
 from app.models.db import NotifyMessage, TUserAvatarAudit
-from app.models.enums import ResourceAuditStatusEnum, NotifyTargetTypeEnum
+from app.models.enums import NotifyTargetTypeEnum, ResourceAuditStatusEnum
 from app.models.pptr_user import PptrUserDetail, PptrUserInfo
 from app.services.user.avatar_audit import AvatarAuditService
 

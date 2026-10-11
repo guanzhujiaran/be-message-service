@@ -11,12 +11,12 @@
 - `GET  /unread`     各类型未读数（前端红点）。
 """
 
+from bili_common.models import InteractionActionTypeEnum
 from fastapi import APIRouter, Query
 
 from app.core.database import SessionDep
 from app.dependencies import RequiredUser
 from app.models import StandardResponse
-from bili_common.models import InteractionActionTypeEnum
 from app.models.schemas import (
     EventAggregateResp,
     EventListResp,

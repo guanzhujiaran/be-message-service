@@ -12,14 +12,14 @@ from app.mq.consumers import (
     comment,
     deactivate,
     dm,
-    interaction_view,
     external_push,
+    interaction_view,
 )
 
 __all__ = [
     "comment",
     "deactivate",
     "dm",
-    "interaction_view",
     "external_push",
+    "interaction_view",
 ]

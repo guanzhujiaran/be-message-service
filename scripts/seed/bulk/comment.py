@@ -47,14 +47,14 @@ async def _seed_bulk_comment_suite(
         """单条评论动作失败软降级跳过。"""
         try:
             await coro
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"灌数评论动作失败（已跳过）: {e}")
 
     async def _safe_add(coro):
         """评论发布失败软降级，返回 rpid 或 None。"""
         try:
             return await coro
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"灌数评论发布失败（已跳过）: {e}")
             return None
 

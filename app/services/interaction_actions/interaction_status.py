@@ -15,6 +15,7 @@
 import asyncio
 from collections.abc import Sequence
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -33,7 +34,6 @@ from app.services.infrastructure.rpa_rpc import rpa_rpc_client
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
-from bili_common.models import InteractionBizTypeEnum
 
 __all__ = ["InteractionStatusService", "resolve_target"]
 
@@ -45,7 +45,6 @@ _RPA_DETAIL_BIZ_TYPES: frozenset[InteractionBizTypeEnum] = frozenset(
         InteractionBizTypeEnum.RPA_ACTION,
         InteractionBizTypeEnum.RPA_WORKFLOW,
         InteractionBizTypeEnum.RPA_BROWSER,
-        InteractionBizTypeEnum.RPA_PLUGIN,
         InteractionBizTypeEnum.RPA_TAG,
     }
 )
@@ -54,21 +53,22 @@ _RPA_DETAIL_BIZ_TYPES: frozenset[InteractionBizTypeEnum] = frozenset(
 def resolve_target(
     biz_type: InteractionBizTypeEnum,
     biz_id: StrInt | None = None,
-) -> tuple[InteractionBizTypeEnum, int]:
+) -> tuple[InteractionBizTypeEnum, str]:
     """归一请求中的目标资源为唯一资源定位键 ``(biz_type, biz_id)``。
 
-    `bizId` 为资源唯一标识（2.56.0 起不再接受 `dynId` 别名，动态资源也一律传 `bizId`）；
-    缺失 / 非法（非雪花 ID）一律抛 `ValueError`，由路由层统一转 400 错误响应。
+    `bizId` 为资源唯一业务标识（字符串：动态=雪花 dynId、rpa_action=action_id、
+    rpa_workflow=workflow_id、rpa_browser=browser_id 等）；数字 id 也以其十进制
+    字符串承载。缺失 / 空白一律抛 `ValueError`，由路由层统一转 400 错误响应。
 
     Raises:
         ValueError: 目标资源参数缺失或不合法。
     """
     if biz_id is None:
         raise ValueError("bizId 必填")
-    try:
-        return biz_type, int(biz_id)
-    except (TypeError, ValueError):
-        raise ValueError("bizId 不合法") from None
+    biz_id_str = str(biz_id).strip()
+    if not biz_id_str:
+        raise ValueError("bizId 不合法")
+    return biz_type, biz_id_str
 
 
 class InteractionStatusService:
@@ -144,8 +144,8 @@ class InteractionStatusService:
 
         `mid=0` 表示匿名观众（2.60.0）：点赞 / 收藏态恒 false，计数不受影响。
         """
-        # StrInt 入参可能为 str：服务层统一归一为 int，后续计数 / RPC 一律按 int 处理
-        biz_ids = [int(_id) for _id in ids]
+        # bizId 统一按字符串承载（数字主键 / ca_xxx / workflow UUID / browser_id 等）
+        biz_ids = [str(_id).strip() for _id in ids if str(_id).strip()]
         # 2.60.0：mid=0 表示匿名观众（路由层 OptionalUser 为 None 时传 0）——0 非合法 mid，
         # 点赞 / 收藏明细查不到任何行，匿名结果即 isLike=isFavorite=False，计数不受影响
         viewer_mid = int(mid)
@@ -238,7 +238,7 @@ class InteractionStatusService:
                 ],
                 return_exceptions=True,
             )
-            for _id, res in zip(biz_ids, results):
+            for _id, res in zip(biz_ids, results, strict=False):
                 detail = None
                 # gather 可能回填 BaseException（如 CancelledError），与 Exception 一并降级
                 if not isinstance(res, BaseException) and res is not None:

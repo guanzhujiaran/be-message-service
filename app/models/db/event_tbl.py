@@ -20,12 +20,12 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from sqlalchemy import BIGINT, Text
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
 
 from app.models.db.base_tbl import TimestampMixin
-from sqlalchemy import Enum as SAEnum
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 
 
 class EventMessage(TimestampMixin, table=True):

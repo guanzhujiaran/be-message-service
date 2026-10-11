@@ -6,6 +6,7 @@
 
 from datetime import datetime
 
+from bili_common.core.time_utils import OptionalUnixTime, UnixTime
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import BanDurationTypeEnum, BanStatusEnum
@@ -57,11 +58,11 @@ class BanItem(SQLModel):
     reason: str
     duration_type: BanDurationTypeEnum
     duration_days: int | None
-    banned_until: datetime | None
+    banned_until: OptionalUnixTime
     operator_mid: int
     status: BanStatusEnum
-    created_at: datetime
-    updated_at: datetime
+    created_at: UnixTime
+    updated_at: UnixTime
 
 
 class BanListResp(SQLModel):
@@ -93,7 +94,7 @@ class BanServiceStatus(SQLModel):
     status: BanStatusEnum = Field(description="记录状态：active / lifted")
     reason: str | None = None
     duration_type: BanDurationTypeEnum | None = None
-    banned_until: datetime | None = None
+    banned_until: OptionalUnixTime = None
     operator_mid: int | None = None
 
 

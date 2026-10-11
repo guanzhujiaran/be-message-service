@@ -22,10 +22,10 @@ public 的字段**不会被裁剪**，私密字段仍会被序列化出去；一
 
 from typing import Annotated
 
+from bili_common.models.auto_str import Private
 from sqlmodel import SQLModel
 
 from app.models.schemas.base import auto_str
-from bili_common.models.auto_str import Private
 
 
 @auto_str

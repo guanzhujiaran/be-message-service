@@ -11,13 +11,13 @@
 """
 
 from datetime import datetime
-from typing import Optional
 
+from bili_common.core.time_utils import OptionalUnixTime, UnixTime
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from pydantic import computed_field
 from sqlmodel import Field, SQLModel
 
 from app.models.biz_type import source_type_label
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.schemas.base import auto_str
 from app.models.str_int import StrInt
 
@@ -106,7 +106,7 @@ class EventItem(SQLModel):
     actor_mid: int
     desc: str | None = None
     is_read: bool = False
-    created_at: datetime
+    created_at: UnixTime
 
 
 @auto_str
@@ -136,7 +136,9 @@ class EventAggregateItem(SQLModel):
     )
     latest_event_id: int = Field(default=0, description="分组内最新事件id")
     latest_desc: str | None = Field(default=None, description="分组内最新事件内容")
-    latest_at: datetime | None = Field(default=None, description="分组内最新事件时间")
+    latest_at: OptionalUnixTime = Field(
+        default=None, description="分组内最新事件时间（秒级时间戳）"
+    )
 
 
 @auto_str
@@ -227,7 +229,7 @@ class EventMsgfeedCursor(SQLModel):
 
     is_end: bool = False
     id: int | None = None
-    time: datetime | None = None
+    time: OptionalUnixTime = None
 
 
 @auto_str
@@ -329,20 +331,20 @@ class EventPushPayload(SQLModel):
 
 
 __all__ = [
-    "EventUserBrief",
-    "EventReportReq",
-    "EventReportResp",
-    "EventItem",
     "EventAggregateItem",
+    "EventAggregateResp",
+    "EventCountResp",
+    "EventItem",
+    "EventListResp",
     "EventMsgfeedContent",
+    "EventMsgfeedCursor",
     "EventMsgfeedItem",
     "EventMsgfeedSection",
-    "EventMsgfeedCursor",
-    "EventListResp",
-    "EventAggregateResp",
+    "EventPushPayload",
     "EventReadReq",
     "EventReadResp",
-    "EventCountResp",
+    "EventReportReq",
+    "EventReportResp",
     "EventUnreadResp",
-    "EventPushPayload",
+    "EventUserBrief",
 ]

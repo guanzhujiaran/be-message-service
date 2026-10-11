@@ -14,6 +14,7 @@
 """
 
 import pytest
+from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -27,7 +28,6 @@ from app.models.db import (
     EventMessage,
     NotifyMessage,
 )
-from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from app.models.enums import (
     DmMsgStatusEnum,
     DmMsgTypeEnum,

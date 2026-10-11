@@ -33,13 +33,13 @@ def _load_domains(filename: str) -> list[str]:
         return []
     out: list[str] = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 d = line.strip().lower()
                 if not d or d.startswith("#"):
                     continue
                 out.append(d)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
     return out
 
@@ -63,7 +63,7 @@ def extract_urls(text: str) -> list[str]:
 def _host_of(url: str) -> str:
     try:
         host = urlparse(url).hostname or ""
-    except Exception:  # noqa: BLE001
+    except Exception:
         return ""
     return host.lower()
 

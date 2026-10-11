@@ -20,11 +20,11 @@ from app.dependencies.user import (
 )
 
 __all__ = [
-    "BizPermOp",
-    "InteractionBizTypeEnum",
     "ActiveUser",
     "AdminUser",
+    "BizPermOp",
     "CurrentUser",
+    "InteractionBizTypeEnum",
     "MsgAdminUser",
     "OptionalUser",
     "RequiredUser",

@@ -17,17 +17,17 @@
 
 from datetime import datetime
 
+from bili_common.models import InteractionBizTypeEnum
 from sqlalchemy import BIGINT, JSON, Text, UniqueConstraint, text
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, ForeignKeyConstraint, Index, PrimaryKeyConstraint
 
 from app.models.db.base_tbl import TimestampMixin
-from sqlalchemy import Enum as SAEnum
-from bili_common.models import InteractionBizTypeEnum
 from app.models.enums import (
     MomentFoldTypeEnum,
     MomentTypeEnum,
-    ResourceAuditStatusEnum,
     MomentVisibleScopeEnum,
+    ResourceAuditStatusEnum,
 )
 
 
@@ -293,8 +293,8 @@ class TMomentTopicRel(TimestampMixin, table=True):
 
 
 __all__ = [
-    "TMoment",
     "MomentAuthorQuality",
+    "TMoment",
     "TMomentTopic",
     "TMomentTopicRel",
 ]

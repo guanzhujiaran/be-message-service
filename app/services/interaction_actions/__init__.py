@@ -25,6 +25,9 @@
 """
 
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+
+# 导入资源汇总模块：触发全部资源类的「继承即登记」副作用
+from app.services.interaction_actions import resources  # noqa: F401  # 副作用导入
 from app.services.interaction_actions.base import (
     InteractionAclScopeEnum,
     InteractionActionError,
@@ -37,17 +40,13 @@ from app.services.interaction_actions.base_biz import (
     get_biz_class,
     registered_biz_types,
 )
-
-# 导入资源汇总模块：触发全部资源类的「继承即登记」副作用
-from app.services.interaction_actions import resources  # noqa: F401
-from app.services.interaction_actions.resources import (  # noqa: F401
+from app.services.interaction_actions.resources import (
     CommentBiz,
     DynamicBiz,
     LotteryBiz,
     OthersLotDynBiz,
     RpaActionBiz,
     RpaBrowserBiz,
-    RpaPluginBiz,
     RpaTagBiz,
     RpaWorkflowBiz,
     UserBiz,
@@ -55,23 +54,22 @@ from app.services.interaction_actions.resources import (  # noqa: F401
 
 __all__ = [
     "BaseBiz",
-    "biz_action",
-    "get_biz",
-    "get_biz_class",
-    "registered_biz_types",
-    "InteractionBizTypeEnum",
-    "InteractionActionTypeEnum",
-    "InteractionActionError",
-    "InteractionRelationScopeEnum",
-    "InteractionAclScopeEnum",
     "CommentBiz",
     "DynamicBiz",
+    "InteractionAclScopeEnum",
+    "InteractionActionError",
+    "InteractionActionTypeEnum",
+    "InteractionBizTypeEnum",
+    "InteractionRelationScopeEnum",
     "LotteryBiz",
     "OthersLotDynBiz",
     "RpaActionBiz",
     "RpaBrowserBiz",
-    "RpaPluginBiz",
     "RpaTagBiz",
     "RpaWorkflowBiz",
     "UserBiz",
+    "biz_action",
+    "get_biz",
+    "get_biz_class",
+    "registered_biz_types",
 ]

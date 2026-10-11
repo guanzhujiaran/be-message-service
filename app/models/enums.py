@@ -6,13 +6,13 @@
 序列化时仍返回枚举的 `.value`（整数），与库里存成员名互不干扰。
 """
 
-from enum import Enum
+from enum import StrEnum
 
 from bili_common.models import IntEnumAutoDoc
 from bili_common.models.notify import NotifyLevelEnum, NotifyTargetTypeEnum
 
 # 举报相关枚举（原因 / 审核状态）统一收口到 bili-common，be-message 侧直接复用，不再重定义：
-from bili_common.models.report import ReportReasonEnum, ReportAuditStatusEnum
+from bili_common.models.report import ReportAuditStatusEnum, ReportReasonEnum
 
 
 class MessageModuleEnum(IntEnumAutoDoc):
@@ -274,6 +274,24 @@ class ResourceAuditStatusEnum(IntEnumAutoDoc):
 # 本文件仅做 be-message 侧别名复用 / 定义 be-message 专属枚举。
 
 
+# ==================== Feed 行为事件（2.66.0 机器学习埋点）====================
+
+
+class FeedEventTypeEnum(IntEnumAutoDoc):
+    """Feed 行为事件类型（`TFeedEventLog.event`，推荐模型训练样本源）。
+
+    - `IMPRESSION`(1)：服务端下发（曝光），含下发位次与下发分；
+    - `CLICK`(2)     ：前端上报——卡片点进详情；
+    - `DWELL`(3)     ：前端上报——详情页停留（`valueMs` 毫秒）。
+
+    样本构建以 `IMPRESSION` 为基准行，join 其后的 `CLICK` / 互动明细生成标签。
+    """
+
+    IMPRESSION = 1
+    CLICK = 2
+    DWELL = 3
+
+
 # ==================== 用户关注关系 ====================
 
 
@@ -295,7 +313,7 @@ class FollowStatusEnum(IntEnumAutoDoc):
 # ==================== 前端路由名（跳转契约）====================
 
 
-class FrontendRouteEnum(str, Enum):
+class FrontendRouteEnum(StrEnum):
     """前端路由名（跳转契约的唯一真相源，见计划书 §2.10）。
 
     **值必须等于前端 `Vue3FrontEndDemoExercise/src/router/index.ts` 里路由的 `name`**
@@ -324,28 +342,24 @@ class FrontendRouteEnum(str, Enum):
 
 
 __all__ = [
-    "AvatarAuditStatusEnum",
-    "FrontendRouteEnum",
-    "FolderCoverAuditStatusEnum",
     "BanDurationTypeEnum",
     "BanServiceEnum",
     "BanStatusEnum",
     "CommentActionEnum",
     "CommentAttrBit",
     "CommentSortEnum",
-    "CommentStateEnum",
     "CommentSubjectStateEnum",
-    "DmAuditStateEnum",
     "DmMsgStatusEnum",
     "DmMsgTypeEnum",
     "DmRelationEnum",
     "DmSessionTypeEnum",
     "ExpActionType",
+    "FeedEventTypeEnum",
     "FollowStatusEnum",
+    "FrontendRouteEnum",
     "MessageModuleEnum",
     "MomentAuditLogActionEnum",
     "MomentAuditLogOperatorRoleEnum",
-    "MomentAuditStatusEnum",
     "MomentFoldTypeEnum",
     "MomentReportAuditStatusEnum",
     "MomentReportReasonEnum",

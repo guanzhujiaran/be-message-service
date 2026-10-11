@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from app.services.common.indexed import Keyed
+
 
 def mask_word(word: str) -> str:
     """把单个敏感词打码。"""
@@ -47,10 +49,12 @@ def mask_text(text: str, words: list[str]) -> str:
 
 
 def mask_hits_by_category(
-    text: str, hits: dict[str, list[str]]
-) -> dict[str, list[str]]:
-    """把「分类 → 命中词」里的命中词在 text 中打码，返回 `{分类: [打码词]}`。"""
-    return {cat: [mask_word(w) for w in wl] for cat, wl in hits.items()}
+    text: str, hits: Keyed[str, tuple[str, ...]]
+) -> Keyed[str, tuple[str, ...]]:
+    """把「分类 → 命中词」里的命中词在 text 中打码，返回 `Keyed[分类, 打码词]`。"""
+    return Keyed.of(
+        (category, tuple(mask_word(w) for w in words)) for category, words in hits
+    )
 
 
-__all__ = ["mask_word", "mask_text", "mask_hits_by_category"]
+__all__ = ["mask_hits_by_category", "mask_text", "mask_word"]

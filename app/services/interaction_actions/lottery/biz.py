@@ -4,9 +4,9 @@
 仅记录举报 + 转审核，Feed 层 / RPC 处置均不执行，故覆盖 `hide()` 跳过。
 """
 
+from bili_common.models import InteractionBizTypeEnum
 from loguru import logger
 
-from bili_common.models import InteractionBizTypeEnum
 from app.services.interaction_actions.common.generic_biz import GenericResourceBiz
 
 __all__ = ["LotteryBiz"]
@@ -28,7 +28,7 @@ class LotteryBiz(GenericResourceBiz):
         try:
             client = await get_lottery_rpc_client()
             return await client.lottery_exists(bid)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     async def check_exists_state(self) -> bool | None:
@@ -45,7 +45,7 @@ class LotteryBiz(GenericResourceBiz):
         try:
             client = await get_lottery_rpc_client()
             existing = await client.get_existing_lottery_ids([bid])
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         if existing is None:
             return None
@@ -58,10 +58,11 @@ class LotteryBiz(GenericResourceBiz):
         """抽奖批量回捞：并行 ``get_resource_detail`` RPC，按 lotteryId 装配快照。"""
         from asyncio import gather
 
+        from bili_common.models import InteractionBizTypeEnum
+
         from app.models.schemas.interaction import InteractionResource
         from app.services.infrastructure.rpa_rpc import rpa_rpc_client
         from app.utils.route_target import jump_target_for
-        from bili_common.models import InteractionBizTypeEnum
 
         rpid_map = rpid_map or {}
         tasks = {
@@ -72,7 +73,9 @@ class LotteryBiz(GenericResourceBiz):
             if isinstance(bid, int)
         }
         details = (
-            dict(zip(tasks.keys(), await gather(*tasks.values()))) if tasks else {}
+            dict(zip(tasks.keys(), await gather(*tasks.values()), strict=False))
+            if tasks
+            else {}
         )
         out: dict[int, InteractionResource] = {}
         for bid in biz_ids:

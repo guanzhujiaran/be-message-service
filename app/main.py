@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from bili_common.exceptions import register_exception_handlers
+from bili_common.middlewares import add_error_status_middleware
 from fastapi import FastAPI, Request, Response
 from faststream.rabbit import RabbitBroker
 from loguru import logger
@@ -35,20 +36,20 @@ from app.api.ban import router as ban_router
 from app.api.comment import router as comment_router
 from app.api.comment_admin import router as comment_admin_router
 from app.api.dm import router as dm_router
-from app.api.favorite import router as favorite_router
-from app.api.folder_cover_audit import router as folder_cover_audit_router
 from app.api.dm_admin import router as dm_admin_router
 from app.api.event import router as event_router
+from app.api.external_push import router as push_router
+from app.api.favorite import router as favorite_router
+from app.api.folder_cover_audit import router as folder_cover_audit_router
 from app.api.follow import router as follow_router
 from app.api.message_admin import router as message_admin_router
 from app.api.moment import router as moment_router
 from app.api.moment_audit import router as moment_audit_router
-from app.api.moment_topic_audit import router as moment_topic_audit_router
 from app.api.moment_feed import router as moment_feed_router
+from app.api.moment_topic_audit import router as moment_topic_audit_router
 from app.api.msg_feed import router as msg_feed_router
 from app.api.notify import router as notify_router
 from app.api.pptr_user_gateway import router as pptr_user_gateway_router
-from app.api.external_push import router as push_router
 from app.api.report import router as report_router
 from app.api.rpa_tag import router as rpa_tag_router
 from app.api.rpc_debug import router as rpc_debug_router
@@ -58,18 +59,13 @@ from app.api.sys_config import router as sys_config_router
 from app.api.user import router as user_router
 from app.core.broker import broker
 from app.core.config import settings
-from app.core.viewer_context import bind_viewer, reset_viewer
 from app.core.database import ensure_database, test_pptr_connection
 from app.core.database import test_connection as test_mysql_connection
 from app.core.migration import run_alembic_pptr_upgrade, run_alembic_upgrade
 from app.core.sharding import ensure_current_month_shards
-from app.mq import rpc_notify
-from app.mq import rpc_pptr_user
-from app.mq import rpc_external_push
+from app.core.viewer_context import bind_viewer, reset_viewer
 
 # IP 属地解析 RPC（message.geoip.rpc.*）：RPA 等按需查属地，mmdb 只留在本服务
-from app.mq import rpc_geoip
-from app.mq.consumers import comment, deactivate, dm, external_push
 from app.mq.router import router as mq_router
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
 
@@ -192,7 +188,7 @@ async def lifespan(app: FastAPI):
     # 3. 预热当月私信内容分片，首条私信写入无需承担建表 DDL 耗时
     try:
         await ensure_current_month_shards()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(f"预热私信内容分片失败（不阻断启动，写入时会懒创建）: {e}")
 
     # broker 启动 / 定时任务启动由 mq_router 的 lifespan 在本 lifespan 之外、
@@ -201,7 +197,7 @@ async def lifespan(app: FastAPI):
     # 4. 连接 RPA 资源 RPC 客户端（2.18.0：互动接口经 RPC 获取 RPA 资源详情）
     try:
         await rpa_rpc_client.connect()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # RPA RPC 弱依赖：连接失败不阻断服务启动，接口侧降级返回无详情
         logger.warning(f"连接 RPA RPC 客户端失败（弱依赖，已忽略）: {e}")
 
@@ -210,7 +206,7 @@ async def lifespan(app: FastAPI):
     # 关闭 RPA RPC 客户端
     try:
         await rpa_rpc_client.close()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"关闭 RPA RPC 客户端失败（已忽略）: {e}")
 
 
@@ -230,6 +226,11 @@ app = FastAPI(
 # 未登录等认证异常使用 B 站官方约定业务码 -101，HTTP 状态码恒为 200
 # （详见 docs/response-code-design.md）。统一由 bili_common 处理。
 register_exception_handlers(app)
+
+# ==================== HTTP 状态码归一化中间件 ====================
+# 把「HTTP 200 但 body.code 为 HTTP 语义码（400~599）」的正常 return 响应
+# 改写为对应 HTTP 状态码，与异常处理器路径保持一致。
+add_error_status_middleware(app)
 
 
 # ==================== 访问者上下文（计划书 §5.12）====================
@@ -273,7 +274,7 @@ async def health() -> Response:
     """访问返回 204 即代表服务存活且 RabbitMQ broker 连接正常。"""
     try:
         ok = await broker.ping(5.0)
-    except Exception:  # noqa: BLE001
+    except Exception:
         ok = False
     return Response(status_code=204 if ok else 503)
 
@@ -310,4 +311,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=settings.http_port)
-    

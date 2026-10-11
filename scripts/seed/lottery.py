@@ -34,7 +34,7 @@ async def _fetch_lottery_ids(n: int = 1) -> list[int]:
         finally:
             conn.close()
         return [int(r[0]) for r in rows]
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"直连 dyndetail.lotdata 取 lottery_id 失败（降级空）: {e}")
         return []
 
@@ -42,7 +42,8 @@ async def _fetch_lottery_ids(n: int = 1) -> list[int]:
 async def _fetch_lottery_ids_via_api(crawler_base_url: str, n: int = 1) -> list[int]:
     """调 crawler 的 GetAllLottery HTTP 接口取真实 lottery_id（走接口，不直连库）。
 
-    路径：``{crawler_base_url}/api/v1/lottery_database/bili/GetAllLottery`` (POST)。
+    路径：``{crawler_base_url}/api/v1/lottery_database/bili/GetAllLottery`` (GET)。
+    该接口已由 POST 改为 GET（分页参数走 query string）。
     优先使用此方式；失败时由调用方降级到 ``_fetch_lottery_ids``（直连 dyndetail.lotdata）。
     """
     try:
@@ -50,7 +51,7 @@ async def _fetch_lottery_ids_via_api(crawler_base_url: str, n: int = 1) -> list[
             f"{crawler_base_url.rstrip('/')}/api/v1/lottery_database/bili/GetAllLottery"
         )
         async with httpx.AsyncClient(timeout=10.0) as cli:
-            resp = await cli.post(url, params={"page_num": 1, "page_size": max(1, n)})
+            resp = await cli.get(url, params={"page_num": 1, "page_size": max(1, n)})
             resp.raise_for_status()
             payload = resp.json()
         data = (payload or {}).get("data") or {}
@@ -61,7 +62,7 @@ async def _fetch_lottery_ids_via_api(crawler_base_url: str, n: int = 1) -> list[
                 if lid is not None:
                     ids.append(int(lid))
         return ids[:n]
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(
             f"调 crawler GetAllLottery 接口取 lottery_id 失败（降级直连库）: {e}"
         )

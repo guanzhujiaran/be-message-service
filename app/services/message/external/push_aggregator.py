@@ -47,17 +47,17 @@
 import asyncio
 import time
 from collections import Counter
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from hashlib import md5
-from typing import Sequence
 
+from bili_common.models.push import PushChannelConfig, PushMessagePayload
 from loguru import logger
 
 from app.core.config import settings
 from app.services.message.external.push import PushMessageService
 from app.services.message.external.push_helper import merge_config
-from bili_common.models.push import PushChannelConfig, PushMessagePayload
 
 #: 「失败」主题标识（标题前缀）：与各服务 ``PushMe.PushSubject.FAILURE`` 一致。
 #: 只有失败类推送参与聚合，业务通知 / per-user 推送保持 1:1 直推。
@@ -199,7 +199,7 @@ async def _send(service: PushMessageService, title: str, content: str) -> bool:
     """发一条推送；失败只记日志、不重投（站外提醒属尽力而为，与历史行为一致）。"""
     try:
         return await service.send(title, content)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error(
             f"推送失败，消息丢弃不重投 title={title} push_type={service.push_type}: {e}"
         )
@@ -314,7 +314,7 @@ async def _sweep_loop() -> None:
         await asyncio.sleep(_sweep_seconds())
         try:
             await flush_due_buckets()
-        except Exception as e:  # noqa: BLE001 - 扫描循环不能因单次异常退出
+        except Exception as e:
             logger.opt(exception=e).error(f"推送聚合到期扫描失败：{e}")
 
 
@@ -337,7 +337,7 @@ async def stop_push_aggregator() -> None:
             await task
     try:
         await flush_all_buckets()
-    except Exception as e:  # noqa: BLE001 - 关闭流程不应因补发失败而报错
+    except Exception as e:
         logger.error(f"关闭前补发推送聚合摘要失败：{e}")
 
 
