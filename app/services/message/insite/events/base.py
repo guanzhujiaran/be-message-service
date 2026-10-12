@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, ClassVar
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 from loguru import logger
 from sqlalchemy import case, func, tuple_
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -1219,22 +1220,42 @@ class BaseEvent(ABC):
         event_type: InteractionActionTypeEnum,
         read_before: datetime | None = None,
     ) -> None:
+        """抬升已读水位（原子 upsert）。
+
+        原先是「先 SELECT 再 INSERT」的读改写：并发两次「一键已读」（前端进入列表后
+        常连续触发同一请求）会同时读到 None、都执行 INSERT，命中
+        ``uq_event_cursor_mid_type`` 抛 1062 Duplicate entry，整个 mark_read 500。
+        改用 MySQL 原子 upsert 后由数据库层去重（唯一键冲突即转 UPDATE），
+        消除并发竞态。
+
+        ``last_read_id`` 用 ``GREATEST(旧值, 新值)`` 保证水位只增不减，
+        与原先 ``max(row.last_read_id, max_id)`` 语义一致。
+        """
         max_id_stmt = select(func.max(EventMessage.id)).where(
             EventMessage.mid == mid, EventMessage.event_type == event_type
         )
         # read_before 限定下，已读水位只抬到该时间戳（含）之前的最大 id
         if read_before is not None:
             max_id_stmt = max_id_stmt.where(EventMessage.created_at <= read_before)
-        max_id = (await session.exec(max_id_stmt)).one() or 0
-        stmt = select(EventReadCursor).where(
-            EventReadCursor.mid == mid, EventReadCursor.event_type == event_type
+        max_id = int((await session.exec(max_id_stmt)).one() or 0)
+
+        now = datetime.now()
+        table = EventReadCursor.__table__
+        ins = mysql_insert(table).values(
+            mid=mid,
+            event_type=event_type,
+            last_read_id=max_id,
+            last_read_at=now,
+            created_at=now,
+            updated_at=now,
         )
-        row = (await session.exec(stmt)).one_or_none()
-        if row is None:
-            row = EventReadCursor(mid=mid, event_type=event_type)
-        row.last_read_id = max(row.last_read_id, int(max_id))
-        row.last_read_at = datetime.now()
-        session.add(row)
+        await session.exec(  # type: ignore[call-overload]
+            ins.on_duplicate_key_update(
+                last_read_id=func.greatest(table.c.last_read_id, max_id),
+                last_read_at=now,
+                updated_at=now,
+            )
+        )
 
 
 class GenericEvent(BaseEvent):

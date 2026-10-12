@@ -22,11 +22,18 @@ import re
 from collections.abc import Sequence
 
 from bili_common.models import InteractionBizTypeEnum
+from sqlalchemy import tuple_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
-from app.models.db import CommentAction, CommentContent, CommentIndex
+from app.models.db import (
+    CommentAction,
+    CommentContent,
+    CommentIndex,
+    TMoment,
+    TResourceFeed,
+)
 from app.models.enums import (
     CommentActionEnum,
     CommentAttrBit,
@@ -287,6 +294,96 @@ class CommentReadService:
 
     # ==================== 最新根评论（首页，按资源类型分组） ====================
 
+    # 目标资源可见性过滤前先多扫的候选条数：过滤后仍要保证每组能凑满 N 条。
+    # 取固定上界而非翻页循环，避免在「大量资源被删」时退化成多次查询。
+    _LATEST_SCAN_LIMIT = 100
+
+    @staticmethod
+    async def _filter_visible_targets(
+        session: AsyncSession, rows: list[CommentIndex]
+    ) -> list[CommentIndex]:
+        """剔除「目标资源已删除 / 不可见」的悬空评论。
+
+        评论与资源是两个独立子系统：资源被删除时不会联动评论，评论自身的
+        ``auditStatus`` 仍是 NORMAL，会继续出现在「最新评论」里，但点进去资源详情
+        已 404（甚至资源行已被物理删除）。
+
+        按资源类型取权威事实源判定：
+
+        - **动态**：以 ``TMoment`` 为准。**行不存在也算不可见**——动态被物理删除
+          （如注销清理）后 ``TMoment`` 无行，评论即成孤儿，必须剔除；
+        - **其他资源**（抽奖 / RPA 等）：以 ``TResourceFeed`` 为准，其 ``deletedAt``
+          在资源删除时已写入。无对应行时**保守保留**（该资源可能本就未入 Feed）。
+
+        判定条件统一为「存在 且 deletedAt 为空 且 auditStatus 为 normal」。
+        SQL 次数与评论条数无关（动态、其他资源各一次批量查询）。
+        """
+        if not rows:
+            return []
+
+        # ① 动态：TMoment 存在 + 未删除 + 审核通过
+        dyn_ids = {
+            row.oid
+            for row in rows
+            if row.type == InteractionBizTypeEnum.DYNAMIC
+        }
+        alive_dyn: set[int] = set()
+        if dyn_ids:
+            dyn_rows = (
+                await session.exec(
+                    select(col(TMoment.dynId)).where(
+                        col(TMoment.dynId).in_(dyn_ids),
+                        col(TMoment.deletedAt).is_(None),
+                        col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
+                    )
+                )
+            ).all()
+            alive_dyn = {int(d) for d in dyn_rows}
+
+        # ② 其他资源：TResourceFeed 存在 + 未删除 + 审核通过
+        other_pairs = list(
+            {
+                (row.type, row.oid)
+                for row in rows
+                if row.type != InteractionBizTypeEnum.DYNAMIC
+            }
+        )
+        feed_map: dict[tuple[InteractionBizTypeEnum, int], TResourceFeed] = {}
+        if other_pairs:
+            feed_rows = (
+                await session.exec(
+                    select(TResourceFeed).where(
+                        tuple_(
+                            col(TResourceFeed.bizType), col(TResourceFeed.bizId)
+                        ).in_(other_pairs)
+                    )
+                )
+            ).all()
+            feed_map = {(r.bizType, r.bizId): r for r in feed_rows}
+
+        visible: list[CommentIndex] = []
+        for row in rows:
+            if row.type == InteractionBizTypeEnum.DYNAMIC:
+                # TMoment 无行（已物理删除）或已软删 / 未过审 → 悬空，剔除
+                if row.oid not in alive_dyn:
+                    continue
+                visible.append(row)
+                continue
+
+            feed = feed_map.get((row.type, row.oid))
+            if feed is None:
+                visible.append(row)  # 无 Feed 行：保守保留
+                continue
+            if feed.deletedAt is not None:
+                continue
+            if (
+                feed.auditStatus is not None
+                and feed.auditStatus != ResourceAuditStatusEnum.NORMAL
+            ):
+                continue
+            visible.append(row)
+        return visible
+
     @staticmethod
     async def list_latest(
         session: AsyncSession,
@@ -301,8 +398,10 @@ class CommentReadService:
         - **按资源类型分组**：每组取该类型下最新（rpid 倒序）的根评论；
         - 类型缺省取全部可挂评论的资源类型（动态 / 抽奖 / RPA 各类），
           排除 COMMENT / USER 等不可作为评论目标资源的类型；
-        - 每组独立一条常量次数查询 + 走统一的 `assemble_items` 批量装配，
-          不会出现每条一级评论各查一轮的 N+1。
+        - **剔除目标资源已删除 / 不可见的悬空评论**（见 `_filter_visible_targets`），
+          避免首页出现点进去已 404 的条目；
+        - 候选查询每类型一条、可见性过滤全类型共用一条、`assemble_items` 装配每类型一条，
+          SQL 次数与评论条数无关，不会出现每条一级评论各查一轮的 N+1。
         """
         if not types:
             types = [
@@ -315,7 +414,8 @@ class CommentReadService:
                 )
             ]
 
-        groups: list[CommentLatestGroup] = []
+        # ① 各类型先多扫一批候选（每类型一条查询，保持 rpid 倒序）
+        candidates: list[CommentIndex] = []
         for type_ in types:
             rows = (
                 await session.exec(
@@ -326,13 +426,25 @@ class CommentReadService:
                         col(CommentIndex.auditStatus).in_(VISIBLE_STATES),
                     )
                     .order_by(col(CommentIndex.rpid).desc())
-                    .limit(limit_per_type)
+                    .limit(CommentReadService._LATEST_SCAN_LIMIT)
                 )
             ).all()
-            if not rows:
-                continue
+            candidates.extend(rows)
+
+        # ② 一次性剔除目标资源已删 / 不可见的悬空评论（跨类型共用一条查询）
+        visible = await CommentReadService._filter_visible_targets(session, candidates)
+
+        # ③ 按类型分组，每组截到 N 条后统一装配（过滤后不足 N 条就少于 N 条）
+        buckets: dict[InteractionBizTypeEnum, list[CommentIndex]] = {}
+        for row in visible:
+            bucket = buckets.setdefault(row.type, [])
+            if len(bucket) < limit_per_type:
+                bucket.append(row)
+
+        groups: list[CommentLatestGroup] = []
+        for type_, rows in buckets.items():
             items = await CommentReadService.assemble_items(
-                session, list(rows), viewer_mid=viewer_mid
+                session, rows, viewer_mid=viewer_mid
             )
             groups.append(CommentLatestGroup(type=type_, comments=items))
 
