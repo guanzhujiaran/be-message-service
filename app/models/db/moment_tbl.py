@@ -18,6 +18,7 @@
 from datetime import datetime
 
 from bili_common.models import InteractionBizTypeEnum
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, JSON, Text, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, ForeignKeyConstraint, Index, PrimaryKeyConstraint
@@ -136,15 +137,15 @@ class TMoment(TimestampMixin, table=True):
     isTop: int = Field(
         default=0, description="是否空间置顶：0=否,1=是（仅 normal 可设）"
     )
-    topTime: datetime | None = Field(default=None, description="置顶时间")
-    timerPubTime: datetime | None = Field(
+    topTime: NaiveDatetime | None = Field(default=None, description="置顶时间")
+    timerPubTime: NaiveDatetime | None = Field(
         default=None, description="定时发布时间（NULL=立即进入审核队列）"
     )
-    pubTime: datetime | None = Field(
+    pubTime: NaiveDatetime | None = Field(
         default=None,
         description="实际对外发布时间（审核通过时写入 now()），Feed 排序依据",
     )
-    deletedAt: datetime | None = Field(
+    deletedAt: NaiveDatetime | None = Field(
         default=None, description="软删时间（不为 NULL 时所有对外接口视为不存在）"
     )
 
@@ -244,7 +245,7 @@ class TMomentTopic(TimestampMixin, table=True):
     auditRejectReason: str | None = Field(
         default=None, max_length=500, description="最近一次驳回原因"
     )
-    pubTime: datetime | None = Field(
+    pubTime: NaiveDatetime | None = Field(
         default=None, description="实际对外发布时间（审核通过时写入 now()）"
     )
 

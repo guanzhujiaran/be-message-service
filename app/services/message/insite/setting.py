@@ -18,7 +18,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.db import UserMessageSetting
 from app.models.schemas import MessageSettingResp, MessageSettingUpdateReq
 
-# 默认设置：用户从未配置过时的兜底值（全部开启）
+# 默认设置：用户从未配置过时的兜底值
+# 站内提醒默认全部开启；互动事件外推（push_reply/push_at/push_like）默认关闭。
 _DEFAULTS: dict[str, bool] = {
     "recv_like": True,
     "recv_reply": True,
@@ -26,6 +27,9 @@ _DEFAULTS: dict[str, bool] = {
     "recv_stranger_dm": True,
     "recv_notify": True,
     "push_enabled": True,
+    "push_reply": False,
+    "push_at": False,
+    "push_like": False,
 }
 
 
@@ -64,6 +68,9 @@ class SettingService:
             recv_stranger_dm=row.recv_stranger_dm,
             recv_notify=row.recv_notify,
             push_enabled=row.push_enabled,
+            push_reply=row.push_reply,
+            push_at=row.push_at,
+            push_like=row.push_like,
             dnd_start_hour=row.dnd_start_hour,
             dnd_end_hour=row.dnd_end_hour,
             updated_at=row.updated_at,
@@ -101,6 +108,23 @@ class SettingService:
         if setting_gate is None:
             return True
         return bool(getattr(row, setting_gate, True))
+
+    @staticmethod
+    async def accept_push(
+        session: AsyncSession, mid: int, push_gate: "str | None"
+    ) -> bool:
+        """判断用户是否将该类型的事件提醒推送到**外部渠道**。
+
+        ``push_gate`` 为对应 handler 类属性（push_reply / push_at / push_like），
+        默认关闭（False）；为 ``None``（系统侧通知无外推开关）时恒返回 False。
+
+        只在站内闸门（``accept_event``）已放行后才被调用，因此天然满足
+        「站内关了，站外也不推」。
+        """
+        if push_gate is None:
+            return False
+        row = await SettingService.get_or_create(session, mid)
+        return bool(getattr(row, push_gate, False))
 
     @staticmethod
     async def accept_stranger_dm(session: AsyncSession, mid: int) -> bool:

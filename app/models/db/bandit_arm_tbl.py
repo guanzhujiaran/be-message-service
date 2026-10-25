@@ -19,6 +19,7 @@
 from datetime import datetime
 
 from bili_common.models import InteractionBizTypeEnum
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, JSON, Index, PrimaryKeyConstraint, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field
@@ -84,7 +85,7 @@ class TFeedBanditArm(TimestampMixin, table=True):
         nullable=False,
         description="最后更新来源（train_linucb / manual）",
     )
-    lastTrainedAt: datetime | None = Field(default=None, description="最后离线训练时间")
+    lastTrainedAt: NaiveDatetime | None = Field(default=None, description="最后离线训练时间")
 
 
 __all__ = ["TFeedBanditArm"]

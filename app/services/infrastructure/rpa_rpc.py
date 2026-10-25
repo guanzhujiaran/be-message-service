@@ -9,6 +9,7 @@ RPA-Browser 服务端，获取 RPA 资源（action / workflow / plugin / browser
 弱依赖：RPC 超时 / 未连接 / 资源不存在时返回 `None`，不影响互动主流程。
 """
 
+from bili_common.models.push import PushChannelConfig
 from bili_common.models.response import StandardResponse
 from bili_common.rpc.base import rpa_rpc_routing_key_for
 from bili_common.rpc.client import RpcClient
@@ -19,6 +20,8 @@ from bili_common.rpc.rpa import (
     CreateTagResult,
     DetachTagParams,
     DetachTagResult,
+    GetNotifyConfigParams,
+    GetNotifyConfigResult,
     GetResourceDetailParams,
     GetResourceDetailResult,
     HideResourceParams,
@@ -322,6 +325,35 @@ class RpaRpcClient:
             logger.warning(f"[RpaRpcClient] list_tags_by_target 业务失败: {resp.msg}")
             return None
         return ListTagsByTargetResult.model_validate(resp.data)
+
+    async def get_notify_config(self, mid: int) -> PushChannelConfig | None:
+        """获取用户的外部推送渠道配置（get_notify_config，weak dep）。
+
+        互动事件外推前调用：取该用户在 RPA 侧配置的第三方渠道凭据。
+        RPC 超时 / 未连接 / 用户未配置渠道时返回 None（调用方据此跳过外推）。
+        """
+        routing_key = rpa_rpc_routing_key_for(RpaRpcMethodName.GET_NOTIFY_CONFIG)
+        payload = GetNotifyConfigParams(mid=int(mid)).model_dump()
+        try:
+            if not self._client.connected:
+                logger.warning("[RpaRpcClient] RPA RPC 未连接，跳过 get_notify_config")
+                return None
+            raw = await self._client.call(routing_key, payload, timeout=5.0)
+        except TimeoutError:
+            logger.warning(f"[RpaRpcClient] get_notify_config 超时: mid={mid}")
+            return None
+        except Exception as e:
+            logger.warning(f"[RpaRpcClient] get_notify_config 调用失败: {e}")
+            return None
+        try:
+            resp = StandardResponse.model_validate(raw)
+        except Exception as e:
+            logger.warning(f"[RpaRpcClient] get_notify_config 响应解析失败: {e}")
+            return None
+        if resp.code != 0 or resp.data is None:
+            return None
+        result = GetNotifyConfigResult.model_validate(resp.data)
+        return result.config
 
 
 # 全局单例

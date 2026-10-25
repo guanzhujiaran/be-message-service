@@ -15,6 +15,7 @@
 
 from datetime import datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -44,10 +45,10 @@ class UserDeactivation(TimestampMixin, table=True):
         nullable=False,
         description="cooling / pending_casdoor",
     )
-    deactivated_at: datetime = Field(
+    deactivated_at: NaiveDatetime = Field(
         default_factory=datetime.now, nullable=False, description="提交注销时刻"
     )
-    delete_after: datetime = Field(
+    delete_after: NaiveDatetime = Field(
         default_factory=datetime.now,
         index=True,
         nullable=False,

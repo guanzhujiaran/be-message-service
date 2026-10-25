@@ -21,6 +21,7 @@
 from datetime import datetime
 
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, Text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Column, Field, Index, SQLModel, UniqueConstraint
@@ -70,7 +71,7 @@ class EventMessage(TimestampMixin, table=True):
     )
 
     is_read: bool = Field(default=False, index=True, description="是否已读")
-    read_at: datetime | None = Field(default=None, description="已读时间")
+    read_at: NaiveDatetime | None = Field(default=None, description="已读时间")
     is_deleted: bool = Field(default=False, description="是否已删除")
 
     # ---- 推送相关（与消息推送子系统对齐；本地库 msg_event 已存在这两列）----
@@ -100,7 +101,7 @@ class EventReadCursor(TimestampMixin, table=True):
         sa_type=SAEnum(InteractionActionTypeEnum), description="事件类型"
     )
     last_read_id: int = Field(default=0, description="已读到的最大事件id")
-    last_read_at: datetime | None = Field(default=None, description="上次一键已读时间")
+    last_read_at: NaiveDatetime | None = Field(default=None, description="上次一键已读时间")
 
 
 __all__ = ["EventMessage", "EventReadCursor", "SQLModel"]

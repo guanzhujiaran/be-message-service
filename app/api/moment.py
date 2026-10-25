@@ -39,6 +39,8 @@
 由统一异常中间件转标准响应；路由层只负责 400/403/404 的语义映射。
 """
 
+import datetime
+
 from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Header, Query, Request
 
@@ -46,6 +48,7 @@ from app.core.database import SessionDep
 from app.dependencies import ActiveUser, OptionalUser, RequiredUser, RootUser
 from app.models import StandardResponse
 from app.models.schemas.interaction import (
+    HotLotteryResp,
     InteractionStatusItem,
     InteractionStatusResp,
 )
@@ -81,6 +84,7 @@ from app.models.schemas.moment import (
 from app.models.schemas.mq import InteractionViewPayload
 from app.models.str_int import StrInt
 from app.services.interaction_actions import get_biz
+from app.services.interaction_actions.hot_lottery import HotLotteryService
 from app.services.interaction_actions.interaction_status import (
     InteractionStatusService,
     resolve_target,
@@ -447,6 +451,37 @@ async def interaction_status_detail(
             )
         )
     return StandardResponse(data=item)
+
+
+@router.get(
+    "/interaction/hot-lotteries",
+    response_model=StandardResponse[HotLotteryResp],
+    summary="热门抽奖榜（按浏览记录统计，匿名可读）",
+)
+async def interaction_hot_lotteries(
+    session: SessionDep,
+    window_days: int = Query(
+        default=7, ge=1, le=30, description="浏览记录统计窗口（天）"
+    ),
+    limit: int = Query(default=10, ge=1, le=20, description="返回条数上限"),
+) -> StandardResponse[HotLotteryResp]:
+    """热门抽奖榜（2.64.0，基于 be-message 浏览记录）。
+
+    口径：窗口内 ``TInteractionViewLog``（bizType=lottery）按资源聚合
+    ``sum(viewCount)`` 降序取 topN，附累计浏览 / 点赞 / 收藏与实时评论数。
+    纯读接口，不校验资源存在性（抽奖归属 be-bilibili-crawler，弱依赖不放大抖动），
+    也不做任何写入；抽奖详情由前端按 ``bizId`` 回捞。
+    """
+    items = await HotLotteryService.list_hot_lotteries(
+        session, window_days=window_days, limit=limit
+    )
+    return StandardResponse(
+        data=HotLotteryResp(
+            items=items,
+            windowDays=window_days,
+            generatedAt=int(datetime.datetime.now().timestamp()),
+        )
+    )
 
 
 @router.post(

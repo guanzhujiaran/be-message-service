@@ -59,7 +59,12 @@ from app.api.sys_config import router as sys_config_router
 from app.api.user import router as user_router
 from app.core.broker import broker
 from app.core.config import settings
-from app.core.database import ensure_database, test_pptr_connection
+from app.core.database import (
+    engine,
+    ensure_database,
+    pptr_engine,
+    test_pptr_connection,
+)
 from app.core.database import test_connection as test_mysql_connection
 from app.core.migration import run_alembic_pptr_upgrade, run_alembic_upgrade
 from app.core.sharding import ensure_current_month_shards
@@ -208,6 +213,11 @@ async def lifespan(app: FastAPI):
         await rpa_rpc_client.close()
     except Exception as e:
         logger.warning(f"关闭 RPA RPC 客户端失败（已忽略）: {e}")
+
+    # 释放数据库连接池：否则池内 aiomysql 连接会留到解释器退出时才被 GC，
+    # 那时事件循环已关闭，抛一屏 "Event loop is closed" 噪音。
+    await engine.dispose()
+    await pptr_engine.dispose()
 
 
 app = FastAPI(

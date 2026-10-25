@@ -14,6 +14,7 @@
 
 from datetime import datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, Index, PrimaryKeyConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field
@@ -68,7 +69,7 @@ class TUserAvatarAudit(TimestampMixin, table=True):
     auditReason: str | None = Field(
         default=None, max_length=500, description="驳回原因 / 备注（驳回时填写）"
     )
-    auditedAt: datetime | None = Field(default=None, description="审核时间")
+    auditedAt: NaiveDatetime | None = Field(default=None, description="审核时间")
 
 
 __all__ = ["TUserAvatarAudit"]

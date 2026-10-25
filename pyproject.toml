@@ -41,6 +41,7 @@ dependencies = [
     "lightgbm>=4.7.0",
     "scikit-learn>=1.9.1",
     "implicit>=0.7.3",
+    "psycopg2>=2.9.13",
 ]
 
 [tool.uv]

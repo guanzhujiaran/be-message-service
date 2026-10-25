@@ -4,6 +4,7 @@
 非动态资源（RPA 等）随详情经 RPC 获取一并返回。
 """
 
+from bili_common.core.time_utils import UnixTime
 from bili_common.models import InteractionBizTypeEnum
 from bili_common.rpc.rpa import ResourceDetail
 from sqlmodel import Field, SQLModel
@@ -102,4 +103,39 @@ class InteractionStatusResp(SQLModel):
     )
 
 
-__all__ = ["InteractionResource", "InteractionStatusItem", "InteractionStatusResp"]
+@auto_str
+class HotLotteryItem(SQLModel):
+    """热门抽奖榜单单项（基于浏览记录聚合）。
+
+    抽奖本体在 be-bilibili-crawler，本服务只产出「热度榜 id + 计数」，
+    前端按 ``bizId`` 回捞抽奖详情渲染。
+    """
+
+    bizId: str = Field(description="抽奖卡片 id（lottery_id，字符串承载）")
+    recentViewCount: int = Field(
+        default=0, description="统计窗口内的浏览次数（浏览记录 sum(viewCount)）"
+    )
+    viewCount: int = Field(default=0, description="累计浏览次数（TInteractionStat）")
+    likeCount: int = Field(default=0, description="累计点赞数")
+    favoriteCount: int = Field(default=0, description="累计收藏数")
+    commentCount: int = Field(default=0, description="评论数（评论系统实时计数）")
+
+
+@auto_str
+class HotLotteryResp(SQLModel):
+    """热门抽奖榜响应。"""
+
+    items: list[HotLotteryItem] = Field(
+        default_factory=list, description="热门抽奖（按窗口内浏览热度降序）"
+    )
+    windowDays: int = Field(description="浏览记录统计窗口（天）")
+    generatedAt: UnixTime = Field(description="榜单生成时间（Unix 秒）")
+
+
+__all__ = [
+    "HotLotteryItem",
+    "HotLotteryResp",
+    "InteractionResource",
+    "InteractionStatusItem",
+    "InteractionStatusResp",
+]

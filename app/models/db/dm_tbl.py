@@ -19,6 +19,7 @@
 
 from datetime import datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, Index, SQLModel, UniqueConstraint
@@ -153,7 +154,7 @@ class DmMessageIndex(TimestampMixin, table=True):
         description="管理端审核状态：normal/auditing/rejected/hidden",
     )
 
-    recalled_at: datetime | None = Field(default=None, description="撤回时间")
+    recalled_at: NaiveDatetime | None = Field(default=None, description="撤回时间")
     recalled_by: int | None = Field(
         default=None,
         sa_type=BIGINT,

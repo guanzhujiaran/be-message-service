@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -289,6 +290,80 @@ async def report_event_weakly(req: EventReportReq) -> None:
         )
 
 
+# ==================== 站外推送（互动事件）====================
+
+#: 各互动事件对应的站外推送标题（纯中文，不暴露内部标识）
+_PUSH_TITLES: dict[InteractionActionTypeEnum, str] = {
+    InteractionActionTypeEnum.REPLY: "收到新回复",
+    InteractionActionTypeEnum.AT: "收到新@",
+    InteractionActionTypeEnum.LIKE: "收到新点赞",
+}
+
+#: 后台外推任务的强引用集合（避免任务执行中被 GC 回收）
+_EXTERNAL_PUSH_TASKS: set[asyncio.Task] = set()
+
+
+def _build_external_push_text(event: BaseEvent) -> tuple[str, str]:
+    """构建站外推送的标题与正文（报告时拿不到资源快照，故只给触发者 + 内容预览）。"""
+    title = _PUSH_TITLES.get(event.event_type, "收到新互动")
+    preview = " ".join(str(event.content or "").split())
+    if len(preview) > 100:
+        preview = f"{preview[:100]}…"
+    actor = f"用户 {event.actor_mid}"
+    if event.event_type is InteractionActionTypeEnum.REPLY:
+        content = f"{actor} 回复了你：{preview}" if preview else f"{actor} 回复了你"
+    elif event.event_type is InteractionActionTypeEnum.AT:
+        content = f"{actor} 在评论中@了你：{preview}" if preview else f"{actor} 在评论中@了你"
+    else:
+        content = f"{actor} 赞了你"
+    return title, content
+
+
+async def _push_event_external(event: BaseEvent) -> None:
+    """站外推送（best-effort）：取用户渠道配置并投递一条提醒。
+
+    全程 try/except 吞掉，任何失败都不影响站内事件落库；未配置第三方渠道时跳过。
+    """
+    from app.models.push import PushMessagePayload
+    from app.services.infrastructure.rpa_rpc import rpa_rpc_client
+    from app.services.message.infrastructure.publisher import publish_external_push
+
+    try:
+        config = await rpa_rpc_client.get_notify_config(event.mid)
+        if config is None:
+            logger.debug(
+                f"用户 {event.mid} 未配置外部推送渠道，跳过 {event.event_type} 外推"
+            )
+            return
+        title, content = _build_external_push_text(event)
+        await publish_external_push(
+            PushMessagePayload(
+                title=title,
+                content=content,
+                push_type="text",
+                config=config,
+                mid=event.mid,
+            )
+        )
+    except Exception:
+        logger.warning(
+            f"互动事件站外推送失败（best-effort，已忽略）: "
+            f"event_type={event.event_type} mid={event.mid}",
+            exc_info=True,
+        )
+
+
+def _schedule_external_push(event: BaseEvent) -> None:
+    """把站外推送交给后台任务执行，避免 RPC / 渠道投递阻塞事件上报主链路。"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # 无运行中的事件循环（如同步上下文），跳过外推
+        return
+    task = loop.create_task(_push_event_external(event))
+    _EXTERNAL_PUSH_TASKS.add(task)
+    task.add_done_callback(_EXTERNAL_PUSH_TASKS.discard)
+
+
 # ==================== 虚基类 ====================
 
 
@@ -319,6 +394,9 @@ class BaseEvent(ABC):
     # setting_gate：对应的用户消息设置闸门字段（如 recv_like）；None 表示
     #   系统侧通知（无用户开关，恒投递）
     setting_gate: ClassVar[str | None] = None
+    # push_gate：对应的「站外推送」开关字段（push_reply / push_at / push_like）；
+    #   None 表示无外推开关（系统侧通知不推站外）。默认关闭，仅站内放行后才判定。
+    push_gate: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -431,6 +509,12 @@ class BaseEvent(ABC):
                 event_id=existing.id if existing else None,
                 duplicated=True,
             )
+
+        # 闸门四（站外推送，弱依赖）：站内闸门一已在上方放行，若用户同时开启了对应
+        # 的外推开关（push_reply / push_at / push_like，默认关闭），则 best-effort
+        # 推一条站外提醒。站内关闭时闸门一已短路，天然满足「站内关了、站外也不推」。
+        if await SettingService.accept_push(session, self.mid, self.push_gate):
+            _schedule_external_push(self)
 
         return EventReportResp(
             accepted=True,

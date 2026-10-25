@@ -33,15 +33,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Upgrade schema：为 `TUserActInfoLog` 加 `(mid, createdAt DESC)` 复合索引。"""
+    """Upgrade schema：为 `TUserActInfoLog` 加 `(mid, createdAt DESC)` 复合索引。
+
+    `if_not_exists=True`：生产库无法预先确认该索引是否已手工建过，幂等后
+    两种情况都不失败（§5.29）。
+    """
     op.create_index(
         "idx_log_mid_created",
         "TUserActInfoLog",
         ["mid", sa.literal_column('"createdAt" DESC')],
         unique=False,
+        if_not_exists=True,
     )
 
 
 def downgrade() -> None:
     """Downgrade schema：删索引（查询退回全表扫，功能不受影响）。"""
-    op.drop_index("idx_log_mid_created", table_name="TUserActInfoLog")
+    op.drop_index("idx_log_mid_created", table_name="TUserActInfoLog", if_exists=True)

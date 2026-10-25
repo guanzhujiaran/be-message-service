@@ -20,6 +20,7 @@
 from datetime import datetime
 
 from bili_common.models import InteractionBizTypeEnum
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, Index, PrimaryKeyConstraint, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field
@@ -84,12 +85,12 @@ class TFeedImpression(TimestampMixin, table=True):
         default=1,
         description="累计曝光次数（重复下发递增）",
     )
-    firstImpressionAt: datetime = Field(
+    firstImpressionAt: NaiveDatetime = Field(
         default=None,
         nullable=False,
         description="首次下发时间",
     )
-    lastImpressionAt: datetime = Field(
+    lastImpressionAt: NaiveDatetime = Field(
         default=None,
         nullable=False,
         description="最后下发时间（TTL 窗口判重依据）",

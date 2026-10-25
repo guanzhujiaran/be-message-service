@@ -15,6 +15,7 @@
 from datetime import datetime
 
 from bili_common.models import InteractionBizTypeEnum
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, JSON, Index, PrimaryKeyConstraint, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field
@@ -55,7 +56,7 @@ class TResourceFeed(TimestampMixin, table=True):
         sa_type=BIGINT,
         description="资源作者 UID（可能无作者，如 lottery/rpa_*；2.37.0 起可空）",
     )
-    pubTime: datetime | None = Field(
+    pubTime: NaiveDatetime | None = Field(
         default=None, description="实际对外发布时间（审核通过写入），Feed 排序依据"
     )
     auditStatus: ResourceAuditStatusEnum | None = Field(
@@ -76,7 +77,7 @@ class TResourceFeed(TimestampMixin, table=True):
         sa_type=JSON,
         description="标签 id 列表：dynamic=话题 id（TMomentTopicRel 冗余，供个性化/话题流）；其他资源=分类/空",
     )
-    deletedAt: datetime | None = Field(
+    deletedAt: NaiveDatetime | None = Field(
         default=None, description="软删时间（不为 NULL 时不入 Feed）"
     )
 

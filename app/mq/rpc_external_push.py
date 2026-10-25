@@ -36,6 +36,7 @@ from app.core.broker import RK_PUSH, broker, message_exchange, message_queue
 from app.models import PushMessagePayload
 from app.mq.router import router
 from app.services.message.external.push import PushMessageService
+from app.services.message.external.push_aggregator import user_allows_push
 from app.services.message.external.push_helper import merge_config
 
 
@@ -68,6 +69,7 @@ async def rpc_push_message(params: PushRpcSendParams) -> StandardResponse:
         content=params.content,
         push_type=params.push_type,
         config=params.config,
+        mid=params.mid,
     )
     try:
         await broker.publish(
@@ -96,6 +98,14 @@ async def rpc_send_push_now(params: PushRpcSendNowParams) -> StandardResponse:
     等价 HTTP `POST /api/v1/message/push/test`：同步执行渠道降级分发，
     调用方需等待渠道返回结果；适合测试 / 低频即时提醒场景。
     """
+    # 用户级总开关：与 MQ 路径（deliver）一致，携带 mid 时先判定 push_enabled / 免打扰
+    if not await user_allows_push(params.mid):
+        return success_response(
+            data=PushRpcSendNowResult(
+                success=False,
+                message="用户已关闭外部推送或处于免打扰时段，已跳过",
+            )
+        )
     title = _with_label(params.title, params.user_label)
     merged = merge_config(
         PushMessagePayload(

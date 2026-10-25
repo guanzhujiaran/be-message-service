@@ -47,12 +47,14 @@ async def push_message(req: PushMessage, user: CurrentUser) -> StandardResponse:
     # 将上游透传的用户信息写入推送标题，便于区分推送来源
     label = format_user_label(user)
     title = f"[{label}] {req.title}" if label else req.title
-    # 转换为消息队列专用载体后再投递，HTTP 请求体与 MQ 消息模型解耦
+    # 转换为消息队列专用载体后再投递，HTTP 请求体与 MQ 消息模型解耦；
+    # 携带接收人 mid，由消费者投递侧统一按用户「外部推送总开关」拦截。
     payload = PushMessagePayload(
         title=title,
         content=req.content,
         push_type=req.push_type,
         config=req.config,
+        mid=int(user.mid) if user.mid else None,
     )
     try:
         await broker.publish(
@@ -68,7 +70,14 @@ async def push_message(req: PushMessage, user: CurrentUser) -> StandardResponse:
 
 @router.post("/test", response_model=StandardResponse, summary="立即发送测试推送")
 async def test_push(req: TestPushRequest, user: CurrentUser) -> StandardResponse:
-    """立即发送一条测试推送（不经过队列），便于前端 / 用户验证渠道配置。"""
+    """立即发送一条测试推送（**同步直发、不过队列**），用于验证渠道配置。
+
+    与 `/push` 的关键区别：本接口**绕过 RabbitMQ**，直接调用底层发送通道并等待
+    其返回结果，把真实渠道（``sent_channels``）或真实错误（``msg`` / ``message``）
+    回传调用方，便于前端「确认这次请求到底通没通」；不做用户级总开关拦截，
+    因为「测试」是用户显式发起的连通性验证。渠道配置取自消息内 ``config``，
+    为空时回落全局环境变量配置。
+    """
     # 复用 push_helper 的合并逻辑：消息内 config 优先，否则回落全局环境变量配置
     merged = merge_config(
         PushMessagePayload(
@@ -87,7 +96,7 @@ async def test_push(req: TestPushRequest, user: CurrentUser) -> StandardResponse
     try:
         sent = await service.send(title, req.content)
         if not sent:
-            # send 返回 False 表示没有任何已启用的推送渠道（未配置或全局/用户配置为空）
+            # send 返回 None 表示没有任何已启用的推送渠道（未配置或全局/用户配置为空）
             return StandardResponse(
                 code=400,
                 msg="未找到可用的推送渠道，请检查通知配置（MESSAGE_CONFIG 或传入的 config）",
@@ -99,14 +108,15 @@ async def test_push(req: TestPushRequest, user: CurrentUser) -> StandardResponse
         return StandardResponse(
             data=TestPushResponse(
                 success=True,
-                message="测试推送已发送，请检查对应渠道是否收到",
+                message=f"测试推送成功（渠道：{sent}），请检查对应渠道是否收到",
+                sent_channels=[sent],
             )
         )
     except Exception as e:
         return StandardResponse(
             code=500,
             msg=f"测试推送失败: {e}",
-            data=TestPushResponse(success=False, message=str(e)),
+            data=TestPushResponse(success=False, message=f"测试推送失败：{e}"),
         )
 
 

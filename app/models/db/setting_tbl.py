@@ -10,6 +10,7 @@
 
 from datetime import datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -41,6 +42,11 @@ class UserMessageSetting(TimestampMixin, table=True):
 
     # ---- 外部推送渠道（PushMe / 邮件等）总开关 ----
     push_enabled: bool = Field(default=True, description="是否推送到外部渠道")
+    # ---- 互动事件外推开关（默认关闭）----
+    # 仅在站内对应「接收」开关开启时才可能生效：站内关了，站外也不推。
+    push_reply: bool = Field(default=False, description="回复/评论是否推送到外部渠道")
+    push_at: bool = Field(default=False, description="@提醒是否推送到外部渠道")
+    push_like: bool = Field(default=False, description="点赞是否推送到外部渠道")
     # 免打扰时段（0~23 小时），为空表示不限制
     dnd_start_hour: int | None = Field(default=None, description="免打扰开始小时")
     dnd_end_hour: int | None = Field(default=None, description="免打扰结束小时")
@@ -57,7 +63,7 @@ class UserActivity(TimestampMixin, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     mid: int = Field(sa_type=BIGINT, index=True, description="用户mid")
-    last_active_at: datetime = Field(
+    last_active_at: NaiveDatetime = Field(
         default_factory=datetime.now, index=True, description="最近一次活跃时间"
     )
     active_count: int = Field(default=0, description="累计活跃次数")

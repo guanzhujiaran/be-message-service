@@ -19,6 +19,9 @@ class MessageSettingResp(SQLModel):
     recv_stranger_dm: bool = True
     recv_notify: bool = True
     push_enabled: bool = True
+    push_reply: bool = False
+    push_at: bool = False
+    push_like: bool = False
     dnd_start_hour: int | None = None
     dnd_end_hour: int | None = None
     updated_at: OptionalUnixTime = None
@@ -36,6 +39,11 @@ class MessageSettingUpdateReq(SQLModel):
     )
     recv_notify: bool | None = Field(default=None, description="是否接收系统通知")
     push_enabled: bool | None = Field(default=None, description="是否推送到外部渠道")
+    push_reply: bool | None = Field(
+        default=None, description="回复/评论是否推送到外部渠道"
+    )
+    push_at: bool | None = Field(default=None, description="@提醒是否推送到外部渠道")
+    push_like: bool | None = Field(default=None, description="点赞是否推送到外部渠道")
     dnd_start_hour: int | None = Field(
         default=None, ge=0, le=23, description="免打扰开始小时"
     )

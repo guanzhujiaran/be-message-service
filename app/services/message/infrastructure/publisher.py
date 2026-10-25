@@ -62,6 +62,15 @@ async def publish_channel_push(title: str, content: str) -> bool:
     )
 
 
+async def publish_external_push(payload: PushMessagePayload) -> bool:
+    """投递一条站外推送（携带 per-user 渠道配置与接收人 mid）。
+
+    供互动事件外推使用：payload 内的 ``config`` 为该用户的第三方渠道凭据，
+    ``mid`` 供消费者判定用户级总开关（push_enabled / 免打扰）。
+    """
+    return await _publish(payload, RK_PUSH, message_queue)
+
+
 async def publish_user_deactivate(uid: int) -> bool:
     """投递用户注销消息，由消费者异步执行完整删除流程。
 
@@ -90,6 +99,7 @@ async def publish_interaction_view(payload: InteractionViewPayload) -> bool:
 __all__ = [
     "publish_channel_push",
     "publish_dm_content",
+    "publish_external_push",
     "publish_interaction_view",
     "publish_user_deactivate",
 ]

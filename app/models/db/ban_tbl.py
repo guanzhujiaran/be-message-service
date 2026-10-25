@@ -15,6 +15,7 @@
 
 from datetime import datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, JSON, Column, Index
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, SQLModel
@@ -59,7 +60,7 @@ class UserBan(TimestampMixin, table=True):
         default=None, description="限时封禁天数（temporary 时有效）"
     )
     # 计算出的解封时间（permanent 时为 None）；读取层据此判定是否到期
-    banned_until: datetime | None = Field(
+    banned_until: NaiveDatetime | None = Field(
         default=None, description="解封时间（permanent 为 None 表示永久）"
     )
 

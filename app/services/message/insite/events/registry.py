@@ -48,6 +48,10 @@ class EventSpec:
     def setting_gate(self) -> str | None:
         return self.handler_cls.setting_gate
 
+    @property
+    def push_gate(self) -> str | None:
+        return self.handler_cls.push_gate
+
 
 # 类型 → 处理器 注册表（空容器，由 handlers 模块填充）：
 # 未登记的类型由 ``base._resolve_handler_cls`` 回落到 GenericEvent（通用内容体）。

@@ -26,6 +26,8 @@ class LikeEvent(GenericEvent):
     event_type = InteractionActionTypeEnum.LIKE
     # 闸门字段：用户消息设置里的 recv_like；系统通知为 None（恒投递）
     setting_gate = "recv_like"
+    # 站外推送开关：push_like（默认关闭）
+    push_gate = "push_like"
 
 
 class AtEvent(GenericEvent):
@@ -39,6 +41,8 @@ class AtEvent(GenericEvent):
     # @ / 回复是「点对点打扰」，触发者与接收方存在黑名单关系时静默
     blocked_silent = True
     setting_gate = "recv_at"
+    # 站外推送开关：push_at（默认关闭）
+    push_gate = "push_at"
 
 
 class AuditRejectEvent(GenericEvent):
@@ -77,6 +81,8 @@ class ReplyEvent(GenericEvent):
     # @ / 回复是「点对点打扰」，触发者与接收方存在黑名单关系时静默
     blocked_silent = True
     setting_gate = "recv_reply"
+    # 站外推送开关：push_reply（默认关闭）
+    push_gate = "push_reply"
 
 
 # 类型 → 处理器 单一注册表（在处理器类定义完后填充）：

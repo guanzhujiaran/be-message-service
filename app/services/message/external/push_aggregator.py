@@ -193,12 +193,38 @@ def _fmt_time(timestamp: float) -> str:
 
 
 # ============================================================================
+# 用户级总开关闸门
+# ============================================================================
+async def user_allows_push(mid: int | None) -> bool:
+    """外部推送的**用户级总开关**闸门（所有来源统一在此收口）。
+
+    按 ``SettingService.can_push_now`` 判定 ``push_enabled`` 与免打扰时段，
+    关闭或处于免打扰时一律跳过外部推送。
+
+    - ``mid`` 为 None（旧消息 / 无法识别用户的推送）→ 放行，保证兼容；
+    - 闸门查询异常 → 放行（站外提醒属尽力而为，宁可多推不可漏推）。
+    """
+    if mid is None:
+        return True
+    try:
+        from app.core.database import new_session
+        from app.services.message.insite.setting import SettingService
+
+        async with new_session() as session:
+            return await SettingService.can_push_now(session, int(mid))
+    except Exception as e:  # noqa: BLE001 - 闸门失败按放行处理
+        logger.warning(f"外部推送用户闸门判定失败，按放行处理: mid={mid}, error={e}")
+        return True
+
+
+# ============================================================================
 # 发送
 # ============================================================================
 async def _send(service: PushMessageService, title: str, content: str) -> bool:
     """发一条推送；失败只记日志、不重投（站外提醒属尽力而为，与历史行为一致）。"""
     try:
-        return await service.send(title, content)
+        # send() 返回成功渠道名（str）或 None（无可用渠道），此处归一化为「是否发出」
+        return bool(await service.send(title, content))
     except Exception as e:
         logger.error(
             f"推送失败，消息丢弃不重投 title={title} push_type={service.push_type}: {e}"
@@ -212,6 +238,15 @@ async def deliver(message: PushMessagePayload) -> bool:
     Returns:
         本次是否**真的推送出去了**（进入缓冲时返回 False，属正常情况）。
     """
+    # 用户级总开关：所有来源（工作流 / 点赞 / 私信 / 反馈等）的外部推送统一在此收口。
+    # push_enabled 关闭或处于免打扰时段时跳过；站内通知不走本路径、不受影响。
+    if not await user_allows_push(message.mid):
+        logger.info(
+            f"用户 {message.mid} 已关闭外部推送或处于免打扰时段，跳过: "
+            f"title={message.title!r}"
+        )
+        return False
+
     config = merge_config(message)
     now = time.monotonic()
 

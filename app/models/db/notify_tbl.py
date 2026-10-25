@@ -13,6 +13,7 @@
 
 from datetime import datetime
 
+from pydantic import NaiveDatetime
 from sqlalchemy import BIGINT, Text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Column, Field, SQLModel, UniqueConstraint
@@ -58,12 +59,12 @@ class NotifyMessage(TimestampMixin, table=True):
         description="通知状态",
     )
 
-    publish_at: datetime = Field(
+    publish_at: NaiveDatetime = Field(
         default_factory=datetime.now,
         index=True,
         description="生效时间：定时发布用，未到该时间不会被拉取",
     )
-    expire_at: datetime | None = Field(
+    expire_at: NaiveDatetime | None = Field(
         default=None, description="过期时间，为空表示永不过期"
     )
 
@@ -72,7 +73,7 @@ class NotifyMessage(TimestampMixin, table=True):
     dispatched: bool = Field(
         default=False, index=True, description="是否已完成推送投递"
     )
-    dispatched_at: datetime | None = Field(default=None, description="推送投递完成时间")
+    dispatched_at: NaiveDatetime | None = Field(default=None, description="推送投递完成时间")
 
 
 class NotifyCursor(TimestampMixin, table=True):
@@ -89,7 +90,7 @@ class NotifyCursor(TimestampMixin, table=True):
     last_notify_id: int = Field(
         default=0, description="已拉取到的最大通知id，下次只捞更大的id"
     )
-    last_pull_at: datetime | None = Field(default=None, description="上次拉取时间")
+    last_pull_at: NaiveDatetime | None = Field(default=None, description="上次拉取时间")
 
 
 class NotifyState(TimestampMixin, table=True):
@@ -105,7 +106,7 @@ class NotifyState(TimestampMixin, table=True):
     mid: int = Field(sa_type=BIGINT, index=True, description="用户mid")
     notify_id: int = Field(index=True, description="通知id")
     is_read: bool = Field(default=False, index=True, description="是否已读")
-    read_at: datetime | None = Field(default=None, description="已读时间")
+    read_at: NaiveDatetime | None = Field(default=None, description="已读时间")
     # 用户可单独删除某条通知（仅自己不可见）
     is_deleted: bool = Field(default=False, description="用户是否已删除该通知")
 

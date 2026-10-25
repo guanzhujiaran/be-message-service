@@ -835,25 +835,25 @@ class PushMessageService:
             "webhook": bool(c.webhook_url),
         }.get(name, False)
 
-    async def send(self, title: str, content: str) -> bool:
+    async def send(self, title: str, content: str) -> str | None:
         """按 FALLBACK_ORDER 顺序降级推送，直到有一个渠道成功。
 
         Returns:
-            True  : 至少有一个渠道推送成功
-            False : 没有任何已启用的推送渠道（未尝试）
+            str  : 推送成功的渠道名（如 ``"pushme"``）
+            None : 没有任何已启用的推送渠道（未尝试）
         Raises:
             RuntimeError: 所有已启用渠道均推送失败（彻底失败）
         """
         if not content:
             logger.warning(f"{title} 推送内容为空！")
-            return False
+            return None
         if self.conf.hitokoto:
             content += "\n\n" + await one()
 
         enabled = [m for m in self.get_available_methods() if self._is_enabled(m)]
         if not enabled:
             logger.warning("无可用的推送渠道，已跳过（请检查通知配置）")
-            return False
+            return None
 
         ordered = sorted(
             enabled,
@@ -874,7 +874,7 @@ class PushMessageService:
                         None, method, title, content
                     )
                 logger.info(f"推送成功（渠道：{name}）")
-                return True
+                return name
             except Exception as e:
                 last_exc = e
                 logger.error(f"渠道 {name} 推送失败，尝试下一种：{e}")
