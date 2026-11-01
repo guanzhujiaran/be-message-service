@@ -46,6 +46,16 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 18739
 
+    # ==================== 抽奖卡片查询（crawler 只读查询服务）====================
+    # 热门抽奖榜 / 首页轮播需要「一次返回卡片数据」，由 be-message 服务端代前端向
+    # be-bilibili-crawler 的**只读查询服务**批量取卡片（GetLotteryDetailList），
+    # 避免前端为渲染榜单再打 detail 域接口。
+    # 默认指向本机映射端口（VS Code 里直接跑 be-message 时可用）；容器内由 compose
+    # 环境变量 CRAWLER_QUERY_BASE_URL 指向 `http://be-bilibili-crawler-query:23336`。
+    crawler_query_base_url: str = "http://127.0.0.1:23336"
+    # 只读查询超时（秒）：榜单卡片是弱依赖，超时即降级为空（不阻塞列表渲染）
+    crawler_query_timeout: float = 3.0
+
     # ==================== MySQL ====================
     # 主库（元数据库）连接串：系统通知 / 事件提醒 / 私信索引 / 会话 / 设置等表所在库。
     # 私信「内容」不落在这里，而是按月分库 + 库内分表 100 张（见 app.core.sharding）。

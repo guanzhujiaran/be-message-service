@@ -456,7 +456,7 @@ async def interaction_status_detail(
 @router.get(
     "/interaction/hot-lotteries",
     response_model=StandardResponse[HotLotteryResp],
-    summary="热门抽奖榜（按浏览记录统计，匿名可读）",
+    summary="热门抽奖榜（浏览热度 + 抽奖卡片一次返回，匿名可读）",
 )
 async def interaction_hot_lotteries(
     session: SessionDep,
@@ -465,12 +465,14 @@ async def interaction_hot_lotteries(
     ),
     limit: int = Query(default=10, ge=1, le=20, description="返回条数上限"),
 ) -> StandardResponse[HotLotteryResp]:
-    """热门抽奖榜（2.64.0，基于 be-message 浏览记录）。
+    """热门抽奖榜（2.64.0 浏览记录口径；2.67.0 一次返回卡片数据）。
 
     口径：窗口内 ``TInteractionViewLog``（bizType=lottery）按资源聚合
-    ``sum(viewCount)`` 降序取 topN，附累计浏览 / 点赞 / 收藏与实时评论数。
+    ``sum(viewCount)`` 降序取 topN，附累计浏览 / 点赞 / 收藏与实时评论数；
+    卡片内容经 crawler 只读查询服务（``GetLotteryDetailList``）一次批量回捞
+    （弱依赖，取不到卡片的项由服务层剔除），前端首页因此**不再**二次调用 detail 域接口。
     纯读接口，不校验资源存在性（抽奖归属 be-bilibili-crawler，弱依赖不放大抖动），
-    也不做任何写入；抽奖详情由前端按 ``bizId`` 回捞。
+    也不做任何写入。
     """
     items = await HotLotteryService.list_hot_lotteries(
         session, window_days=window_days, limit=limit

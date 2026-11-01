@@ -72,6 +72,25 @@ from app.core.viewer_context import bind_viewer, reset_viewer
 
 # IP 属地解析 RPC（message.geoip.rpc.*）：RPA 等按需查属地，mmdb 只留在本服务
 from app.mq.router import router as mq_router
+
+# ==================== MQ 订阅者注册（副作用 import，必须保留）====================
+# 所有消费者 / RPC 服务端都用 `@router.subscriber(...)` 在**模块 import 时**注册；
+# 漏掉这些 import 时 broker 里一条订阅都没有 —— 表现为：`message_exchange` 不被声明
+# （其它服务发布站外推送报 `NOT_FOUND - no exchange 'message_exchange'`）、
+# `message.notify.rpc.*` 队列不存在（调用方只能等到 RPC 超时），且本服务日志毫无异常。
+from app.mq import (
+    rpc_external_push,
+    rpc_geoip,
+    rpc_notify,
+    rpc_pptr_user,
+)
+from app.mq.consumers import (
+    comment,
+    deactivate,
+    dm,
+    external_push,
+    interaction_view,
+)
 from app.services.infrastructure.rpa_rpc import rpa_rpc_client
 
 # 业务日志统一输出到 stderr（容器日志由 docker logs 收集持久化）；
@@ -169,14 +188,31 @@ async def test_service_connectivity():
 
 
 # ==================== MQ 消费者注册 ====================
-# 消费者注册胶水代码已迁出至 app/mq/consumers/，由顶部的
-# `from app.mq.consumers import comment, dm, external_push` 触发副作用注册。
+# 消费者注册胶水代码已迁出至 app/mq/consumers/，由文件顶部的
+# `from app.mq.consumers import ...` / `from app.mq import rpc_*` 触发副作用注册。
 # broker.start() / broker.stop() / start_scheduler() / shutdown_scheduler()
 # 不再在此手动调用——全部由 mq_router 的 lifespan 接管（与 app lifespan 合并）：
 #   1. app lifespan startup：连通性检查 / 迁移 / 分片预热（必须早于 broker.start）
 #   2. router lifespan startup：broker.start() + after_startup 钩子（启动定时任务）
 #   3. yield：服务运行
 #   4. router lifespan teardown：on_broker_shutdown 钩子（停定时任务）+ broker.stop()
+
+
+def _registered_queue_names() -> list[str]:
+    """已注册订阅者的队列名（启动自检用；框架内部结构取不到时返回空列表）。
+
+    faststream 的 ``broker.subscribers`` 在不同版本里可能是 dict / list，
+    这里统一取值，只做只读自检，取不到就当作「没有」。
+    """
+    raw = getattr(mq_router.broker, "subscribers", None) or []
+    items = raw.values() if isinstance(raw, dict) else raw
+    names: list[str] = []
+    for subscriber in items:
+        queue = getattr(subscriber, "queue", None)
+        name = getattr(queue, "name", None)
+        if name:
+            names.append(str(name))
+    return sorted(set(names))
 
 
 @asynccontextmanager
@@ -199,7 +235,22 @@ async def lifespan(app: FastAPI):
     # broker 启动 / 定时任务启动由 mq_router 的 lifespan 在本 lifespan 之外、
     # 嵌套于其内部接管（FastAPI 的 _merge_lifespan_context 保证顺序）。
 
-    # 4. 连接 RPA 资源 RPC 客户端（2.18.0：互动接口经 RPC 获取 RPA 资源详情）
+    # 4. 启动自检：确认 MQ 订阅者已通过副作用 import 注册。
+    #    订阅者注册全靠 import 触发，一旦有人删掉 app/main.py 顶部的 import，
+    #    服务仍能正常启动、日志也安静，但队列一个都不会声明/消费
+    #    （外部表现为：站外推送 exchange 不存在、RPC 调用方一直超时）。
+    registered_queues = _registered_queue_names()
+    if registered_queues:
+        logger.info(
+            f"MQ 订阅者已注册 {len(registered_queues)} 个队列: {registered_queues}"
+        )
+    else:
+        logger.critical(
+            "MQ 订阅者未注册：不会声明/消费任何队列（检查 app/main.py 顶部 "
+            "`from app.mq.consumers import ...` 与 `from app.mq import rpc_*`）"
+        )
+
+    # 5. 连接 RPA 资源 RPC 客户端（2.18.0：互动接口经 RPC 获取 RPA 资源详情）
     try:
         await rpa_rpc_client.connect()
     except Exception as e:

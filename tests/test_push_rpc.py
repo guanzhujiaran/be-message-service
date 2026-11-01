@@ -22,7 +22,7 @@ from bili_common.models import (
     push_rpc_routing_key_for,
 )
 
-import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
+import app.main  # 副作用导入：先建好导入顺序（见上方注释）
 from app.mq.rpc_external_push import _with_label
 
 

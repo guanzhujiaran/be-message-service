@@ -1,11 +1,13 @@
-"""热门抽奖榜单（基于 be-message 浏览记录，2.64.0）。
+"""热门抽奖榜单（基于 be-message 浏览记录，2.64.0；2.67.0 一次返回卡片数据）。
 
 口径：统计窗口（默认近 7 天）内 ``TInteractionViewLog``（bizType=lottery）
 按资源聚合 ``sum(viewCount)`` 降序取 topN，再附 ``TInteractionStat`` 的累计
 浏览 / 点赞 / 收藏与评论系统实时评论数。
 
-抽奖本体在 be-bilibili-crawler，本服务**不存也不查抽奖内容**，只产出
-「热度榜 id + 计数」；前端按 ``bizId`` 回捞抽奖详情渲染。
+抽奖本体在 be-bilibili-crawler，本服务**不落库抽奖内容**，但装配榜单时经
+crawler 只读查询服务（``GetLotteryDetailList``）一次批量回捞卡片（raw + extra_info），使
+``GET /interaction/hot-lotteries`` 一次返回「热度 + 卡片」，前端首页不再
+二次调用 detail 域接口（2.67.0）。卡片缺失（查询失败 / 已删除）的项直接剔除。
 """
 
 from datetime import datetime, timedelta
@@ -16,6 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models.db import CommentSubject, TInteractionStat, TInteractionViewLog
 from app.models.schemas.interaction import HotLotteryItem
+from app.services.infrastructure.crawler_query import get_crawler_query_client
 from app.services.moment.interaction import (
     BeMessageInteractionStatService as InteractionStatService,
 )
@@ -38,7 +41,7 @@ class HotLotteryService:
             limit: 返回条数上限。
 
         Returns:
-            热门抽奖榜单项（可能为空列表：窗口内无任何抽奖浏览记录）。
+            热门抽奖榜单项（可能为空列表：窗口内无任何抽奖浏览记录，或卡片全部取不到）。
         """
         # 时间边界按服务端本地时区计算，与库内 TIMESTAMP 直接比较（与汇总类接口一致）
         since = datetime.now() - timedelta(days=window_days)
@@ -83,14 +86,25 @@ class HotLotteryService:
         ).all()
         comment_counts = {int(s.oid): int(s.all_count) for s in subjects}
 
-        return [
-            HotLotteryItem(
-                bizId=str(biz_id),
-                recentViewCount=recent_view[biz_id],
-                viewCount=counts.get(biz_id, {}).get("viewCount", 0),
-                likeCount=counts.get(biz_id, {}).get("likeCount", 0),
-                favoriteCount=counts.get(biz_id, {}).get("favoriteCount", 0),
-                commentCount=comment_counts.get(biz_id, 0),
+        # 4) 卡片内容：一次批量向 crawler 只读查询服务取数（2.67.0；弱依赖 —— 取不到
+        #    卡片的项直接剔除，前端因此无需再调 detail 域接口，也不会渲染空壳卡片）
+        client = get_crawler_query_client()
+        cards = await client.get_lottery_cards(biz_ids)
+
+        items: list[HotLotteryItem] = []
+        for biz_id in biz_ids:
+            card = cards.value_of(biz_id)
+            if card is None:
+                continue
+            items.append(
+                HotLotteryItem(
+                    bizId=str(biz_id),
+                    recentViewCount=recent_view[biz_id],
+                    viewCount=counts.get(biz_id, {}).get("viewCount", 0),
+                    likeCount=counts.get(biz_id, {}).get("likeCount", 0),
+                    favoriteCount=counts.get(biz_id, {}).get("favoriteCount", 0),
+                    commentCount=comment_counts.get(biz_id, 0),
+                    card=card,
+                )
             )
-            for biz_id in biz_ids
-        ]
+        return items

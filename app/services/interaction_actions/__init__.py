@@ -27,7 +27,7 @@
 from bili_common.models import InteractionActionTypeEnum, InteractionBizTypeEnum
 
 # 导入资源汇总模块：触发全部资源类的「继承即登记」副作用
-from app.services.interaction_actions import resources  # noqa: F401  # 副作用导入
+from app.services.interaction_actions import resources  # 副作用导入
 from app.services.interaction_actions.base import (
     InteractionAclScopeEnum,
     InteractionActionError,

@@ -40,7 +40,7 @@ from faststream.rabbit import RabbitBroker
 
 # 先加载 app.main，建立可用的导入顺序（避免 app.core.broker ↔ app.mq.router 的
 # 既有循环导入），再按需 import app.mq.*。
-import app.main  # noqa: F401  # 副作用导入：先建好导入顺序（见上方注释）
+import app.main  # 副作用导入：先建好导入顺序（见上方注释）
 from app.core.broker import broker
 from app.core.config import settings
 

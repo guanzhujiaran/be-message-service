@@ -6,6 +6,7 @@
 
 from bili_common.core.time_utils import UnixTime
 from bili_common.models import InteractionBizTypeEnum
+from bili_common.rpc.lottery import LotteryCard
 from bili_common.rpc.rpa import ResourceDetail
 from sqlmodel import Field, SQLModel
 
@@ -105,10 +106,11 @@ class InteractionStatusResp(SQLModel):
 
 @auto_str
 class HotLotteryItem(SQLModel):
-    """热门抽奖榜单单项（基于浏览记录聚合）。
+    """热门抽奖榜单单项（热度计数 + 卡片数据，2.67.0）。
 
-    抽奖本体在 be-bilibili-crawler，本服务只产出「热度榜 id + 计数」，
-    前端按 ``bizId`` 回捞抽奖详情渲染。
+    ``card`` 为 be-bilibili-crawler 经 RPC 一次批量回捞的抽奖卡片
+    （``raw`` + ``extra_info``，形态与 ``GetLotteryDetail`` 的 data 完全一致），
+    前端可直接 ``normalizeLotteryData`` 渲染，首页无需再调 detail 域接口。
     """
 
     bizId: str = Field(description="抽奖卡片 id（lottery_id，字符串承载）")
@@ -119,6 +121,10 @@ class HotLotteryItem(SQLModel):
     likeCount: int = Field(default=0, description="累计点赞数")
     favoriteCount: int = Field(default=0, description="累计收藏数")
     commentCount: int = Field(default=0, description="评论数（评论系统实时计数）")
+    card: LotteryCard | None = Field(
+        default=None,
+        description="抽奖卡片（raw + extra_info；卡片缺失的项服务端已剔除，字段保留供前端防御）",
+    )
 
 
 @auto_str
