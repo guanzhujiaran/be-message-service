@@ -28,7 +28,10 @@ dependencies = [
     # ===== 定时任务（非活跃用户批量推送 / 定时通知发布）=====
     "apscheduler>=3.10.4",
     "sqlacodegen>=4.0.4",
-    # psycopg2-binary 自带 libpq（manylinux wheel），免去构建期源码编译所需的 gcc / libpq-dev
+    # psycopg2-binary 自带 libpq（manylinux wheel），免去构建期源码编译所需的 gcc / libpq-dev。
+    # 它提供的就是 `psycopg2` 模块（SQLAlchemy `postgresql+psycopg2` 方言 / alembic 同步迁移都可用），
+    # 因此**不要**再声明源码版 `psycopg2`：那份 sdist 构建需要 pg_config（libpq-dev），
+    # Dockerfile.mono 的 message-build 阶段已刻意不装编译工具链，会直接构建失败。
     "psycopg2-binary>=2.9.12",
     # ===== JWT + Casdoor（用户网关下沉 be-message）=====
     "pyjwt>=2.8.0",
@@ -41,7 +44,6 @@ dependencies = [
     "lightgbm>=4.7.0",
     "scikit-learn>=1.9.1",
     "implicit>=0.7.3",
-    "psycopg2>=2.9.13",
 ]
 
 [tool.uv]
