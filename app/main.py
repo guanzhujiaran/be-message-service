@@ -35,6 +35,7 @@ from app.api.avatar_audit import router as avatar_audit_router
 from app.api.ban import router as ban_router
 from app.api.comment import router as comment_router
 from app.api.comment_admin import router as comment_admin_router
+from app.api.crawler_llm_admin import router as crawler_llm_admin_router
 from app.api.dm import router as dm_router
 from app.api.dm_admin import router as dm_admin_router
 from app.api.event import router as event_router
@@ -367,6 +368,7 @@ app.include_router(rpc_debug_router)
 app.include_router(pptr_user_gateway_router)
 app.include_router(avatar_audit_router)
 app.include_router(folder_cover_audit_router)
+app.include_router(crawler_llm_admin_router)
 
 if __name__ == "__main__":
     import uvicorn

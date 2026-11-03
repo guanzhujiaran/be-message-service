@@ -678,10 +678,16 @@ async def batch_get_resource_snapshots(
                     f"资源快照批量回捞失败（type={InteractionBizTypeEnum(rt_int).to_text()}），降级为空占位：{exc}"
                 )
         for rid in ids:
-            snap = snaps.get(rid) or snaps.get(int(rid)) if rid.isdigit() else snaps.get(rid)
+            # 各资源类返回键不一致（数字主键类按 str、RPA 系列按 int），两种都尝试
+            snap = snaps.get(rid)
+            if snap is None and rid.isdigit():
+                snap = snaps.get(int(rid))
             out[(rt_int, rid)] = snap or InteractionResource(
                 bizType=InteractionBizTypeEnum(rt_int),
                 bizId=rid,
                 exists=False,
             )
-        return out
+    # 注意：必须在循环**外**返回——循环内 return 会让多资源类型只回捞第一组，
+    # 且 by_type 为空（全部行 bizType 非法 / bizId 为空）时函数隐式返回 None，
+    # 调用方 `snaps.items()` 直接 500（2026-11-03 report/admin/list 事故）。
+    return out

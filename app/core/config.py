@@ -56,6 +56,15 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 只读查询超时（秒）：榜单卡片是弱依赖，超时即降级为空（不阻塞列表渲染）
     crawler_query_timeout: float = 3.0
 
+    # ==================== crawler 写服务（管理端 LLM 配置代理）====================
+    # 管理端「LLM 配置」页通过本服务代理 crawler 的 `/llm/*` 接口
+    # （crawler 侧无鉴权、且不在网关转发白名单内，必须由后端代为访问）。
+    # 默认指向本机映射端口（本地直跑 be-message 时可用）；容器内由 compose
+    # 环境变量 CRAWLER_BASE_URL 指向 `http://be-bilibili-crawler:23333`。
+    crawler_base_url: str = "http://127.0.0.1:23333"
+    # 管理端代理超时（秒）：写配置会重建实例池，给足余量
+    crawler_admin_timeout: float = 8.0
+
     # ==================== MySQL ====================
     # 主库（元数据库）连接串：系统通知 / 事件提醒 / 私信索引 / 会话 / 设置等表所在库。
     # 私信「内容」不落在这里，而是按月分库 + 库内分表 100 张（见 app.core.sharding）。

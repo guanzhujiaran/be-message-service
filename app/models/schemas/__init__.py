@@ -42,6 +42,13 @@ from app.models.schemas.comment import (
     CommentTopResp,
     CommentUserBrief,
 )
+from app.models.schemas.crawler_llm import (
+    CrawlerLlmConfigItem,
+    CrawlerLlmConfigResp,
+    CrawlerLlmSaveItem,
+    CrawlerLlmSaveReq,
+    CrawlerLlmStatsItem,
+)
 from app.models.schemas.dm import (
     DmAckReq,
     DmAuditItem,
@@ -224,6 +231,12 @@ __all__ = [
     "CommentTopResp",
     # 评论
     "CommentUserBrief",
+    # 管理端：crawler 云端 LLM 配置代理
+    "CrawlerLlmConfigItem",
+    "CrawlerLlmConfigResp",
+    "CrawlerLlmSaveItem",
+    "CrawlerLlmSaveReq",
+    "CrawlerLlmStatsItem",
     "DmAckReq",
     "DmAuditItem",
     "DmAuditListResp",
