@@ -6,8 +6,8 @@
   （`controller/common/CommonRouter.py`），前端经网关访问不到；
 - 本服务已有 `AdminUser` 鉴权与管理端审计日志，是最合适的代理层。
 
-数据只存于 crawler 进程内存 / `.env`（`settings.llm_apis`），因此这里不做任何缓存：
-每次请求都实时读写，避免管理端看到陈旧配置。
+配置持久化在 crawler 本地文件 `runtime/llm_apis.json`（事实来源：文件 > `.env`），
+因此这里不做任何缓存：每次请求都实时读写，避免管理端看到陈旧配置。
 """
 
 import httpx
@@ -20,6 +20,7 @@ __all__ = [
     "CrawlerLlmClient",
     "CrawlerLlmConfig",
     "CrawlerLlmError",
+    "CrawlerLlmProbeRow",
     "CrawlerLlmStatsRow",
     "get_crawler_llm_client",
 ]
@@ -28,6 +29,10 @@ __all__ = [
 _CONFIG_PATH = "/llm/config"
 #: crawler 云端 LLM 运行统计路由
 _STATS_PATH = "/llm/stats"
+#: 撤销人工保存：删除持久化文件并热切回 `.env`（crawler 内部接口）
+_OVERRIDE_PATH = "/llm/config/override"
+#: 单实例连通性测试（最小 completion 探测，crawler 内部接口）
+_TEST_PATH = "/llm/config/test"
 
 
 class CrawlerLlmError(RuntimeError):
@@ -66,6 +71,19 @@ class CrawlerLlmStatsRow(BaseModel):
     last_error: str | None = None
 
 
+class CrawlerLlmProbeRow(BaseModel):
+    """crawler `/llm/config/test` 的结果行（诊断口径，不含 token）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ok: bool = False
+    base_url: str = ""
+    model_name: str = ""
+    status_code: int | None = None
+    latency_ms: int = 0
+    error: str | None = None
+
+
 class CrawlerLlmClient:
     """crawler 写服务（默认 23333）的 HTTP 客户端。"""
 
@@ -79,16 +97,23 @@ class CrawlerLlmClient:
         path: str,
         *,
         json_body: object | None = None,
+        timeout: float | None = None,
     ) -> object:
-        """发请求并返回解析后的 JSON；任何失败统一抛 :class:`CrawlerLlmError`。"""
+        """发请求并返回解析后的 JSON；任何失败统一抛 :class:`CrawlerLlmError`。
+
+        ``timeout`` 单独给「测试」用：探测要等上游补一次 completion，比常规写配置慢得多。
+        """
+        budget = float(timeout if timeout is not None else self._timeout)
         try:
             async with httpx.AsyncClient(
-                base_url=self._base_url, timeout=self._timeout
+                base_url=self._base_url, timeout=budget
             ) as client:
                 resp = await client.request(method, path, json=json_body)
         except httpx.HTTPError as e:
-            logger.warning(f"crawler LLM 接口不可达（{method} {path}）：{e}")
-            raise CrawlerLlmError(f"crawler 不可达：{e}") from e
+            # httpx 的超时异常 str() 是空串，这里补上类型名，避免前端只看到「不可达：」
+            reason = str(e) or e.__class__.__name__
+            logger.warning(f"crawler LLM 接口不可达（{method} {path}）：{reason}")
+            raise CrawlerLlmError(f"crawler 不可达：{reason}") from e
 
         if resp.status_code >= 400:
             detail = (resp.text or "").strip()[:200]
@@ -125,6 +150,39 @@ class CrawlerLlmClient:
         if not isinstance(data, list):
             raise CrawlerLlmError("crawler 统计响应格式非法（期望数组）")
         return [CrawlerLlmStatsRow.model_validate(row) for row in data]
+
+    async def test_config(
+        self,
+        *,
+        index: int | None,
+        base_url: str,
+        model_name: str,
+        token: str,
+    ) -> CrawlerLlmProbeRow:
+        """对单条实例做一次最小 completion 探测（不重试、不影响 crawler 状态机）。"""
+        data = await self._request(
+            "POST",
+            _TEST_PATH,
+            json_body={
+                "index": index,
+                "base_url": base_url,
+                "model_name": model_name,
+                "token": token,
+            },
+            # 单实例探测要等上游返回，用更长的独立超时（默认 60s）
+            timeout=float(settings.crawler_llm_test_timeout),
+        )
+        if not isinstance(data, dict):
+            raise CrawlerLlmError("crawler 探测响应格式非法（期望对象）")
+        return CrawlerLlmProbeRow.model_validate(data)
+
+    async def reset_configs(self) -> None:
+        """撤销人工保存：删持久化文件并热切回 `.env`（幂等，文件不存在也算成功）。
+
+        crawler 会在同一次调用里重建实例池，返回切换后的脱敏列表（本层不解析，
+        由服务层重新 `get_configs()` 统一取数，避免两处口径）。
+        """
+        await self._request("DELETE", _OVERRIDE_PATH)
 
 
 #: 进程内单例（base_url / timeout 在启动时从 settings 读取）

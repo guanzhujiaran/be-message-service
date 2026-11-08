@@ -64,6 +64,10 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     crawler_base_url: str = "http://127.0.0.1:23333"
     # 管理端代理超时（秒）：写配置会重建实例池，给足余量
     crawler_admin_timeout: float = 8.0
+    # 「测试」单实例的超时（秒）：crawler 会对上游发一次最小 completion，
+    # 慢模型可能几秒到几十秒，必须比 crawler 侧 `llm_test_timeout`（默认 45s）更大，
+    # 否则请求会被本层提前掐断，前端只看到「crawler 不可达」。
+    crawler_llm_test_timeout: float = 60.0
 
     # ==================== MySQL ====================
     # 主库（元数据库）连接串：系统通知 / 事件提醒 / 私信索引 / 会话 / 设置等表所在库。

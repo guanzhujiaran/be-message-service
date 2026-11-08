@@ -1,15 +1,19 @@
 """管理端：be-crawler 云端 LLM 配置代理服务（2.7x）。
 
-职责只有三件事：
+职责只有四件事：
 
 1. **读**：代理 crawler `GET /llm/config` + `GET /llm/stats`，把内部 dict 归一成本服务
    的响应模型（数值转字符串，时间戳转秒级整数字符串）；
 2. **写**：整体覆盖 `PUT /llm/config`，写入前做参数校验；`token` 传脱敏值 / 空串时
    **保留原密钥**（crawler 读取态返回的就是脱敏值，前端原样回传是正常操作）；
-3. **审计**：写操作打一条带操作人 mid 的 info 日志（与其它管理端写接口口径一致）。
+3. **回退**：`DELETE /llm/config/override` 让 crawler 删除本地持久化文件
+   （`runtime/llm_apis.json`）并热切回 `.env`，用于「撤销所有人工保存」；
+4. **探测**：代理 `POST /llm/config/test`，对单条实例做一次最小 completion，
+   只回答「现在还能不能用」（不参与状态机、不改统计）；
+5. **审计**：写 / 探测操作打一条带操作人 mid 的 info 日志（与其它管理端写接口口径一致）。
 
-为什么不做缓存：配置只存在于 crawler 进程内存 / `.env`，任何缓存都会让管理端看到
-过期数据；量级极小（个位数实例），实时转发即可。
+为什么不做缓存：配置持久化在 crawler 的 `runtime/llm_apis.json`（事实来源：文件 > `.env`），
+任何缓存都会让管理端看到过期数据；量级极小（个位数实例），实时转发即可。
 """
 
 from loguru import logger
@@ -19,6 +23,8 @@ from app.models.schemas.crawler_llm import (
     CrawlerLlmConfigResp,
     CrawlerLlmSaveReq,
     CrawlerLlmStatsItem,
+    CrawlerLlmTestReq,
+    CrawlerLlmTestResp,
 )
 from app.services.infrastructure.crawler_llm import (
     CrawlerLlmClient,
@@ -101,10 +107,74 @@ class CrawlerLlmService:
         )
 
     @staticmethod
+    async def test_config(
+        req: CrawlerLlmTestReq, operator_mid: int
+    ) -> CrawlerLlmTestResp:
+        """对单条实例做一次连通性探测（可测未保存的编辑态）。
+
+        只做一次最小 completion（crawler 侧 `max_tokens=1`），
+        **不参与健康状态机、不改统计、不落盘** —— 纯诊断。
+
+        Args:
+            req: 待测实例的可编辑字段（`token` 为空/脱敏时按 `index` 沿用原密钥）。
+            operator_mid: 操作管理员 mid（仅用于审计日志）。
+
+        Raises:
+            CrawlerLlmValueError: `index` 不是数字（前端传的是字符串）。
+            CrawlerLlmError: crawler 不可达 / 非 2xx。
+        """
+        index: int | None = None
+        raw_index = (req.index or "").strip()
+        if raw_index:
+            try:
+                index = int(raw_index)
+            except ValueError as e:
+                raise CrawlerLlmValueError(f"索引必须是数字：{raw_index}") from e
+
+        row = await CrawlerLlmService._client().test_config(
+            index=index,
+            base_url=req.base_url.strip(),
+            model_name=req.model_name.strip(),
+            token=req.token.strip(),
+        )
+        logger.info(
+            f"管理员 {operator_mid} 测试 crawler LLM 实例：{row.model_name}"
+            f"（{row.base_url}）→ {'成功' if row.ok else '失败'}"
+            f"（status={row.status_code}，{row.latency_ms}ms）"
+        )
+        return CrawlerLlmTestResp(
+            ok=row.ok,
+            base_url=row.base_url,
+            model_name=row.model_name,
+            status_code=None if row.status_code is None else str(row.status_code),
+            latency_ms=str(row.latency_ms),
+            error=row.error,
+        )
+
+    @staticmethod
+    async def reset_config(operator_mid: int) -> CrawlerLlmConfigResp:
+        """撤销人工保存：让 crawler 删除持久化文件并热切回 `.env`。
+
+        返回切换后的配置 + 统计（复用 `get_config()`，口径与 GET 完全一致）。
+        幂等：文件本来就不存在时 crawler 也返回成功（只是把 `.env` 重新应用一遍）。
+
+        Args:
+            operator_mid: 操作管理员 mid（仅用于审计日志）。
+
+        Raises:
+            CrawlerLlmError: crawler 不可达 / 非 2xx。
+        """
+        await CrawlerLlmService._client().reset_configs()
+        logger.info(
+            f"管理员 {operator_mid} 撤销 crawler LLM 人工保存，已切回 .env 配置"
+        )
+        return await CrawlerLlmService.get_config()
+
+    @staticmethod
     async def save_config(
         req: CrawlerLlmSaveReq, operator_mid: int
     ) -> CrawlerLlmConfigResp:
-        """整体覆盖保存（热更新，无需重启 crawler）。
+        """整体覆盖保存（热更新 + 落盘，无需重启 crawler）。
 
         Args:
             req: 新的实例列表（顺序即索引顺序）。

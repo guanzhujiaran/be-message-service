@@ -19,6 +19,8 @@ __all__ = [
     "CrawlerLlmSaveItem",
     "CrawlerLlmSaveReq",
     "CrawlerLlmStatsItem",
+    "CrawlerLlmTestReq",
+    "CrawlerLlmTestResp",
 ]
 
 
@@ -86,3 +88,27 @@ class CrawlerLlmSaveReq(SQLModel):
     """整体覆盖保存请求（与 crawler `PUT /llm/config` 语义一致）。"""
 
     items: list[CrawlerLlmSaveItem] = Field(description="完整的实例列表（顺序即索引顺序）")
+
+
+class CrawlerLlmTestReq(SQLModel):
+    """单条实例的连通性测试请求（管理端「测试」按钮，可测未保存的编辑态）。"""
+
+    index: str | None = Field(
+        default=None,
+        description="该实例在当前列表中的索引（字符串）；token 为空/脱敏时按它回填原密钥，"
+        "新增行传 null",
+    )
+    base_url: str = Field(description="OpenAI 兼容接口地址")
+    model_name: str = Field(description="模型名")
+    token: str = Field(default="", description="明文密钥；空串或脱敏值 = 沿用该索引上的原密钥")
+
+
+class CrawlerLlmTestResp(SQLModel):
+    """一次探测的结果（诊断口径：不参与 crawler 的健康状态机、不改统计）。"""
+
+    ok: bool = Field(description="是否探测成功（上游 2xx）")
+    base_url: str = Field(description="被测接口地址")
+    model_name: str = Field(description="被测模型名")
+    status_code: str | None = Field(default=None, description="上游 HTTP 状态码；未发请求时为 null")
+    latency_ms: str = Field(description="耗时（毫秒）；未发请求时为 0")
+    error: str | None = Field(default=None, description="失败原因（已抹掉密钥，截断 200 字符）")

@@ -5,19 +5,25 @@
 2. **新增实例必须填密钥**：新行留空直接 400，不发请求；
 3. **入参校验**：base_url 协议 / 模型名 / 限流必须为正数；
 4. **统计归一化**：数值与时间戳一律转字符串，秒级时间戳取整，成功率/平均耗时格式化；
-5. **弱依赖**：统计接口失败不影响配置读取。
+5. **弱依赖**：统计接口失败不影响配置读取；
+6. **撤销人工保存**：调用 crawler 的 override 后返回切换后的列表，失败如实抛错。
 """
 
 from typing import Any
 
 import pytest
 
-from app.models.schemas.crawler_llm import CrawlerLlmSaveItem, CrawlerLlmSaveReq
+from app.models.schemas.crawler_llm import (
+    CrawlerLlmSaveItem,
+    CrawlerLlmSaveReq,
+    CrawlerLlmTestReq,
+)
 from app.services.admin import crawler_llm as service_mod
 from app.services.admin.crawler_llm import CrawlerLlmService, CrawlerLlmValueError
 from app.services.infrastructure.crawler_llm import (
     CrawlerLlmConfig,
     CrawlerLlmError,
+    CrawlerLlmProbeRow,
     CrawlerLlmStatsRow,
 )
 
@@ -31,11 +37,17 @@ class _FakeClient:
         configs: list[CrawlerLlmConfig] | None = None,
         stats: list[CrawlerLlmStatsRow] | None = None,
         stats_error: Exception | None = None,
+        reset_error: Exception | None = None,
     ) -> None:
         self.configs = configs or []
         self.stats = stats or []
         self.stats_error = stats_error
+        self.reset_error = reset_error
         self.saved: list[CrawlerLlmConfig] | None = None
+        #: 是否调用过「撤销人工保存」
+        self.reset_called = False
+        #: 最近一次「测试」请求参数
+        self.tested: dict[str, object] | None = None
 
     async def get_configs(self) -> list[CrawlerLlmConfig]:
         return self.configs
@@ -50,6 +62,28 @@ class _FakeClient:
         if self.stats_error is not None:
             raise self.stats_error
         return self.stats
+
+    async def reset_configs(self) -> None:
+        if self.reset_error is not None:
+            raise self.reset_error
+        self.reset_called = True
+
+    async def test_config(
+        self, *, index: int | None, base_url: str, model_name: str, token: str
+    ) -> CrawlerLlmProbeRow:
+        self.tested = {
+            "index": index,
+            "base_url": base_url,
+            "model_name": model_name,
+            "token": token,
+        }
+        return CrawlerLlmProbeRow(
+            ok=True,
+            base_url=base_url,
+            model_name=model_name,
+            status_code=200,
+            latency_ms=1234,
+        )
 
 
 @pytest.fixture()
@@ -192,6 +226,102 @@ class TestValidation:
             await CrawlerLlmService.save_config(
                 CrawlerLlmSaveReq(items=[]), operator_mid=1
             )
+
+
+class TestTestConfig:
+    """连通性测试：index 转 int、字段透传、结果字符串化。"""
+
+    @pytest.mark.asyncio
+    async def test_index_converted_and_fields_passed(self, use_client: Any) -> None:
+        client = use_client(_FakeClient())
+
+        resp = await CrawlerLlmService.test_config(
+            CrawlerLlmTestReq(
+                index="2",
+                base_url=" https://api.example.com/v1 ",
+                model_name=" deepseek-chat ",
+                token="",
+            ),
+            operator_mid=1,
+        )
+
+        assert client.tested == {
+            "index": 2,
+            "base_url": "https://api.example.com/v1",
+            "model_name": "deepseek-chat",
+            "token": "",
+        }
+        assert resp.ok is True
+        assert resp.status_code == "200"
+        assert resp.latency_ms == "1234"
+
+    @pytest.mark.asyncio
+    async def test_new_row_index_null(self, use_client: Any) -> None:
+        client = use_client(_FakeClient())
+
+        await CrawlerLlmService.test_config(
+            CrawlerLlmTestReq(
+                index=None,
+                base_url="https://api.example.com/v1",
+                model_name="new-model",
+                token="sk-plain",
+            ),
+            operator_mid=1,
+        )
+
+        assert client.tested is not None
+        assert client.tested["index"] is None
+        assert client.tested["token"] == "sk-plain"
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_index_rejected(self, use_client: Any) -> None:
+        client = use_client(_FakeClient())
+
+        with pytest.raises(CrawlerLlmValueError, match="索引必须是数字"):
+            await CrawlerLlmService.test_config(
+                CrawlerLlmTestReq(
+                    index="abc",
+                    base_url="https://api.example.com/v1",
+                    model_name="m",
+                ),
+                operator_mid=1,
+            )
+        # 参数非法不能发请求
+        assert client.tested is None
+
+
+class TestResetConfig:
+    """撤销人工保存：代理 crawler 的 override，并返回切换后的列表。"""
+
+    @pytest.mark.asyncio
+    async def test_reset_calls_override_and_returns_items(
+        self, use_client: Any
+    ) -> None:
+        client = use_client(
+            _FakeClient(
+                configs=[
+                    CrawlerLlmConfig(
+                        base_url="https://env.example.com/v1",
+                        model_name="env-model",
+                        token="****",
+                        requests_per_second=0.5,
+                    )
+                ]
+            )
+        )
+
+        resp = await CrawlerLlmService.reset_config(operator_mid=1)
+
+        assert client.reset_called is True
+        assert [item.model_name for item in resp.items] == ["env-model"]
+        assert resp.items[0].requests_per_second == "0.5"
+
+    @pytest.mark.asyncio
+    async def test_reset_propagates_crawler_error(self, use_client: Any) -> None:
+        use_client(_FakeClient(reset_error=CrawlerLlmError("crawler 不可达")))
+
+        with pytest.raises(CrawlerLlmError, match="不可达"):
+            await CrawlerLlmService.reset_config(operator_mid=1)
 
 
 class TestStatsNormalization:
