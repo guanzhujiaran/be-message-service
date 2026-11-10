@@ -31,7 +31,7 @@ _CONFIG_PATH = "/llm/config"
 _STATS_PATH = "/llm/stats"
 #: 撤销人工保存：删除持久化文件并热切回 `.env`（crawler 内部接口）
 _OVERRIDE_PATH = "/llm/config/override"
-#: 单实例连通性测试（最小 completion 探测，crawler 内部接口）
+#: 单实例连通性测试（crawler 用裸 ChatOpenAI 真实问一句 1+1=?，内部接口）
 _TEST_PATH = "/llm/config/test"
 
 
@@ -159,7 +159,7 @@ class CrawlerLlmClient:
         model_name: str,
         token: str,
     ) -> CrawlerLlmProbeRow:
-        """对单条实例做一次最小 completion 探测（不重试、不影响 crawler 状态机）。"""
+        """对单条实例做一次真实 LLM 调用探测（不重试、不影响 crawler 状态机）。"""
         data = await self._request(
             "POST",
             _TEST_PATH,

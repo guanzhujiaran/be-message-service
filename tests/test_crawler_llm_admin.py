@@ -38,11 +38,13 @@ class _FakeClient:
         stats: list[CrawlerLlmStatsRow] | None = None,
         stats_error: Exception | None = None,
         reset_error: Exception | None = None,
+        test_error: Exception | None = None,
     ) -> None:
         self.configs = configs or []
         self.stats = stats or []
         self.stats_error = stats_error
         self.reset_error = reset_error
+        self.test_error = test_error
         self.saved: list[CrawlerLlmConfig] | None = None
         #: 是否调用过「撤销人工保存」
         self.reset_called = False
@@ -71,6 +73,8 @@ class _FakeClient:
     async def test_config(
         self, *, index: int | None, base_url: str, model_name: str, token: str
     ) -> CrawlerLlmProbeRow:
+        if self.test_error is not None:
+            raise self.test_error
         self.tested = {
             "index": index,
             "base_url": base_url,
@@ -113,22 +117,27 @@ def _save_item(
 
 
 class TestMaskedTokenIsPreserved:
-    """脱敏 token 不能覆盖真实密钥。"""
+    """crawler 的 GET /llm/config 返回的是**脱敏** token，本层绝不能把它当明文写回。
+
+    真实故障：旧实现用 ``existing[i].token``（脱敏串）回填后 PUT 回 crawler，
+    被落盘成「密钥」→ 8 个实例 401 → REMOVED → 内存只剩 1 条。
+    现在统一传空串作为「沿用原密钥」哨兵，由 crawler 按 index 回填明文。
+    """
+
+    @staticmethod
+    def _masked_existing() -> list[CrawlerLlmConfig]:
+        return [
+            CrawlerLlmConfig(
+                base_url="https://api.example.com/v1",
+                model_name="deepseek-chat",
+                token="sk-r****1234",  # crawler 读取态就是脱敏值
+                requests_per_second=0.5,
+            )
+        ]
 
     @pytest.mark.asyncio
-    async def test_masked_token_keeps_original(self, use_client: Any) -> None:
-        client = use_client(
-            _FakeClient(
-                configs=[
-                    CrawlerLlmConfig(
-                        base_url="https://api.example.com/v1",
-                        model_name="deepseek-chat",
-                        token="sk-real-token-1234",
-                        requests_per_second=0.5,
-                    )
-                ]
-            )
-        )
+    async def test_masked_token_never_written_back(self, use_client: Any) -> None:
+        client = use_client(_FakeClient(configs=self._masked_existing()))
         req = CrawlerLlmSaveReq(
             items=[_save_item(token="sk-r****1234")]  # 前端原样回传脱敏值
         )
@@ -136,29 +145,43 @@ class TestMaskedTokenIsPreserved:
         await CrawlerLlmService.save_config(req, operator_mid=1)
 
         assert client.saved is not None
-        assert client.saved[0].token == "sk-real-token-1234"
+        assert client.saved[0].token == ""
+        assert all("****" not in cfg.token for cfg in client.saved)
 
     @pytest.mark.asyncio
-    async def test_empty_token_keeps_original(self, use_client: Any) -> None:
-        client = use_client(
-            _FakeClient(
-                configs=[
-                    CrawlerLlmConfig(
-                        base_url="https://api.example.com/v1",
-                        model_name="deepseek-chat",
-                        token="sk-real-token-1234",
-                        requests_per_second=0.5,
-                    )
-                ]
-            )
-        )
+    async def test_empty_token_is_preserve_sentinel(self, use_client: Any) -> None:
+        client = use_client(_FakeClient(configs=self._masked_existing()))
 
         await CrawlerLlmService.save_config(
             CrawlerLlmSaveReq(items=[_save_item(token="")]), operator_mid=1
         )
 
         assert client.saved is not None
-        assert client.saved[0].token == "sk-real-token-1234"
+        assert client.saved[0].token == ""
+        assert all("****" not in cfg.token for cfg in client.saved)
+
+    @pytest.mark.asyncio
+    async def test_plain_token_does_not_leak_masked_existing(
+        self, use_client: Any
+    ) -> None:
+        """改明文密钥时也不能把同列表里其它行的脱敏串带出去。"""
+        client = use_client(
+            _FakeClient(configs=[*self._masked_existing(), *self._masked_existing()])
+        )
+
+        await CrawlerLlmService.save_config(
+            CrawlerLlmSaveReq(
+                items=[
+                    _save_item(token="sk-new-plain"),
+                    _save_item(token="sk-r****1234"),
+                ]
+            ),
+            operator_mid=1,
+        )
+
+        assert client.saved is not None
+        assert [cfg.token for cfg in client.saved] == ["sk-new-plain", ""]
+        assert all("****" not in cfg.token for cfg in client.saved)
 
     @pytest.mark.asyncio
     async def test_plain_token_overrides(self, use_client: Any) -> None:
@@ -288,6 +311,27 @@ class TestTestConfig:
             )
         # 参数非法不能发请求
         assert client.tested is None
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_structured_ok_false(self, use_client: Any) -> None:
+        """慢模型 / crawler 被拖住：管理端仍拿到 HTTP 200 的 data.ok=false。"""
+        use_client(
+            _FakeClient(test_error=CrawlerLlmError("crawler 不可达：ReadTimeout"))
+        )
+
+        resp = await CrawlerLlmService.test_config(
+            CrawlerLlmTestReq(
+                index="0",
+                base_url="https://api.example.com/v1",
+                model_name="slow-model",
+                token="",
+            ),
+            operator_mid=1,
+        )
+
+        assert resp.ok is False
+        assert "请求超时" in (resp.error or "")
+        assert resp.model_name == "slow-model"
 
 
 class TestResetConfig:

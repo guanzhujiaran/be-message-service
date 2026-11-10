@@ -9,7 +9,7 @@
 - `PUT    /config`       整体覆盖保存（热更新 + 落盘 runtime/llm_apis.json）；
 - `DELETE /config`       撤销人工保存：删持久化文件并热切回 `.env` 的 `llm_apis`
   （crawler 内部 `DELETE /llm/config/override` 的代理，幂等）；
-- `POST   /config/test`  单条实例连通性探测（crawler 内部 `POST /llm/config/test` 的代理）。
+- `POST   /config/test`  单条实例连通性探测（真实 LLM 调用；crawler 内部 `POST /llm/config/test` 的代理）。
 
 统计与配置总是一起读（页面需要按 `base_url + model_name` 把统计合并到配置卡上），
 单独开 `/stats` 只会多一次无意义的配置读取。
@@ -78,7 +78,7 @@ async def save_llm_config(
 async def test_llm_config(
     user: AdminUser, req: CrawlerLlmTestReq
 ) -> StandardResponse[CrawlerLlmTestResp]:
-    """对一条实例做一次最小 completion 探测（可测未保存的编辑态）。
+    """对一条实例做一次真实 LLM 调用探测（可测未保存的编辑态）。
 
     - `token` 传空串或脱敏值 → 按 `index` 沿用原密钥（新增行必须传明文）；
     - 只做诊断：不参与 crawler 的健康状态机、不改统计、不落盘；

@@ -106,9 +106,12 @@ class CrawlerLlmTestReq(SQLModel):
 class CrawlerLlmTestResp(SQLModel):
     """一次探测的结果（诊断口径：不参与 crawler 的健康状态机、不改统计）。"""
 
-    ok: bool = Field(description="是否探测成功（上游 2xx）")
+    ok: bool = Field(description="是否探测成功（裸 ChatOpenAI 真实调用拿到模型回复）")
     base_url: str = Field(description="被测接口地址")
     model_name: str = Field(description="被测模型名")
-    status_code: str | None = Field(default=None, description="上游 HTTP 状态码；未发请求时为 null")
+    status_code: str | None = Field(
+        default=None,
+        description="上游 HTTP 状态码；SDK 成功调用拿不到状态码时记为 200，未发请求时为 null",
+    )
     latency_ms: str = Field(description="耗时（毫秒）；未发请求时为 0")
     error: str | None = Field(default=None, description="失败原因（已抹掉密钥，截断 200 字符）")
