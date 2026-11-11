@@ -22,6 +22,8 @@ from loguru import logger
 from app.models.schemas.crawler_llm import (
     CrawlerLlmConfigItem,
     CrawlerLlmConfigResp,
+    CrawlerLlmModelsReq,
+    CrawlerLlmModelsResp,
     CrawlerLlmSaveReq,
     CrawlerLlmStatsItem,
     CrawlerLlmTestReq,
@@ -108,6 +110,21 @@ class CrawlerLlmService:
         )
 
     @staticmethod
+    def _parse_index(raw_index: str | None) -> int | None:
+        """把前端传来的字符串索引转成 int；空串 = 新增行（无原密钥可沿用）。
+
+        Raises:
+            CrawlerLlmValueError: 索引不是数字。
+        """
+        text = (raw_index or "").strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError as e:
+            raise CrawlerLlmValueError(f"索引必须是数字：{text}") from e
+
+    @staticmethod
     async def test_config(
         req: CrawlerLlmTestReq, operator_mid: int
     ) -> CrawlerLlmTestResp:
@@ -126,13 +143,7 @@ class CrawlerLlmService:
         Raises:
             CrawlerLlmValueError: `index` 不是数字（前端传的是字符串）。
         """
-        index: int | None = None
-        raw_index = (req.index or "").strip()
-        if raw_index:
-            try:
-                index = int(raw_index)
-            except ValueError as e:
-                raise CrawlerLlmValueError(f"索引必须是数字：{raw_index}") from e
+        index = CrawlerLlmService._parse_index(req.index)
 
         try:
             row = await CrawlerLlmService._client().test_config(
@@ -167,6 +178,56 @@ class CrawlerLlmService:
             model_name=row.model_name,
             status_code=None if row.status_code is None else str(row.status_code),
             latency_ms=str(row.latency_ms),
+            error=row.error,
+        )
+
+    @staticmethod
+    async def list_models(
+        req: CrawlerLlmModelsReq, operator_mid: int
+    ) -> CrawlerLlmModelsResp:
+        """拉取某条实例对应的上游模型列表（管理端「获取模型列表」，可对未保存的编辑态发起）。
+
+        crawler 侧用 httpx 直连 `GET {base_url}/models`，**不参与健康状态机、不改统计、不落盘**。
+
+        Args:
+            req: 目标实例的地址 / 密钥（`token` 为空/脱敏时按 `index` 沿用原密钥）。
+            operator_mid: 操作管理员 mid（仅用于审计日志）。
+
+        crawler 不可达 / 本层超时时也返回结构化 ``ok=false``（HTTP 仍为 200），
+        避免慢地址在网关层被掐成 504、前端拿不到诊断结论。
+
+        Raises:
+            CrawlerLlmValueError: `index` 不是数字（前端传的是字符串）。
+        """
+        index = CrawlerLlmService._parse_index(req.index)
+        try:
+            row = await CrawlerLlmService._client().list_models(
+                index=index,
+                base_url=req.base_url.strip(),
+                model_name=req.model_name.strip(),
+                token=req.token.strip(),
+            )
+        except CrawlerLlmError as e:
+            detail = str(e)[:200]
+            logger.warning(
+                f"管理员 {operator_mid} 获取 crawler LLM 模型列表失败（{detail}）"
+            )
+            return CrawlerLlmModelsResp(
+                ok=False,
+                base_url=req.base_url.strip(),
+                latency_ms="0",
+                error=f"请求超时或 crawler 不可达：{detail}",
+            )
+        logger.info(
+            f"管理员 {operator_mid} 获取 crawler LLM 模型列表：{row.base_url} → "
+            f"{len(row.models)} 个模型（status={row.status_code}，{row.latency_ms}ms）"
+        )
+        return CrawlerLlmModelsResp(
+            ok=row.ok,
+            base_url=row.base_url,
+            status_code=None if row.status_code is None else str(row.status_code),
+            latency_ms=str(row.latency_ms),
+            models=row.models,
             error=row.error,
         )
 

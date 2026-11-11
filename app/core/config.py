@@ -68,6 +68,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 慢模型可能几秒到几十秒，必须比 crawler 侧 `llm_test_timeout`（默认 45s）更大，
     # 否则请求会被本层提前掐断，前端只看到「crawler 不可达」。
     crawler_llm_test_timeout: float = 60.0
+    # 「获取模型列表」的超时（秒）：crawler 打上游 `GET {base_url}/models`（自身超时 20s），
+    # 本层必须比它更大，否则前端只会看到「crawler 不可达」而不是上游的真实错误。
+    crawler_llm_models_timeout: float = 30.0
 
     # ==================== MySQL ====================
     # 主库（元数据库）连接串：系统通知 / 事件提醒 / 私信索引 / 会话 / 设置等表所在库。

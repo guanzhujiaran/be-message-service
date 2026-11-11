@@ -20,6 +20,7 @@ __all__ = [
     "CrawlerLlmClient",
     "CrawlerLlmConfig",
     "CrawlerLlmError",
+    "CrawlerLlmModelsRow",
     "CrawlerLlmProbeRow",
     "CrawlerLlmStatsRow",
     "get_crawler_llm_client",
@@ -33,6 +34,8 @@ _STATS_PATH = "/llm/stats"
 _OVERRIDE_PATH = "/llm/config/override"
 #: 单实例连通性测试（crawler 用裸 ChatOpenAI 真实问一句 1+1=?，内部接口）
 _TEST_PATH = "/llm/config/test"
+#: 拉取上游 `/models` 模型列表（crawler 用 httpx 直连，内部接口）
+_MODELS_PATH = "/llm/models"
 
 
 class CrawlerLlmError(RuntimeError):
@@ -81,6 +84,19 @@ class CrawlerLlmProbeRow(BaseModel):
     model_name: str = ""
     status_code: int | None = None
     latency_ms: int = 0
+    error: str | None = None
+
+
+class CrawlerLlmModelsRow(BaseModel):
+    """crawler `/llm/models` 的结果行（诊断口径，不含 token）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    ok: bool = False
+    base_url: str = ""
+    status_code: int | None = None
+    latency_ms: int = 0
+    models: list[str] = Field(default_factory=list)
     error: str | None = None
 
 
@@ -175,6 +191,31 @@ class CrawlerLlmClient:
         if not isinstance(data, dict):
             raise CrawlerLlmError("crawler 探测响应格式非法（期望对象）")
         return CrawlerLlmProbeRow.model_validate(data)
+
+    async def list_models(
+        self,
+        *,
+        index: int | None,
+        base_url: str,
+        model_name: str,
+        token: str,
+    ) -> CrawlerLlmModelsRow:
+        """拉取某条实例对应的上游模型列表（不重试、不影响 crawler 状态机）。"""
+        data = await self._request(
+            "POST",
+            _MODELS_PATH,
+            json_body={
+                "index": index,
+                "base_url": base_url,
+                "model_name": model_name,
+                "token": token,
+            },
+            # crawler 侧对上游 `/models` 有自己的超时（默认 20s），本层必须更大
+            timeout=float(settings.crawler_llm_models_timeout),
+        )
+        if not isinstance(data, dict):
+            raise CrawlerLlmError("crawler 模型列表响应格式非法（期望对象）")
+        return CrawlerLlmModelsRow.model_validate(data)
 
     async def reset_configs(self) -> None:
         """撤销人工保存：删持久化文件并热切回 `.env`（幂等，文件不存在也算成功）。

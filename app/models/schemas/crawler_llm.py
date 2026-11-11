@@ -16,6 +16,8 @@ from sqlmodel import Field, SQLModel
 __all__ = [
     "CrawlerLlmConfigItem",
     "CrawlerLlmConfigResp",
+    "CrawlerLlmModelsReq",
+    "CrawlerLlmModelsResp",
     "CrawlerLlmSaveItem",
     "CrawlerLlmSaveReq",
     "CrawlerLlmStatsItem",
@@ -101,6 +103,37 @@ class CrawlerLlmTestReq(SQLModel):
     base_url: str = Field(description="OpenAI 兼容接口地址")
     model_name: str = Field(description="模型名")
     token: str = Field(default="", description="明文密钥；空串或脱敏值 = 沿用该索引上的原密钥")
+
+
+class CrawlerLlmModelsReq(SQLModel):
+    """单条实例的「获取模型列表」请求（管理端下拉候选，可对未保存的编辑态发起）。"""
+
+    index: str | None = Field(
+        default=None,
+        description="该实例在当前列表中的索引（字符串）；token 为空/脱敏时按它回填原密钥，"
+        "新增行传 null",
+    )
+    base_url: str = Field(description="OpenAI 兼容接口地址")
+    model_name: str = Field(
+        default="",
+        description="该实例当前的模型名；仅用于「索引与配置是否匹配」的校验，可为空",
+    )
+    token: str = Field(default="", description="明文密钥；空串或脱敏值 = 沿用该索引上的原密钥")
+
+
+class CrawlerLlmModelsResp(SQLModel):
+    """一次模型列表查询的结果（诊断口径：不参与 crawler 的健康状态机、不改统计）。"""
+
+    ok: bool = Field(description="是否查询成功（上游 /models 返回了可解析的列表）")
+    base_url: str = Field(description="被查询的接口地址")
+    status_code: str | None = Field(
+        default=None, description="上游 HTTP 状态码；未发出请求时为 null"
+    )
+    latency_ms: str = Field(description="耗时（毫秒）；未发出请求时为 0")
+    models: list[str] = Field(
+        default_factory=list, description="上游可用的模型 id 列表（去重 + 升序）；失败时为空"
+    )
+    error: str | None = Field(default=None, description="失败或提示文案（已抹掉密钥，截断 200 字符）")
 
 
 class CrawlerLlmTestResp(SQLModel):

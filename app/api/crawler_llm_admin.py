@@ -22,6 +22,8 @@ from app.dependencies import AdminUser
 from app.models import StandardResponse
 from app.models.schemas.crawler_llm import (
     CrawlerLlmConfigResp,
+    CrawlerLlmModelsReq,
+    CrawlerLlmModelsResp,
     CrawlerLlmSaveReq,
     CrawlerLlmTestReq,
     CrawlerLlmTestResp,
@@ -87,6 +89,30 @@ async def test_llm_config(
     """
     try:
         data = await CrawlerLlmService.test_config(req, operator_mid=int(user.mid))
+    except CrawlerLlmValueError as e:
+        return StandardResponse(code=int(ResponseCode.INVALID_PARAM), msg=str(e))
+    except CrawlerLlmError as e:
+        return StandardResponse(code=int(ResponseCode.NETWORK_ERROR), msg=str(e))
+    return StandardResponse(data=data)
+
+
+@router.post(
+    "/models",
+    response_model=StandardResponse[CrawlerLlmModelsResp],
+    summary="获取某条 crawler LLM 实例的可选模型列表",
+)
+async def list_llm_models(
+    user: AdminUser, req: CrawlerLlmModelsReq
+) -> StandardResponse[CrawlerLlmModelsResp]:
+    """拉取上游 `GET {base_url}/models`，供管理页做模型名下拉候选。
+
+    - `token` 传空串或脱敏值 → 按 `index` 沿用原密钥（新增行必须传明文）；
+    - 地址 / 密钥填好即可拉取，**不要求先填模型名**；
+    - 只做诊断：不参与 crawler 的健康状态机、不改统计、不落盘；
+    - 上游不可达 / 超时也返回 `ok=false` + 原因（HTTP 仍为 200）。
+    """
+    try:
+        data = await CrawlerLlmService.list_models(req, operator_mid=int(user.mid))
     except CrawlerLlmValueError as e:
         return StandardResponse(code=int(ResponseCode.INVALID_PARAM), msg=str(e))
     except CrawlerLlmError as e:
