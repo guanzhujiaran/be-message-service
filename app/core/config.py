@@ -514,8 +514,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # per-user 推送仍是 1:1 直推。PushMessagePayload **没有 group 字段**：
     # 分桶维度只有「接收人（merge_config 合并后生效的 push config 摘要）」——
     # **同一个 push key 只设一个桶**，标题不参与分桶；不同密钥不会被合并。
-    # 冷却期（秒）：同一桶在这个窗口内再次推送会被合并成一条摘要
-    push_aggregate_cooldown_seconds: float = 60.0
+    # 冷却期（秒，下限 1）：同一个 push key 在这个窗口内再次推送会被合并成一条摘要。
+    # 默认 300s（5 分钟）：一次故障的告警通常持续数分钟，窗口太短会退化成多条摘要。
+    push_aggregate_cooldown_seconds: float = 300.0
     # 聚合摘要正文的字符数硬上限（超出按出现次数降序截断并提示省略条数）
     push_aggregate_max_len: int = 1800
     # 到期桶的扫描间隔（秒）：决定聚合摘要最多比冷却到期晚多久发出
