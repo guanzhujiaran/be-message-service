@@ -5,8 +5,10 @@
 message.comment 等）。
 
 治理策略见 ``app/services/message/external/push_aggregator.py``：
-带 ``group`` 的推送走「首条直推 + 冷却期内聚合」，不带 group 的（per-user 业务
-推送）仍是 1:1 直推。
+失败主题（标题以 ``[f]`` 开头）走「首条直推 + 冷却期内聚合」，按
+「接收人（``merge_config`` 合并后生效的 push config 摘要）× 标题」分桶 ——
+同一个 push config 的同类失败会合成一条摘要；业务通知（``[i]``/``[s]``/``[w]``）
+与 per-user 推送仍是 1:1 直推。
 """
 
 from faststream.rabbit import RabbitMessage

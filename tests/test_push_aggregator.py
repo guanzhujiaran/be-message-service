@@ -191,6 +191,31 @@ async def test_same_credentials_via_global_fallback_share_bucket(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_same_push_config_alerts_are_aggregated(monkeypatch):
+    """同一个 push config 的同类失败告警必须共桶：首条直推，其余合成一条摘要。
+
+    这是「按同一个 push 的 config 聚合」的契约用例：`PushMessagePayload` 没有
+    group 字段，桶 key 取的是 merge_config 合并后生效配置的摘要 + 标题。
+    """
+    config = PushChannelConfig(pushme_key="same-push-config")
+
+    await aggregator.deliver(_alert("告警-1", config=config))
+    for index in range(5):
+        await aggregator.deliver(_alert(f"同因失败-{index}", config=config))
+
+    # 只发了首条，且只建了一个桶
+    assert len(_FakePushService.sent) == 1
+    assert len(aggregator._buckets) == 1
+
+    _force_due(monkeypatch)
+    assert await aggregator.flush_due_buckets() == 1
+
+    digest = _FakePushService.sent[-1][1]
+    assert "冷却期内合并 5 条" in digest
+    assert "同因失败-4" in digest
+
+
+@pytest.mark.asyncio
 async def test_different_titles_have_separate_buckets():
     """同一接收人的不同类告警各占一个桶，互不挤占冷却窗口。"""
     await aggregator.deliver(_alert("消费失败-1", title="[f][svc] MQ消费失败"))
