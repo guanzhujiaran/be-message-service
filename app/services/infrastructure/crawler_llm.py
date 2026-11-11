@@ -132,7 +132,9 @@ class CrawlerLlmClient:
             raise CrawlerLlmError(f"crawler 不可达：{reason}") from e
 
         if resp.status_code >= 400:
-            detail = (resp.text or "").strip()[:200]
+            # 上游的 4xx JSON 常带「为什么被拒」的关键 message，200 字符会切掉它；
+            # 与 crawler 侧 probe/models 的 _ERROR_MAX_CHARS 保持同一量级
+            detail = (resp.text or "").strip()[:1000]
             logger.warning(
                 f"crawler LLM 接口返回错误（{method} {path} "
                 f"status={resp.status_code}）：{detail}"
