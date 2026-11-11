@@ -4,7 +4,7 @@
   A. 参与范围：只有失败主题（[f]）聚合，业务通知保持 1:1 直推
   B. 首条立即推送（零延迟），冷却期内的同类推送进缓冲
   C. 冷却到期 / 关闭时把缓冲发成一条摘要（按内容去重计数）
-  D. 隔离：不同接收人（密钥）、不同标题各占一个桶，绝不互相合并
+  D. 分桶：同一个 push key（接收人）只设一个桶、标题不参与分桶；不同密钥绝不互相合并
   E. 摘要长度硬上限；空桶回收；发送失败不建桶
 
 运行：
@@ -216,16 +216,38 @@ async def test_same_push_config_alerts_are_aggregated(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_different_titles_have_separate_buckets():
-    """同一接收人的不同类告警各占一个桶，互不挤占冷却窗口。"""
+async def test_same_push_key_has_only_one_bucket(monkeypatch):
+    """同一个 push key 只设一个桶：不同标题的告警也并进同一条摘要。"""
     await aggregator.deliver(_alert("消费失败-1", title="[f][svc] MQ消费失败"))
     await aggregator.deliver(_alert("服务异常-1", title="[f][svc] 服务异常"))
     await aggregator.deliver(_alert("消费失败-2", title="[f][svc] MQ消费失败"))
 
-    assert [content for _, content in _FakePushService.sent] == [
-        "消费失败-1",
-        "服务异常-1",
-    ]
+    # 只直推了首条，其余两类都进同一个桶
+    assert [content for _, content in _FakePushService.sent] == ["消费失败-1"]
+    assert len(aggregator._buckets) == 1
+
+    _force_due(monkeypatch)
+    assert await aggregator.flush_due_buckets() == 1
+
+    title, digest = _FakePushService.sent[-1]
+    assert title == "[f][svc] 合并告警"
+    assert "冷却期内合并 2 条" in digest
+    # 正文按标题分组，剥掉公共前缀只留差异部分，信息量不丢
+    assert "MQ消费失败：消费失败-2" in digest
+    assert "服务异常：服务异常-1" in digest
+
+
+@pytest.mark.asyncio
+async def test_single_title_bucket_keeps_original_title(monkeypatch):
+    """桶内只有一类标题时，摘要标题沿用原文，不加「合并告警」。"""
+    await aggregator.deliver(_alert("第一条"))
+    await aggregator.deliver(_alert("第二条"))
+
+    _force_due(monkeypatch)
+    await aggregator.flush_due_buckets()
+
+    assert _FakePushService.sent[-1][0] == "[f][be-bilibili-crawler@host] MQ消费失败"
+    assert "冷却期内合并 1 条" in _FakePushService.sent[-1][1]
 
 
 # ============================================================================

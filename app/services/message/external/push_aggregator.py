@@ -1,4 +1,4 @@
-"""推送「首条直推 + 冷却期内聚合」治理策略（按 接收人 × 标题 分桶）。
+"""推送「首条直推 + 冷却期内聚合」治理策略（按 接收人 / push key 分桶）。
 
 为什么需要
 ==========
@@ -10,7 +10,7 @@
 策略（leading-edge + trailing batch）
 =====================================
 
-按 ``(接收人, 标题)`` 分桶：
+按 ``接收人（push key）`` 分桶：
 
 1. 桶空闲（距上次推送 >= 冷却期）→ **立即推送**（首条零延迟）；
 2. 桶处于冷却期 → 不推送，进缓冲；
@@ -20,14 +20,16 @@
 分桶 key
 ========
 
-``(recipient_key(merge_config(message)), message.title)``
+``recipient_key(merge_config(message))`` —— **同一个 push key 只设一个桶**。
 
 - ``recipient_key`` 用 ``merge_config(message)`` **合并后实际生效**的配置算摘要：
   这样「消息里带 config」与「回落全局配置」只要最终凭据一致，就落同一个桶；
   用摘要而非明文，避免密钥出现在内存 key / 日志里；
 - **不同密钥 = 不同接收人**，因此不同密钥的推送永远不会被合并进同一条摘要；
-- 用**标题**做二级分桶，使同一接收人的不同类别告警（如「MQ消费失败」与「服务异常」）
-  各占一个冷却窗口、互不挤占，摘要标题也能如实反映内容类别。
+- **标题不参与分桶**：一次故障往往同时产生「MQ消费失败 / 服务异常 / 抽奖判断失败」
+  等多类标题；若按标题二级分桶，同一接收人一小时内会收到多条摘要、各自占一个冷却窗口。
+  现在它们共用一个桶，摘要标题取桶内标题的公共前缀（如
+  ``[f][crawler@host] 合并告警``），正文按标题分组列出明细，信息量不丢。
 
 参与范围（内部约定，不涉及 MQ 契约）
 ====================================
@@ -75,24 +77,32 @@ _MIN_SWEEP_SECONDS = 0.5
 
 
 @dataclass(slots=True)
+class _BufferedAlert:
+    """冷却期内缓冲的一条告警：保留标题，摘要里才能按标题分组列出明细。"""
+
+    title: str
+    content: str
+
+
+@dataclass(slots=True)
 class _Bucket:
-    """一个 ``(接收人, 标题)`` 桶的状态。"""
+    """一个「接收人（push key）」桶的状态。"""
 
     #: 上次推送完成的时间（monotonic），用于判断冷却
     last_push_at: float
-    #: 桶对应的推送标题（同桶同标题，摘要直接沿用）
-    title: str
+    #: 本窗口出现过的告警标题（去重保序）：摘要标题由公共前缀生成，flush 后清空
+    titles: list[str]
     push_type: str | None
     #: 合并后的生效配置（与桶 key 的 recipient_key 对应）
     config: PushChannelConfig
     #: 本轮聚合窗口的起点（**墙上时间** ``time.time()``，仅用于摘要里展示时间范围）
     started_at: float
-    #: 冷却期内缓冲的推送正文
-    buffer: list[str] = field(default_factory=list)
+    #: 冷却期内缓冲的告警
+    buffer: list[_BufferedAlert] = field(default_factory=list)
 
 
-#: 桶表：``(recipient_key, title) -> _Bucket``（进程内存，见模块 docstring 的已知限制）
-_buckets: dict[tuple[str, str], _Bucket] = {}
+#: 桶表：``recipient_key -> _Bucket``（一个 push key 一个桶；进程内存，见模块 docstring）
+_buckets: dict[str, _Bucket] = {}
 _sweep_task: asyncio.Task | None = None
 
 
@@ -123,9 +133,44 @@ def recipient_key(config: PushChannelConfig) -> str:
     return md5(config.model_dump_json().encode("utf-8")).hexdigest()
 
 
-def bucket_key(config: PushChannelConfig, title: str) -> tuple[str, str]:
-    """桶 key：``(接收人标识, 推送标题)``。"""
-    return recipient_key(config), title
+def bucket_key(config: PushChannelConfig) -> str:
+    """桶 key：**同一个 push key（接收人）只设一个桶**。
+
+    标题**不参与**分桶：一次故障往往同时产生「MQ消费失败 / 服务异常 / 抽奖判断失败」
+    等多类标题，按标题二级分桶会让同一接收人在一个冷却窗口里收到多条摘要、
+    互相挤占冷却起点。这里统一并进同一个桶，标题差异由摘要正文按组呈现。
+    """
+    return recipient_key(config)
+
+
+def _common_prefix(values: Sequence[str]) -> str:
+    """多个标题的字符级公共前缀（用于生成摘要标题、剥掉正文里的重复前缀）。"""
+    if not values:
+        return ""
+    prefix = values[0]
+    for value in values[1:]:
+        limit = min(len(prefix), len(value))
+        index = 0
+        while index < limit and prefix[index] == value[index]:
+            index += 1
+        prefix = prefix[:index]
+        if not prefix:
+            break
+    return prefix
+
+
+def _digest_title(titles: Sequence[str], prefix: str) -> str:
+    """摘要标题：单标题沿用原文；多标题用「公共前缀 + 合并告警」，避免标题撒谎。"""
+    if len(titles) <= 1:
+        return titles[0] if titles else ""
+    head = prefix.strip()
+    return f"{head} 合并告警" if head else "合并告警"
+
+
+def _title_label(title: str, prefix: str) -> str:
+    """正文里展示的短标题：剥掉公共前缀，只留差异部分（如 ``MQ消费失败``）。"""
+    label = title[len(prefix) :].strip() if prefix and title.startswith(prefix) else title
+    return label or title
 
 
 def should_aggregate(title: str) -> bool:
@@ -258,7 +303,7 @@ async def deliver(message: PushMessagePayload) -> bool:
             message.content,
         )
 
-    key = bucket_key(config, message.title)
+    key = bucket_key(config)
     bucket = _buckets.get(key)
 
     if bucket is None:
@@ -271,7 +316,7 @@ async def deliver(message: PushMessagePayload) -> bool:
         if sent:
             _buckets[key] = _Bucket(
                 last_push_at=now,
-                title=message.title,
+                titles=[message.title],
                 push_type=message.push_type,
                 config=config,
                 started_at=time.time(),
@@ -279,18 +324,33 @@ async def deliver(message: PushMessagePayload) -> bool:
         return sent
 
     # 桶处于冷却期（或扫描器还没来得及 flush）→ 进缓冲，由扫描/本次到期判定统一发摘要
-    bucket.buffer.append(message.content)
+    bucket.buffer.append(_BufferedAlert(title=message.title, content=message.content))
+    if message.title not in bucket.titles:
+        bucket.titles.append(message.title)
     if now - bucket.last_push_at >= _cooldown_seconds():
         await _flush_bucket(key, bucket, now=now)
     return False
 
 
-async def _flush_bucket(key: tuple[str, str], bucket: _Bucket, *, now: float) -> bool:
+async def _flush_bucket(key: str, bucket: _Bucket, *, now: float) -> bool:
     """把某个桶的缓冲发成一条摘要，并重置冷却。"""
-    contents = list(bucket.buffer)
+    buffered = list(bucket.buffer)
     bucket.buffer.clear()
-    if not contents:
+    if not buffered:
         return False
+
+    titles = list(bucket.titles) or [buffered[0].title]
+    # 在 await 之前就开启新窗口：发送期间新到的告警会写进新的 titles / buffer，
+    # 不会被这里的清理动作抹掉。
+    bucket.titles = []
+    prefix = _common_prefix(titles)
+    if len(titles) > 1:
+        # 多类告警共用一个桶：正文带各自的短标题，避免摘要看起来只有一类
+        contents = [
+            f"{_title_label(item.title, prefix)}：{item.content}" for item in buffered
+        ]
+    else:
+        contents = [item.content for item in buffered]
 
     digest = build_digest_content(
         contents,
@@ -298,17 +358,18 @@ async def _flush_bucket(key: tuple[str, str], bucket: _Bucket, *, now: float) ->
         ended_at=time.time(),
         max_len=_max_content_len(),
     )
+    title = _digest_title(titles, prefix)
     sent = await _send(
         PushMessageService(bucket.config, push_type=bucket.push_type),
-        bucket.title,
+        title,
         digest,
     )
     bucket.last_push_at = now
     bucket.started_at = time.time()
     if sent:
         logger.info(
-            f"推送聚合摘要已发送：title={key[1]!r} 合并 {len(contents)} 条 "
-            f"recipient={key[0][:8]}…"
+            f"推送聚合摘要已发送：title={title!r} 合并 {len(buffered)} 条"
+            f"（{len(titles)} 类）recipient={key[:8]}…"
         )
     return sent
 

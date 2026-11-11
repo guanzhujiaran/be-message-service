@@ -511,9 +511,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
 
     # ===== 推送聚合（首条直推 + 冷却期内合并，见 push_aggregator.py）=====
     # 只作用于失败主题（标题以 [f] 开头）的推送；业务通知（[i]/[s]/[w]）与
-    # per-user 推送仍是 1:1 直推。注意 PushMessagePayload **没有 group 字段**：
-    # 分桶维度是「接收人（merge_config 合并后生效的 push config 摘要）× 标题」，
-    # 所以同一个 push config 的同类失败会共桶，不同密钥 / 不同告警类别不会互相合并。
+    # per-user 推送仍是 1:1 直推。PushMessagePayload **没有 group 字段**：
+    # 分桶维度只有「接收人（merge_config 合并后生效的 push config 摘要）」——
+    # **同一个 push key 只设一个桶**，标题不参与分桶；不同密钥不会被合并。
     # 冷却期（秒）：同一桶在这个窗口内再次推送会被合并成一条摘要
     push_aggregate_cooldown_seconds: float = 60.0
     # 聚合摘要正文的字符数硬上限（超出按出现次数降序截断并提示省略条数）
