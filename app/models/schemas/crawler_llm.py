@@ -6,9 +6,11 @@
 数值一律以**字符串**传输（项目规范：前端 JS 无法安全表示大整数，且 crawler 侧
 `requests_per_second` 是浮点，统一用 str 避免精度/类型歧义）。
 
-`token` 契约（关键）：
+`token` 契约（关键，密钥属于「来源 `base_url`」，同一地址允许多把密钥）：
 - 读取时由 crawler 脱敏返回（`前4****后4`，长度 ≤8 时为 `****`）；
-- 保存时若原样回传脱敏值或空串，服务端**保留原密钥**，不会把脱敏串写进配置。
+- 保存时**明文** = 用这把；**脱敏值** = 「沿用**这一把**密钥」的引用（按同地址 + 同脱敏值
+  回填明文，因此同址多把密钥也分得清）；**空串** = 仅在「同址唯一密钥」时作为沿用哨兵；
+- 无论如何，脱敏串都不会被写进运行配置（crawler 侧回填后才落盘）。
 """
 
 from sqlmodel import Field, SQLModel
@@ -76,13 +78,17 @@ class CrawlerLlmConfigResp(SQLModel):
 class CrawlerLlmSaveItem(SQLModel):
     """单条 LLM 实例配置（保存态）。
 
-    `token` 传空串或脱敏值（含 `****`）表示**沿用该索引上的原密钥**，
-    仅在新增实例或换密钥时传明文。
+    密钥归属「来源」（`base_url`），同一地址可配多把密钥（管理页每张卡片一把）。
+    `token` 的三种取值见模块头：明文 / 脱敏引用（沿用这一把）/ 空串（同址唯一密钥时沿用）。
+    只有**新增来源**（该地址在现有配置里不存在）时才必须传明文。
     """
 
     base_url: str = Field(description="OpenAI 兼容接口地址")
     model_name: str = Field(description="模型名")
-    token: str = Field(default="", description="明文密钥；空串/脱敏值 = 不修改原密钥")
+    token: str = Field(
+        default="",
+        description="明文密钥 / 脱敏值(=沿用这一把) / 空串(=同址唯一密钥时沿用)",
+    )
     requests_per_second: str = Field(description="限流：每秒允许请求数（> 0）")
 
 

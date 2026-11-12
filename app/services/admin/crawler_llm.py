@@ -4,9 +4,11 @@
 
 1. **读**：代理 crawler `GET /llm/config` + `GET /llm/stats`，把内部 dict 归一成本服务
    的响应模型（数值转字符串，时间戳转秒级整数字符串）；
-2. **写**：整体覆盖 `PUT /llm/config`，写入前做参数校验；`token` 传脱敏值 / 空串时
-   统一改成空串交 crawler 按 index 回填原密钥（crawler 读取态返回的是**脱敏值**，
-   绝不能把它当明文写回去，否则所有实例立刻 401）；
+2. **写**：整体覆盖 `PUT /llm/config`，写入前做参数校验；`token` 传**明文**时原样下传，
+   传**脱敏值**时作为「沿用这一把密钥」的引用下传（crawler 按「同地址 + 同脱敏值」
+   回填明文，同址多把密钥也不会串），传空串则交给 crawler 按「同源唯一密钥」回填。
+   crawler 读取态返回的是**脱敏值**，绝不能当明文写进运行配置（会让所有实例 401）；
+   回填由 crawler 完成，本层只传引用、不接触明文；
 3. **回退**：`DELETE /llm/config/override` 让 crawler 删除本地持久化文件
    （`runtime/llm_apis.json`）并热切回 `.env`，用于「撤销所有人工保存」；
 4. **探测**：代理 `POST /llm/config/test`，让 crawler 用裸 `ChatOpenAI` 真实问一句
@@ -41,6 +43,11 @@ __all__ = ["CrawlerLlmService", "CrawlerLlmValueError"]
 
 #: 脱敏标记：crawler 侧 `_mask_token` 生成的串一定含它
 _MASK_FLAG = "****"
+
+
+def _normalize_base_url(base_url: str) -> str:
+    """与 crawler `pool.normalize_base_url` 同口径：去空白 + 去尾斜杠。"""
+    return base_url.strip().rstrip("/")
 
 
 class CrawlerLlmValueError(ValueError):
@@ -251,6 +258,61 @@ class CrawlerLlmService:
         return await CrawlerLlmService.get_config()
 
     @staticmethod
+    def _token_for_save(
+        *,
+        index: int,
+        base_url: str,
+        token: str,
+        masked_by_source: dict[str, set[str]],
+    ) -> str:
+        """把提交的 `token` 归一成「明文」或「沿用标记」，不能确定的直接 400。
+
+        **口径**：密钥属于「源」（`base_url`），不是属于某一行；一个地址下允许配
+        多把不同密钥（管理页把它们拆成多张卡片）。因此：
+
+        - 明文 → 原样下传（用户就是要改成这把）；
+        - 脱敏值 → 它是「沿用**这一把**」的引用，必须能在该地址下找到，找到了原样下传，
+          由 crawler 按「同地址 + 同脱敏值」精确回填（同址多把密钥也不会串）；
+        - 空串 → 只有该地址**恰好一把**密钥时才允许（`""` 哨兵让 crawler 按同源唯一密钥回填），
+          多把就会 400 要求填明文。
+
+        这里**不按 index 判断新旧**：管理页的一张卡片勾了 N 个模型会展开成 N 条，
+        行序整体后移，用「下标超出旧长度」判「新实例」必然误报「必须填写密钥」
+        （2026-11-12 反馈的根因）。
+
+        Args:
+            index: 本条在提交列表里的下标（仅用于拼错误文案，1 基展示）。
+            base_url: 本条实例的接口地址。
+            token: 前端提交的 token（明文 / 脱敏值 / 空串）。
+            masked_by_source: 归一化地址 → 该地址已有密钥的脱敏值集合。
+
+        Raises:
+            CrawlerLlmValueError: 新增来源没填密钥；脱敏引用已失效；同址多把密钥却留空。
+        """
+        source = _normalize_base_url(base_url)
+        known = masked_by_source.get(source) or set()
+        if not token:
+            if not known:
+                raise CrawlerLlmValueError(
+                    f"第 {index + 1} 个实例是新增的来源（{base_url}），必须填写密钥"
+                )
+            if len({mask for mask in known if mask}) > 1:
+                raise CrawlerLlmValueError(
+                    f"第 {index + 1} 个实例的地址（{base_url}）配了多把不同密钥，"
+                    "无法判断该沿用哪一把，请填写明文密钥"
+                )
+            # 空串哨兵：crawler 按「同地址 + 同模型 → 同地址唯一密钥」回填明文
+            return ""
+        if _MASK_FLAG not in token:
+            return token
+        if token not in known:
+            raise CrawlerLlmValueError(
+                f"第 {index + 1} 个实例回传的密钥（{token}）在该地址下已不存在"
+                "（可能刚被修改），请重新填写明文密钥"
+            )
+        return token
+
+    @staticmethod
     async def save_config(
         req: CrawlerLlmSaveReq, operator_mid: int
     ) -> CrawlerLlmConfigResp:
@@ -261,15 +323,22 @@ class CrawlerLlmService:
             operator_mid: 操作管理员 mid（仅用于审计日志）。
 
         Raises:
-            CrawlerLlmValueError: 入参非法（字段缺失 / 值为空 / 新增实例未填密钥）。
+            CrawlerLlmValueError: 入参非法（字段缺失 / 值为空 / 新增来源未填密钥）。
         """
         if not req.items:
             raise CrawlerLlmValueError("至少需要保留一个 LLM 实例")
 
-        # 读一次旧配置：只用来确认「当前有几条配置」（index 口径）。
+        # 读一次旧配置：只用来判断「这条实例的地址是不是已有来源」，不取明文。
         # **绝不能**用 existing[i].token 回填 —— crawler 的 GET /llm/config 返回的
-        # 是脱敏串，把它当明文写回去会让所有实例 401（本次故障的根因）。
+        # 是脱敏串，把它当明文写回去会让所有实例 401（历史故障的根因）。
         existing = await CrawlerLlmService._client().get_configs()
+        # 密钥属于「源」（base_url）：同一地址下加模型沿用同一把钥匙，
+        # 所以按地址归集已有密钥的**脱敏值**，用来判断「能不能沿用」和「是否多把密钥」。
+        masked_by_source: dict[str, set[str]] = {}
+        for cfg in existing:
+            masked_by_source.setdefault(_normalize_base_url(cfg.base_url), set()).add(
+                (cfg.token or "").strip()
+            )
 
         configs: list[CrawlerLlmConfig] = []
         for i, item in enumerate(req.items):
@@ -291,13 +360,12 @@ class CrawlerLlmService:
             if rps <= 0:
                 raise CrawlerLlmValueError(f"第 {i + 1} 个实例的限流必须大于 0")
 
-            token = item.token.strip()
-            if not token or _MASK_FLAG in token:
-                if i >= len(existing):
-                    raise CrawlerLlmValueError(f"第 {i + 1} 个实例是新实例，必须填写密钥")
-                # 空串是「沿用原密钥」的哨兵：真正持有明文的是 crawler，
-                # 由它的 set_llm_apis 按 index 从完整配置列表回填，本层不接触密钥。
-                token = ""
+            token = CrawlerLlmService._token_for_save(
+                index=i,
+                base_url=base_url,
+                token=item.token.strip(),
+                masked_by_source=masked_by_source,
+            )
 
             configs.append(
                 CrawlerLlmConfig(

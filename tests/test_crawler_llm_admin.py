@@ -2,7 +2,7 @@
 
 覆盖点：
 1. **脱敏 token 回填**：保存时回传脱敏值或空串必须沿用原密钥，不能把 `****` 写进配置；
-2. **新增实例必须填密钥**：新行留空直接 400，不发请求；
+2. **密钥按来源（base_url）沿用**：同一地址下加模型不用重填密钥，新增来源才 400；
 3. **入参校验**：base_url 协议 / 模型名 / 限流必须为正数；
 4. **统计归一化**：数值与时间戳一律转字符串，秒级时间戳取整，成功率/平均耗时格式化；
 5. **弱依赖**：统计接口失败不影响配置读取；
@@ -117,11 +117,14 @@ def _save_item(
 
 
 class TestMaskedTokenIsPreserved:
-    """crawler 的 GET /llm/config 返回的是**脱敏** token，本层绝不能把它当明文写回。
+    """crawler 的 GET /llm/config 返回的是**脱敏** token，本层不能把它当明文。
 
     真实故障：旧实现用 ``existing[i].token``（脱敏串）回填后 PUT 回 crawler，
     被落盘成「密钥」→ 8 个实例 401 → REMOVED → 内存只剩 1 条。
-    现在统一传空串作为「沿用原密钥」哨兵，由 crawler 按 index 回填明文。
+
+    现在的口径：脱敏值是**「沿用这一把密钥」的引用**，本层校验它在对应地址下仍存在后
+    原样下传，由 crawler 的 `_resolve_tokens` 换回明文（`save_persisted` 还有一道闸门，
+    拒绝把脱敏串落盘）。空串则只在「同址唯一密钥」时作为哨兵下传。
     """
 
     @staticmethod
@@ -136,7 +139,8 @@ class TestMaskedTokenIsPreserved:
         ]
 
     @pytest.mark.asyncio
-    async def test_masked_token_never_written_back(self, use_client: Any) -> None:
+    async def test_masked_token_forwarded_as_reference(self, use_client: Any) -> None:
+        """脱敏值原样下传（引用），本层不接触明文，也不把脱敏串改成别的密钥。"""
         client = use_client(_FakeClient(configs=self._masked_existing()))
         req = CrawlerLlmSaveReq(
             items=[_save_item(token="sk-r****1234")]  # 前端原样回传脱敏值
@@ -145,8 +149,19 @@ class TestMaskedTokenIsPreserved:
         await CrawlerLlmService.save_config(req, operator_mid=1)
 
         assert client.saved is not None
-        assert client.saved[0].token == ""
-        assert all("****" not in cfg.token for cfg in client.saved)
+        assert client.saved[0].token == "sk-r****1234"
+
+    @pytest.mark.asyncio
+    async def test_stale_masked_token_rejected(self, use_client: Any) -> None:
+        """回传的脱敏值在该地址下已不存在（密钥刚被改过）→ 400，不发请求。"""
+        client = use_client(_FakeClient(configs=self._masked_existing()))
+
+        with pytest.raises(CrawlerLlmValueError, match="已不存在"):
+            await CrawlerLlmService.save_config(
+                CrawlerLlmSaveReq(items=[_save_item(token="sk-z****9999")]),
+                operator_mid=1,
+            )
+        assert client.saved is None
 
     @pytest.mark.asyncio
     async def test_empty_token_is_preserve_sentinel(self, use_client: Any) -> None:
@@ -180,8 +195,8 @@ class TestMaskedTokenIsPreserved:
         )
 
         assert client.saved is not None
-        assert [cfg.token for cfg in client.saved] == ["sk-new-plain", ""]
-        assert all("****" not in cfg.token for cfg in client.saved)
+        # 明文照传；脱敏值作为引用照传（由 crawler 换回明文，绝不落盘脱敏串）
+        assert [cfg.token for cfg in client.saved] == ["sk-new-plain", "sk-r****1234"]
 
     @pytest.mark.asyncio
     async def test_plain_token_overrides(self, use_client: Any) -> None:
@@ -214,6 +229,149 @@ class TestMaskedTokenIsPreserved:
                 CrawlerLlmSaveReq(items=[_save_item(token="")]), operator_mid=1
             )
         # 校验失败不能落库
+        assert client.saved is None
+
+
+class TestTokenReuseBySource:
+    """密钥属于源（`base_url`），不属于某一行（2026-11-12 反馈的 400 报错）。
+
+    真实故障：只给已有卡片加一个模型，展开后送来的条数比旧配置多，
+    旧逻辑按「下标超出旧长度」判「新实例必须填密钥」→ 明明同源同钥匙却 400。
+    """
+
+    @staticmethod
+    def _one_model() -> list[CrawlerLlmConfig]:
+        return [
+            CrawlerLlmConfig(
+                base_url="https://api.example.com/v1",
+                model_name="m1",
+                token="sk-r****1234",
+                requests_per_second=0.5,
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_new_model_on_existing_source_allowed(self, use_client: Any) -> None:
+        """同址加模型：条数变多、下标越界，也要能沿用原密钥。"""
+        client = use_client(_FakeClient(configs=self._one_model()))
+
+        await CrawlerLlmService.save_config(
+            CrawlerLlmSaveReq(
+                items=[
+                    _save_item(model_name="m1", token=""),
+                    _save_item(model_name="m2", token=""),
+                ]
+            ),
+            operator_mid=1,
+        )
+
+        assert client.saved is not None
+        # 两条都传空串哨兵，由 crawler 按来源回填明文
+        assert [cfg.token for cfg in client.saved] == ["", ""]
+
+    @pytest.mark.asyncio
+    async def test_trailing_slash_is_same_source(self, use_client: Any) -> None:
+        client = use_client(_FakeClient(configs=self._one_model()))
+
+        await CrawlerLlmService.save_config(
+            CrawlerLlmSaveReq(
+                items=[
+                    _save_item(base_url="https://api.example.com/v1/", token=""),
+                    _save_item(model_name="m2", token=""),
+                ]
+            ),
+            operator_mid=1,
+        )
+
+        assert client.saved is not None
+        assert [cfg.token for cfg in client.saved] == ["", ""]
+
+    @pytest.mark.asyncio
+    async def test_new_source_rejected(self, use_client: Any) -> None:
+        client = use_client(_FakeClient(configs=self._one_model()))
+
+        with pytest.raises(CrawlerLlmValueError, match="新增的来源"):
+            await CrawlerLlmService.save_config(
+                CrawlerLlmSaveReq(
+                    items=[
+                        _save_item(token=""),
+                        _save_item(
+                            base_url="https://other.example.com/v1",
+                            model_name="x",
+                            token="",
+                        ),
+                    ]
+                ),
+                operator_mid=1,
+            )
+        assert client.saved is None
+
+    @pytest.mark.asyncio
+    async def test_multi_key_source_resolved_by_masked_reference(
+        self, use_client: Any
+    ) -> None:
+        """同一地址配了两把密钥：每张卡片回传自己的脱敏值，就各自对上自己的明文。"""
+        client = use_client(
+            _FakeClient(
+                configs=[
+                    CrawlerLlmConfig(
+                        base_url="https://api.example.com/v1",
+                        model_name="m1",
+                        token="sk-r****1234",
+                        requests_per_second=0.5,
+                    ),
+                    CrawlerLlmConfig(
+                        base_url="https://api.example.com/v1",
+                        model_name="m2",
+                        token="sk-q****5678",
+                        requests_per_second=0.5,
+                    ),
+                ]
+            )
+        )
+
+        await CrawlerLlmService.save_config(
+            CrawlerLlmSaveReq(
+                items=[
+                    _save_item(model_name="m1", token="sk-r****1234"),
+                    _save_item(model_name="m3", token="sk-q****5678"),
+                ]
+            ),
+            operator_mid=1,
+        )
+
+        assert client.saved is not None
+        assert [cfg.token for cfg in client.saved] == ["sk-r****1234", "sk-q****5678"]
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_source_requires_plain_token(
+        self, use_client: Any
+    ) -> None:
+        """同址配了两把不同密钥：不能替用户猜，要求填明文。"""
+        client = use_client(
+            _FakeClient(
+                configs=[
+                    CrawlerLlmConfig(
+                        base_url="https://api.example.com/v1",
+                        model_name="m1",
+                        token="sk-r****1234",
+                        requests_per_second=0.5,
+                    ),
+                    CrawlerLlmConfig(
+                        base_url="https://api.example.com/v1",
+                        model_name="m2",
+                        token="sk-q****5678",
+                        requests_per_second=0.5,
+                    ),
+                ]
+            )
+        )
+
+        with pytest.raises(CrawlerLlmValueError, match="多把不同密钥"):
+            await CrawlerLlmService.save_config(
+                CrawlerLlmSaveReq(items=[_save_item(model_name="m3", token="")]),
+                operator_mid=1,
+            )
         assert client.saved is None
 
 
