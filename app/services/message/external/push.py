@@ -30,6 +30,11 @@ from loguru import logger
 
 from app.core.config import settings
 from app.models import PushChannelConfig
+from bili_common.core.log_mask import (
+    full_response_log_enabled,
+    mask_secret,
+    mask_text,
+)
 
 _client: httpx.AsyncClient | None = None
 
@@ -623,8 +628,10 @@ class PushMessageService:
         if resp.status_code == 200 and resp.text == "success":
             logger.info("PushMe 推送成功！")
         else:
+            # push_key 属于密钥：body 必须脱敏后再落日志，否则渠道降级时会把 key 打出去
             raise RuntimeError(
-                f"PushMe 推送失败：url={url} body={data} resp={resp.status_code} {resp.text}"
+                f"PushMe 推送失败：url={url} body={mask_secret(data)} "
+                f"resp={resp.status_code} {mask_text(resp.text[:200])}"
             )
 
     async def chronocat(self, title: str, content: str) -> None:
@@ -877,13 +884,29 @@ class PushMessageService:
                 return name
             except Exception as e:
                 last_exc = e
-                logger.error(f"渠道 {name} 推送失败，尝试下一种：{e}")
+                # 渠道异常信息里可能带 body（push_key / token 等）：统一脱敏后再落盘，
+                # 并且只记一行字段，不在这里输出堆栈（堆栈按开关走 debug）。
+                logger.error(
+                    f"event=push_failed channel={name} msg_id=- "
+                    f"title={mask_text(title)[:80]} "
+                    f"err={type(e).__name__}: {mask_text(str(e))[:400]}"
+                )
+                logger.debug(
+                    "push_failed_detail channel={} traceback={}",
+                    name,
+                    traceback.format_exc(),
+                )
 
+        # critical 只在「全都失败」时打一行；完整堆栈受 LOG_FULL_RESPONSE 控制，
+        # 避免告警风暴时把整段 body / 堆栈重复写进日志。
         logger.critical(
-            f"【彻底推送失败】所有渠道均失败 title={title}\n"
-            f"最后错误：{last_exc}\n{traceback.format_exc()}"
+            f"【彻底推送失败】所有渠道均失败 title={mask_text(title)[:80]} "
+            f"last_err={type(last_exc).__name__ if last_exc else 'None'}: "
+            f"{mask_text(str(last_exc))[:400]}"
         )
-        raise RuntimeError(f"所有推送渠道均推送失败: {last_exc}")
+        if full_response_log_enabled():
+            logger.debug("彻底推送失败堆栈：\n{}", traceback.format_exc())
+        raise RuntimeError(f"所有推送渠道均推送失败: {mask_text(str(last_exc))}")
 
 
 async def one() -> str:
