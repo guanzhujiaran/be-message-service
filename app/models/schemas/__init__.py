@@ -49,6 +49,13 @@ from app.models.schemas.crawler_llm import (
     CrawlerLlmSaveReq,
     CrawlerLlmStatsItem,
 )
+from app.models.schemas.crawler_service import (
+    CrawlerScheduledService,
+    CrawlerServiceAction,
+    CrawlerServiceOperateReq,
+    CrawlerServiceOperateResp,
+    CrawlerServiceStatusResp,
+)
 from app.models.schemas.dm import (
     DmAckReq,
     DmAuditItem,

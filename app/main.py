@@ -37,6 +37,7 @@ from app.api.comment import router as comment_router
 from app.api.comment_admin import router as comment_admin_router
 from app.api.crawler_llm_admin import router as crawler_llm_admin_router
 from app.api.crawler_push_admin import router as crawler_push_admin_router
+from app.api.crawler_service_admin import router as crawler_service_admin_router
 from app.api.dm import router as dm_router
 from app.api.dm_admin import router as dm_admin_router
 from app.api.event import router as event_router
@@ -371,6 +372,7 @@ app.include_router(avatar_audit_router)
 app.include_router(folder_cover_audit_router)
 app.include_router(crawler_llm_admin_router)
 app.include_router(crawler_push_admin_router)
+app.include_router(crawler_service_admin_router)
 
 if __name__ == "__main__":
     import uvicorn
