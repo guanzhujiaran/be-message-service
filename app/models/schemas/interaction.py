@@ -115,7 +115,8 @@ class HotLotteryItem(SQLModel):
 
     bizId: str = Field(description="抽奖卡片 id（lottery_id，字符串承载）")
     recentViewCount: int = Field(
-        default=0, description="统计窗口内的浏览次数（浏览记录 sum(viewCount)）"
+        default=0,
+        description="统计窗口内的去重浏览人数（TInteractionViewLog 每用户每资源一行，COUNT）",
     )
     viewCount: int = Field(default=0, description="累计浏览次数（TInteractionStat）")
     likeCount: int = Field(default=0, description="累计点赞数")

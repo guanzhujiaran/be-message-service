@@ -1,8 +1,8 @@
 """热门抽奖榜单（基于 be-message 浏览记录，2.64.0；2.67.0 一次返回卡片数据）。
 
 口径：统计窗口（默认近 7 天）内 ``TInteractionViewLog``（bizType=lottery）
-按资源聚合 ``sum(viewCount)`` 降序取 topN，再附 ``TInteractionStat`` 的累计
-浏览 / 点赞 / 收藏与评论系统实时评论数。
+按资源统计**去重浏览人数**（2.42.0 起每用户每资源一行，``COUNT(*)`` 即人数）
+降序取 topN，再附 ``TInteractionStat`` 的累计浏览 / 点赞 / 收藏与评论系统实时评论数。
 
 抽奖本体在 be-bilibili-crawler，本服务**不落库抽奖内容**，但装配榜单时经
 crawler 只读查询服务（``GetLotteryDetailList``）一次批量回捞卡片（raw + extra_info），使
@@ -16,7 +16,7 @@ from bili_common.models import InteractionBizTypeEnum
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.db import CommentSubject, TInteractionStat, TInteractionViewLog
+from app.models.db import CommentSubject, TInteractionViewLog
 from app.models.schemas.interaction import HotLotteryItem
 from app.services.infrastructure.crawler_query import get_crawler_query_client
 from app.services.moment.interaction import (
@@ -33,7 +33,7 @@ class HotLotteryService:
     async def list_hot_lotteries(
         session: AsyncSession, *, window_days: int, limit: int
     ) -> list[HotLotteryItem]:
-        """按窗口内浏览热度返回热门抽奖 id 列表（降序）。
+        """按窗口内去重浏览人数返回热门抽奖 id 列表（降序）。
 
         Args:
             session: 异步会话。
@@ -46,29 +46,33 @@ class HotLotteryService:
         # 时间边界按服务端本地时区计算，与库内 TIMESTAMP 直接比较（与汇总类接口一致）
         since = datetime.now() - timedelta(days=window_days)
 
-        # 1) 窗口内浏览记录聚合：每资源 sum(viewCount) 降序取 topN
+        # 1) 窗口内浏览记录聚合：每用户每资源一行，COUNT 即窗口内去重浏览人数
+        #    （lastViewAt 是最后访问时间：>= since 等价于窗口内至少访问过一次）
         recent_rows = (
             await session.exec(
                 select(
                     col(TInteractionViewLog.bizId),
-                    func.sum(col(TInteractionViewLog.viewCount)),
+                    func.count(),
                 )
                 .where(
                     col(TInteractionViewLog.bizType) == InteractionBizTypeEnum.LOTTERY,
                     col(TInteractionViewLog.lastViewAt) >= since,
                 )
                 .group_by(col(TInteractionViewLog.bizId))
-                .order_by(func.sum(col(TInteractionViewLog.viewCount)).desc())
+                .order_by(
+                    func.count().desc(),
+                    col(TInteractionViewLog.bizId).asc(),
+                )
                 .limit(limit)
             )
         ).all()
         if not recent_rows:
             return []
 
-        recent_view: dict[int, int] = {
+        recent_viewers: dict[int, int] = {
             int(biz_id): int(count) for biz_id, count in recent_rows
         }
-        biz_ids = list(recent_view)
+        biz_ids = list(recent_viewers)
 
         # 2) 累计计数（浏览 / 点赞 / 收藏，TInteractionStat 统一计数表）
         counts = await InteractionStatService.batch_get_counts(
@@ -99,7 +103,7 @@ class HotLotteryService:
             items.append(
                 HotLotteryItem(
                     bizId=str(biz_id),
-                    recentViewCount=recent_view[biz_id],
+                    recentViewCount=recent_viewers[biz_id],
                     viewCount=counts.get(biz_id, {}).get("viewCount", 0),
                     likeCount=counts.get(biz_id, {}).get("likeCount", 0),
                     favoriteCount=counts.get(biz_id, {}).get("favoriteCount", 0),
