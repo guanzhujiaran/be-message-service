@@ -40,6 +40,7 @@
 """
 
 import datetime
+from typing import Literal
 
 from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Header, Query, Request
@@ -456,7 +457,7 @@ async def interaction_status_detail(
 @router.get(
     "/interaction/hot-lotteries",
     response_model=StandardResponse[HotLotteryResp],
-    summary="热门抽奖榜（窗口内去重浏览人数 + 抽奖卡片一次返回，匿名可读）",
+    summary="热门抽奖榜（本站浏览人数 / B站参与人数 + 抽奖卡片一次返回，匿名可读）",
 )
 async def interaction_hot_lotteries(
     session: SessionDep,
@@ -464,19 +465,32 @@ async def interaction_hot_lotteries(
         default=7, ge=1, le=30, description="浏览记录统计窗口（天）"
     ),
     limit: int = Query(default=10, ge=1, le=20, description="返回条数上限"),
+    rank_by: Literal["site", "bili"] = Query(
+        default="site",
+        description="榜单口径：site=本站近 N 天去重浏览人数；bili=B站抓取时参与人数（仅进行中）",
+    ),
 ) -> StandardResponse[HotLotteryResp]:
     """热门抽奖榜（2.64.0 浏览记录口径；2.67.0 一次返回卡片数据）。
 
-    口径：窗口内 ``TInteractionViewLog``（bizType=lottery）按资源统计去重浏览人数
-    （每用户每资源一行，``COUNT``）降序取 topN，附累计浏览 / 点赞 / 收藏与实时评论数；
-    卡片内容经 crawler 只读查询服务（``GetLotteryDetailList``）一次批量回捞
-    （弱依赖，取不到卡片的项由服务层剔除），前端首页因此**不再**二次调用 detail 域接口。
-    纯读接口，不校验资源存在性（抽奖归属 be-bilibili-crawler，弱依赖不放大抖动），
-    也不做任何写入。
+    口径（``rank_by``）：
+    - ``site``（默认）：窗口内 ``TInteractionViewLog``（bizType=lottery）按资源统计
+      去重浏览人数（每用户每资源一行，``COUNT``）降序；
+    - ``bili``：crawler 抓取时 ``lotdata.participants`` 降序，仅统计进行中的
+      官方 / 预约 / 充电抽奖。
+
+    两种口径均附累计浏览 / 点赞 / 收藏与实时评论数；卡片内容经 crawler 只读查询服务
+    一次批量回捞（弱依赖，取不到卡片的项由服务层剔除），前端首页因此**不再**二次调用
+    detail 域接口。纯读接口，不校验资源存在性（抽奖归属 be-bilibili-crawler，
+    弱依赖不放大抖动），也不做任何写入。
     """
-    items = await HotLotteryService.list_hot_lotteries(
-        session, window_days=window_days, limit=limit
-    )
+    if rank_by == "bili":
+        items = await HotLotteryService.list_bili_hot_lotteries(
+            session, limit=limit
+        )
+    else:
+        items = await HotLotteryService.list_hot_lotteries(
+            session, window_days=window_days, limit=limit
+        )
     return StandardResponse(
         data=HotLotteryResp(
             items=items,

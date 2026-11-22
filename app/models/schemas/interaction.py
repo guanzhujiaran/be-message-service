@@ -116,7 +116,7 @@ class HotLotteryItem(SQLModel):
     bizId: str = Field(description="抽奖卡片 id（lottery_id，字符串承载）")
     recentViewCount: int = Field(
         default=0,
-        description="统计窗口内的去重浏览人数（TInteractionViewLog 每用户每资源一行，COUNT）",
+        description="统计窗口内的去重浏览人数（仅 rank_by=site；bili 口径恒 0）",
     )
     viewCount: int = Field(default=0, description="累计浏览次数（TInteractionStat）")
     likeCount: int = Field(default=0, description="累计点赞数")
@@ -133,7 +133,8 @@ class HotLotteryResp(SQLModel):
     """热门抽奖榜响应。"""
 
     items: list[HotLotteryItem] = Field(
-        default_factory=list, description="热门抽奖（按窗口内浏览热度降序）"
+        default_factory=list,
+        description="热门抽奖（site 按窗口内浏览人数 / bili 按抓取时参与人数降序）",
     )
     windowDays: int = Field(description="浏览记录统计窗口（天）")
     generatedAt: UnixTime = Field(description="榜单生成时间（Unix 秒）")

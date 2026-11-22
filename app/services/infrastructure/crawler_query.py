@@ -28,6 +28,10 @@ __all__ = ["CrawlerQueryClient", "get_crawler_query_client"]
 
 #: crawler 抽奖卡片批量详情路由（只读查询服务）
 _LOTTERY_DETAIL_LIST_PATH = "/api/v1/lottery_database/bili/GetLotteryDetailList"
+#: crawler 按抓取时参与人数获取进行中抽奖卡片路由（只读查询服务）
+_TOP_LOTTERY_BY_PARTICIPANTS_PATH = (
+    "/api/v1/lottery_database/bili/GetTopLotteryByParticipants"
+)
 #: 单次 lottery_ids 上限（与 crawler 侧 LOTTERY_DETAIL_BATCH_LIMIT 保持一致）
 _BATCH_LIMIT = 50
 
@@ -66,7 +70,7 @@ class CrawlerQueryClient:
                 )
                 resp.raise_for_status()
                 payload = resp.json()
-        except Exception as e:  # noqa: BLE001 弱依赖：任何失败都降级
+        except Exception as e:
             logger.warning(
                 f"[CrawlerQueryClient] GetLotteryDetailList 调用失败（弱依赖降级）: {e}"
             )
@@ -74,11 +78,55 @@ class CrawlerQueryClient:
 
         try:
             cards = LotteryCardList.model_validate(payload.get("data") or {})
-        except Exception as e:  # noqa: BLE001 响应结构变化不应打挂榜单
-            logger.warning(f"[CrawlerQueryClient] GetLotteryDetailList 响应解析失败: {e}")
+        except Exception as e:
+            logger.warning(
+                f"[CrawlerQueryClient] GetLotteryDetailList 响应解析失败: {e}"
+            )
             return Indexed.empty()
 
         return Indexed.of((int(card.raw.lottery_id), card) for card in cards.items)
+
+    async def get_top_lottery_cards_by_participants(
+        self, limit: int
+    ) -> list[LotteryCard]:
+        """按爬虫抓取时的参与人数取进行中抽奖卡片（弱依赖：失败返回空列表）。
+
+        Args:
+            limit: 返回条数（crawler 侧上限 50）。
+
+        Returns:
+            按 ``lotdata.participants`` 降序的卡片列表；调用失败 / 解析失败返回空列表。
+        """
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout
+            ) as client:
+                resp = await client.get(
+                    _TOP_LOTTERY_BY_PARTICIPANTS_PATH,
+                    params={
+                        "limit": max(1, min(int(limit), _BATCH_LIMIT)),
+                        # 与前端一致：附带时间戳防浏览器 / CDN 缓存（后端不使用该值）
+                        "t": int(time.time()),
+                    },
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as e:
+            logger.warning(
+                f"[CrawlerQueryClient] GetTopLotteryByParticipants 调用失败"
+                f"（弱依赖降级）: {e}"
+            )
+            return []
+
+        try:
+            cards = LotteryCardList.model_validate(payload.get("data") or {})
+        except Exception as e:
+            logger.warning(
+                f"[CrawlerQueryClient] GetTopLotteryByParticipants 响应解析失败: {e}"
+            )
+            return []
+
+        return cards.items
 
 
 #: 全局单例（base_url / timeout 在进程启动时从 settings 读取）
