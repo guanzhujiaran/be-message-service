@@ -6,6 +6,7 @@
 接口清单：
 
 - `GET    /config`       读取当前实例配置 + 运行统计（页面一次请求渲染表格）；
+- `GET    /config/export` 导出当前生效配置（token 为明文，附件下载，用于备份 / 迁移）；
 - `PUT    /config`       整体覆盖保存（热更新 + 落盘 runtime/llm_apis.json）；
 - `DELETE /config`       撤销人工保存：删持久化文件并热切回 `.env` 的 `llm_apis`
   （crawler 内部 `DELETE /llm/config/override` 的代理，幂等）；
@@ -15,8 +16,12 @@
 单独开 `/stats` 只会多一次无意义的配置读取。
 """
 
+import json
+from datetime import datetime
+
 from bili_common.models import ResponseCode
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
+from fastapi.responses import JSONResponse
 
 from app.dependencies import AdminUser
 from app.models import StandardResponse
@@ -46,6 +51,39 @@ async def get_llm_config(user: AdminUser) -> StandardResponse[CrawlerLlmConfigRe
     except CrawlerLlmError as e:
         return StandardResponse(code=int(ResponseCode.NETWORK_ERROR), msg=str(e))
     return StandardResponse(data=data)
+
+
+@router.get(
+    "/config/export",
+    summary="导出 crawler LLM 配置 JSON（含明文密钥，附件下载）",
+    response_class=Response,
+)
+async def export_llm_config(user: AdminUser) -> Response:
+    """从后端导出**当前生效**的 crawler LLM 配置。
+
+    页面读取态的 token 是脱敏值，导出备份 / 迁移必须用明文，因此由本接口
+    代理 crawler 的内部导出接口，并以附件形式返回，避免前端二次拼接。
+
+    - 只包含后端已保存的配置（页面上未保存的编辑不在其中）；
+    - 文件含明文密钥：响应禁止缓存，前端必须提示用户妥善保管。
+    """
+    try:
+        payload = await CrawlerLlmService.export_config(operator_mid=int(user.mid))
+    except CrawlerLlmError as e:
+        return JSONResponse(
+            status_code=502,
+            content={"code": int(ResponseCode.NETWORK_ERROR), "msg": str(e), "data": None},
+        )
+    filename = f"crawler-llm-config-{datetime.now():%Y%m%d-%H%M%S}.json"
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # 文件含明文密钥：禁止浏览器 / 中间层缓存
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.put(

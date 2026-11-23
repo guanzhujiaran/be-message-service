@@ -32,6 +32,8 @@ _CONFIG_PATH = "/llm/config"
 _STATS_PATH = "/llm/stats"
 #: 撤销人工保存：删除持久化文件并热切回 `.env`（crawler 内部接口）
 _OVERRIDE_PATH = "/llm/config/override"
+#: 导出完整配置（token 为明文，仅管理端导出 JSON 使用；crawler 内部接口）
+_EXPORT_PATH = "/llm/config/export"
 #: 单实例连通性测试（crawler 用裸 ChatOpenAI 真实问一句 1+1=?，内部接口）
 _TEST_PATH = "/llm/config/test"
 #: 拉取上游 `/models` 模型列表（crawler 用 httpx 直连，内部接口）
@@ -150,6 +152,17 @@ class CrawlerLlmClient:
         data = await self._request("GET", _CONFIG_PATH)
         if not isinstance(data, list):
             raise CrawlerLlmError("crawler 配置响应格式非法（期望数组）")
+        return [CrawlerLlmConfig.model_validate(row) for row in data]
+
+    async def get_export_configs(self) -> list[CrawlerLlmConfig]:
+        """读取完整配置用于导出（token 为**明文**，仅供管理端「导出 JSON」）。
+
+        与 :meth:`get_configs` 走不同的 crawler 内部接口；返回值不得写入日志或
+        任何前端响应体（除了本次下载的文件内容）。
+        """
+        data = await self._request("GET", _EXPORT_PATH)
+        if not isinstance(data, list):
+            raise CrawlerLlmError("crawler 导出响应格式非法（期望数组）")
         return [CrawlerLlmConfig.model_validate(row) for row in data]
 
     async def replace_configs(

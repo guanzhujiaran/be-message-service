@@ -19,6 +19,8 @@
 任何缓存都会让管理端看到过期数据；量级极小（个位数实例），实时转发即可。
 """
 
+import time
+
 from loguru import logger
 
 from app.models.schemas.crawler_llm import (
@@ -115,6 +117,34 @@ class CrawlerLlmService:
         return CrawlerLlmConfigResp(
             items=items, stats=await CrawlerLlmService._load_stats()
         )
+
+    @staticmethod
+    async def export_config(operator_mid: int) -> dict[str, object]:
+        """导出 crawler 当前生效配置（token 为**明文**），供管理端下载 JSON 备份。
+
+        - 只导出**后端已生效**的配置（页面未保存的编辑不包含，这与「从后端下载」一致）；
+        - 导出内容含明文密钥，接口层以附件形式返回；本层日志只记条数、绝不带 token。
+
+        Raises:
+            CrawlerLlmError: crawler 不可达 / 非 2xx。
+        """
+        configs = await CrawlerLlmService._client().get_export_configs()
+        logger.info(
+            f"管理员 {operator_mid} 导出 crawler LLM 配置：{len(configs)} 个实例"
+        )
+        return {
+            "version": 1,
+            "exported_at": int(time.time()),
+            "items": [
+                {
+                    "base_url": cfg.base_url,
+                    "model_name": cfg.model_name,
+                    "token": cfg.token,
+                    "requests_per_second": str(cfg.requests_per_second),
+                }
+                for cfg in configs
+            ],
+        }
 
     @staticmethod
     def _parse_index(raw_index: str | None) -> int | None:

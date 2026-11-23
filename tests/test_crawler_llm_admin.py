@@ -54,6 +54,9 @@ class _FakeClient:
     async def get_configs(self) -> list[CrawlerLlmConfig]:
         return self.configs
 
+    async def get_export_configs(self) -> list[CrawlerLlmConfig]:
+        return self.configs
+
     async def replace_configs(
         self, configs: list[CrawlerLlmConfig]
     ) -> list[CrawlerLlmConfig]:
@@ -373,6 +376,38 @@ class TestTokenReuseBySource:
                 operator_mid=1,
             )
         assert client.saved is None
+
+
+class TestExportConfig:
+    """导出 JSON：必须保留明文 token（页面读取态是脱敏值，不能用于备份）。"""
+
+    @pytest.mark.asyncio
+    async def test_export_keeps_plaintext_token(self, use_client: Any) -> None:
+        use_client(
+            _FakeClient(
+                configs=[
+                    CrawlerLlmConfig(
+                        base_url="https://api.example.com/v1",
+                        model_name="m1",
+                        token="sk-plain-secret",
+                        requests_per_second=0.5,
+                    )
+                ]
+            )
+        )
+
+        payload = await CrawlerLlmService.export_config(operator_mid=1)
+
+        assert payload["version"] == 1
+        assert isinstance(payload["exported_at"], int)
+        assert payload["items"] == [
+            {
+                "base_url": "https://api.example.com/v1",
+                "model_name": "m1",
+                "token": "sk-plain-secret",
+                "requests_per_second": "0.5",
+            }
+        ]
 
 
 class TestValidation:
