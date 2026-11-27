@@ -44,6 +44,7 @@ from typing import Literal
 
 from bili_common.models import InteractionBizTypeEnum
 from fastapi import APIRouter, Header, Query, Request
+from loguru import logger
 
 from app.core.database import SessionDep
 from app.dependencies import ActiveUser, OptionalUser, RequiredUser, RootUser
@@ -439,6 +440,13 @@ async def interaction_status_detail(
         session, biz_type, biz_id_str, user.mid if user else 0
     )
     if missing or item is None:
+        # 静默跳过投递是「浏览计数为 0」的唯一表现，必须留痕，否则无法定位
+        # （历史 bug：bizId 字符串与 RPC 返回的 set[int] 比较恒 False，全部资源被误判缺失）
+        if missing:
+            logger.warning(
+                f"[interaction_status] 资源校验不存在，跳过浏览投递 "
+                f"bizType={biz_type} bizId={biz_id_str} mid={user.mid if user else 0}"
+            )
         return StandardResponse(data=item)
 
     # 浏览统计触发点（detail 专用）：投递 MQ 异步去重累计，主链路不阻塞
@@ -465,20 +473,25 @@ async def interaction_hot_lotteries(
         default=7, ge=1, le=30, description="浏览记录统计窗口（天）"
     ),
     limit: int = Query(default=10, ge=1, le=20, description="返回条数上限"),
-    rank_by: Literal["site", "bili"] = Query(
+    rank_by: Literal["site", "site_third", "bili"] = Query(
         default="site",
-        description="榜单口径：site=本站近 N 天去重浏览人数；bili=B站抓取时参与人数（仅进行中）",
+        description="榜单口径：site=本站抽奖浏览人数；site_third=本站第三方抽奖动态浏览人数；"
+        "bili=B站抓取时参与人数（仅进行中）",
     ),
 ) -> StandardResponse[HotLotteryResp]:
-    """热门抽奖榜（2.64.0 浏览记录口径；2.67.0 一次返回卡片数据）。
+    """热门抽奖榜（2.64.0 浏览记录口径；2.67.0 一次返回卡片数据；2.71.0 拆第三方榜）。
 
     口径（``rank_by``）：
     - ``site``（默认）：窗口内 ``TInteractionViewLog``（bizType=lottery）按资源统计
-      去重浏览人数（每用户每资源一行，``COUNT``）降序；
+      去重浏览人数（每用户每资源一行，``COUNT``）降序，仅官方 / 预约 / 充电抽奖；
+    - ``site_third``：同口径但只看第三方抽奖动态（bizType=others_lot_dyn，bizId=dynId）；
     - ``bili``：crawler 抓取时 ``lotdata.participants`` 降序，仅统计进行中的
       官方 / 预约 / 充电抽奖。
 
-    两种口径均附累计浏览 / 点赞 / 收藏与实时评论数；卡片内容经 crawler 只读查询服务
+    官方抽奖与第三方动态是**两个独立命名空间**（id 语义、卡片形态都不同），
+    不聚合、不合榜，前端用三个 Tab 分别展示。
+
+    三种口径均附累计浏览 / 点赞 / 收藏与实时评论数；卡片内容经 crawler 只读查询服务
     一次批量回捞（弱依赖，取不到卡片的项由服务层剔除），前端首页因此**不再**二次调用
     detail 域接口。纯读接口，不校验资源存在性（抽奖归属 be-bilibili-crawler，
     弱依赖不放大抖动），也不做任何写入。
@@ -486,6 +499,10 @@ async def interaction_hot_lotteries(
     if rank_by == "bili":
         items = await HotLotteryService.list_bili_hot_lotteries(
             session, limit=limit
+        )
+    elif rank_by == "site_third":
+        items = await HotLotteryService.list_hot_others_lot_dyn_lotteries(
+            session, window_days=window_days, limit=limit
         )
     else:
         items = await HotLotteryService.list_hot_lotteries(

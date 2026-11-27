@@ -1,14 +1,19 @@
-"""热门抽奖榜单（2.64.0；2.67.0 一次返回卡片数据）。
+"""热门抽奖榜单（2.64.0；2.67.0 一次返回卡片数据；2.71.0 拆第三方动态榜）。
 
-支持两种口径（``rank_by``）：
+支持三种口径（``rank_by``）：
 - ``site``（默认）：统计窗口（默认近 7 天）内 ``TInteractionViewLog``（bizType=lottery）
-  按资源统计**去重浏览人数**（2.42.0 起每用户每资源一行，``COUNT(*)`` 即人数）降序；
+  按资源统计**去重浏览人数**（每用户每资源一行，``COUNT(*)`` 即人数）降序；
+- ``site_third``：同上口径，但只统计第三方抽奖动态（bizType=others_lot_dyn，bizId=dynId）；
 - ``bili``：crawler 抓取时 ``lotdata.participants`` 降序，仅统计进行中的
   官方 / 预约 / 充电抽奖，避免历史抽奖霸榜。
 
-两种口径均再附 ``TInteractionStat`` 的累计浏览 / 点赞 / 收藏与评论系统实时评论数。
+官方 / 预约 / 充电抽奖与第三方抽奖动态是**两个独立命名空间**（id 语义、卡片形态都不同），
+因此不聚合：``site`` 只出抽奖卡片，``site_third`` 只出第三方动态卡片（2.71.0）。
+
+各口径均再附 ``TInteractionStat`` 的累计浏览 / 点赞 / 收藏与评论系统实时评论数。
 抽奖本体在 be-bilibili-crawler，本服务**不落库抽奖内容**：site 口径经
-``GetLotteryDetailList`` 按热度 id 批量回捞卡片，bili 口径直接使用
+``GetLotteryDetailList`` 按热度 id 批量回捞卡片，site_third 口径经
+``GetOthersLotDynDetailList`` 批量回捞第三方动态卡片，bili 口径直接使用
 ``GetTopLotteryByParticipants`` 返回的卡片，使 ``GET /interaction/hot-lotteries``
 一次返回「排序指标 + 卡片」，前端首页不再二次调用 detail 域接口。
 卡片缺失（查询失败 / 已删除）的项直接剔除。
@@ -17,7 +22,7 @@
 from datetime import datetime, timedelta
 
 from bili_common.models import InteractionBizTypeEnum
-from bili_common.rpc.lottery import LotteryCard
+from bili_common.rpc.lottery import LotteryCard, OthersLotDynCard
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -30,6 +35,9 @@ from app.services.moment.interaction import (
 
 __all__ = ["HotLotteryService"]
 
+#: 热门榜卡片：官方 / 预约 / 充电抽奖（raw + extra_info）或第三方动态 item
+HotLotteryCard = LotteryCard | OthersLotDynCard
+
 
 class HotLotteryService:
     """热门抽奖榜（纯服务层，不含 HTTP 语义）。"""
@@ -38,7 +46,7 @@ class HotLotteryService:
     async def list_hot_lotteries(
         session: AsyncSession, *, window_days: int, limit: int
     ) -> list[HotLotteryItem]:
-        """按窗口内去重浏览人数返回热门抽奖 id 列表（降序）。
+        """按窗口内去重浏览人数返回热门抽奖排行榜（官方 / 预约 / 充电）。
 
         Args:
             session: 异步会话。
@@ -48,39 +56,18 @@ class HotLotteryService:
         Returns:
             热门抽奖榜单项（可能为空列表：窗口内无任何抽奖浏览记录，或卡片全部取不到）。
         """
-        # 时间边界按服务端本地时区计算，与库内 TIMESTAMP 直接比较（与汇总类接口一致）
-        since = datetime.now() - timedelta(days=window_days)
-
-        # 1) 窗口内浏览记录聚合：每用户每资源一行，COUNT 即窗口内去重浏览人数
-        #    （lastViewAt 是最后访问时间：>= since 等价于窗口内至少访问过一次）
-        recent_rows = (
-            await session.exec(
-                select(
-                    col(TInteractionViewLog.bizId),
-                    func.count(),
-                )
-                .where(
-                    col(TInteractionViewLog.bizType) == InteractionBizTypeEnum.LOTTERY,
-                    col(TInteractionViewLog.lastViewAt) >= since,
-                )
-                .group_by(col(TInteractionViewLog.bizId))
-                .order_by(
-                    func.count().desc(),
-                    col(TInteractionViewLog.bizId).asc(),
-                )
-                .limit(limit)
-            )
-        ).all()
-        if not recent_rows:
+        recent_viewers = await HotLotteryService._recent_viewer_map(
+            session,
+            InteractionBizTypeEnum.LOTTERY,
+            window_days=window_days,
+            limit=limit,
+        )
+        if not recent_viewers:
             return []
-
-        recent_viewers: dict[int, int] = {
-            int(biz_id): int(count) for biz_id, count in recent_rows
-        }
         biz_ids = list(recent_viewers)
 
-        # 2) 卡片内容：一次批量向 crawler 只读查询服务取数（2.67.0；弱依赖 —— 取不到
-        #    卡片的项直接剔除，前端因此无需再调 detail 域接口，也不会渲染空壳卡片）
+        # 卡片内容：一次批量向 crawler 只读查询服务取数（2.67.0；弱依赖 —— 取不到
+        # 卡片的项直接剔除，前端因此无需再调 detail 域接口，也不会渲染空壳卡片）
         cards_index = await get_crawler_query_client().get_lottery_cards(biz_ids)
         cards = {
             biz_id: card
@@ -88,7 +75,47 @@ class HotLotteryService:
             if (card := cards_index.value_of(biz_id)) is not None
         }
         return await HotLotteryService._assemble(
-            session, biz_ids, recent_viewers, cards
+            session,
+            InteractionBizTypeEnum.LOTTERY,
+            biz_ids,
+            recent_viewers,
+            cards,
+        )
+
+    @staticmethod
+    async def list_hot_others_lot_dyn_lotteries(
+        session: AsyncSession, *, window_days: int, limit: int
+    ) -> list[HotLotteryItem]:
+        """按窗口内去重浏览人数返回热门第三方抽奖动态榜（2.71.0）。
+
+        与 ``list_hot_lotteries`` 完全同构，唯一差异是资源类型
+        ``others_lot_dyn``（bizId = B 站动态 dynId）与卡片回捞接口
+        （``GetOthersLotDynDetailList``）。
+        """
+        recent_viewers = await HotLotteryService._recent_viewer_map(
+            session,
+            InteractionBizTypeEnum.OTHERS_LOT_DYN,
+            window_days=window_days,
+            limit=limit,
+        )
+        if not recent_viewers:
+            return []
+        biz_ids = list(recent_viewers)
+
+        cards_index = await get_crawler_query_client().get_others_lot_dyn_cards(
+            biz_ids
+        )
+        cards = {
+            biz_id: card
+            for biz_id in biz_ids
+            if (card := cards_index.value_of(biz_id)) is not None
+        }
+        return await HotLotteryService._assemble(
+            session,
+            InteractionBizTypeEnum.OTHERS_LOT_DYN,
+            biz_ids,
+            recent_viewers,
+            cards,
         )
 
     @staticmethod
@@ -119,26 +146,64 @@ class HotLotteryService:
         )
         cards = {int(card.raw.lottery_id): card for card in cards_list}
         biz_ids = list(cards)[:limit]
-        return await HotLotteryService._assemble(session, biz_ids, {}, cards)
+        return await HotLotteryService._assemble(
+            session, InteractionBizTypeEnum.LOTTERY, biz_ids, {}, cards
+        )
+
+    @staticmethod
+    async def _recent_viewer_map(
+        session: AsyncSession,
+        biz_type: InteractionBizTypeEnum,
+        *,
+        window_days: int,
+        limit: int,
+    ) -> dict[int, int]:
+        """窗口内浏览记录聚合：``{bizId: 去重浏览人数}``（降序，最多 limit 条）。
+
+        每用户每资源一行（2.42.0 起），``COUNT(*)`` 即人数；``lastViewAt >= since``
+        等价于「窗口内至少访问过一次」。时间边界按服务端本地时区计算，与库内
+        TIMESTAMP 直接比较（与汇总类接口一致）。
+        """
+        since = datetime.now() - timedelta(days=window_days)
+        rows = (
+            await session.exec(
+                select(
+                    col(TInteractionViewLog.bizId),
+                    func.count(),
+                )
+                .where(
+                    col(TInteractionViewLog.bizType) == biz_type,
+                    col(TInteractionViewLog.lastViewAt) >= since,
+                )
+                .group_by(col(TInteractionViewLog.bizId))
+                .order_by(
+                    func.count().desc(),
+                    col(TInteractionViewLog.bizId).asc(),
+                )
+                .limit(limit)
+            )
+        ).all()
+        return {int(biz_id): int(count) for biz_id, count in rows}
 
     @staticmethod
     async def _assemble(
         session: AsyncSession,
+        biz_type: InteractionBizTypeEnum,
         biz_ids: list[int],
         recent_viewers: dict[int, int],
-        cards: dict[int, LotteryCard],
+        cards: dict[int, HotLotteryCard],
     ) -> list[HotLotteryItem]:
-        """补齐累计计数 / 评论数并装配榜单（site / bili 两种口径共用）。"""
+        """补齐累计计数 / 评论数并装配榜单（三种口径共用）。"""
         if not biz_ids:
             return []
 
         counts = await InteractionStatService.batch_get_counts(
-            session, InteractionBizTypeEnum.LOTTERY, biz_ids
+            session, biz_type, biz_ids
         )
         subjects = (
             await session.exec(
                 select(CommentSubject).where(
-                    col(CommentSubject.type) == InteractionBizTypeEnum.LOTTERY,
+                    col(CommentSubject.type) == biz_type,
                     col(CommentSubject.oid).in_(biz_ids),
                 )
             )

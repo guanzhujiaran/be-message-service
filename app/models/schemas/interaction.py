@@ -6,7 +6,7 @@
 
 from bili_common.core.time_utils import UnixTime
 from bili_common.models import InteractionBizTypeEnum
-from bili_common.rpc.lottery import LotteryCard
+from bili_common.rpc.lottery import LotteryCard, OthersLotDynCard
 from bili_common.rpc.rpa import ResourceDetail
 from sqlmodel import Field, SQLModel
 
@@ -106,25 +106,34 @@ class InteractionStatusResp(SQLModel):
 
 @auto_str
 class HotLotteryItem(SQLModel):
-    """热门抽奖榜单单项（热度计数 + 卡片数据，2.67.0）。
+    """热门抽奖榜单单项（热度计数 + 卡片数据，2.67.0；2.71.0 支持第三方动态）。
 
-    ``card`` 为 be-bilibili-crawler 经 RPC 一次批量回捞的抽奖卡片
-    （``raw`` + ``extra_info``，形态与 ``GetLotteryDetail`` 的 data 完全一致），
-    前端可直接 ``normalizeLotteryData`` 渲染，首页无需再调 detail 域接口。
+    ``card`` 为 be-bilibili-crawler 经只读查询服务一次批量回捞的卡片，
+    前端可直接 ``normalizeLotteryData`` 渲染，首页无需再调 detail 域接口：
+
+    - ``rank_by=site`` / ``bili``：``LotteryCard``（``raw`` + ``extra_info``，
+      形态与 ``GetLotteryDetail`` 的 data 一致）；
+    - ``rank_by=site_third``：``OthersLotDynCard``（形态与 ``GetOthersLotDynDetail``
+      的 data 一致，前端识别为 ``THIRD_PARTY``）。
+
+    两者不会出现在同一次响应里。
     """
 
-    bizId: str = Field(description="抽奖卡片 id（lottery_id，字符串承载）")
+    bizId: str = Field(
+        description="资源 id（site/bili=lottery_id，site_third=B站动态 dynId；字符串承载）"
+    )
     recentViewCount: int = Field(
         default=0,
-        description="统计窗口内的去重浏览人数（仅 rank_by=site；bili 口径恒 0）",
+        description="统计窗口内的去重浏览人数（site / site_third；bili 口径恒 0）",
     )
     viewCount: int = Field(default=0, description="累计浏览次数（TInteractionStat）")
     likeCount: int = Field(default=0, description="累计点赞数")
     favoriteCount: int = Field(default=0, description="累计收藏数")
     commentCount: int = Field(default=0, description="评论数（评论系统实时计数）")
-    card: LotteryCard | None = Field(
+    card: LotteryCard | OthersLotDynCard | None = Field(
         default=None,
-        description="抽奖卡片（raw + extra_info；卡片缺失的项服务端已剔除，字段保留供前端防御）",
+        description="卡片数据（site/bili=抽奖卡片 raw+extra_info，site_third=第三方动态 item；"
+        "卡片缺失的项服务端已剔除，字段保留供前端防御）",
     )
 
 
@@ -134,7 +143,7 @@ class HotLotteryResp(SQLModel):
 
     items: list[HotLotteryItem] = Field(
         default_factory=list,
-        description="热门抽奖（site 按窗口内浏览人数 / bili 按抓取时参与人数降序）",
+        description="热门榜（site / site_third 按窗口内浏览人数，bili 按抓取时参与人数降序）",
     )
     windowDays: int = Field(description="浏览记录统计窗口（天）")
     generatedAt: UnixTime = Field(description="榜单生成时间（Unix 秒）")

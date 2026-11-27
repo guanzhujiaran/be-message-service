@@ -511,6 +511,49 @@ class NotifyService:
         )
         return int((await session.exec(stmt)).one() or 0)
 
+    #: mark_all_read 单批 upsert 条数（避免一条 INSERT 塞入过多值）
+    _MARK_ALL_READ_CHUNK = 500
+
+    @staticmethod
+    async def mark_all_read(session: AsyncSession, user: AuthInfo) -> int:
+        """把该用户**全部可见未读**通知一次性置为已读（2.71.0）。
+
+        用于「进入通知页即清空红点」：`/notify/list` 返回本页后再调本方法，
+        红点不再受 `page_size`（默认 20）限制。判定条件与 :meth:`unread_count`
+        完全一致（`NotifyState` 缺行，或 `is_read=False` 且未删除），因此执行后
+        `unread_count` 必为 0；已读行不受影响，`is_read` 出参仍取读取前快照。
+
+        Returns:
+            本次置为已读的通知条数（幂等：重复调用返回 0）。
+        """
+        state = NotifyState
+        stmt = (
+            select(NotifyMessage.id)
+            .select_from(NotifyMessage)
+            .outerjoin(
+                state,
+                and_(state.notify_id == NotifyMessage.id, state.mid == user.mid),
+            )
+            .where(
+                _visible_condition(),
+                _target_condition(user),
+                or_(
+                    state.id.is_(None),
+                    and_(state.is_read == False, state.is_deleted == False),
+                ),
+            )
+        )
+        notify_ids = [int(nid) for nid in (await session.exec(stmt)).all() if nid]
+        if not notify_ids:
+            return 0
+        marked = 0
+        chunk = NotifyService._MARK_ALL_READ_CHUNK
+        for start in range(0, len(notify_ids), chunk):
+            marked += await NotifyService._mark_read_ids(
+                session, user.mid, notify_ids[start : start + chunk]
+            )
+        return marked
+
     @staticmethod
     async def _mark_read_ids(
         session: AsyncSession, mid: int, notify_ids: list[int]

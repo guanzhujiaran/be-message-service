@@ -18,7 +18,12 @@ crawler 的**只读查询服务**（`query_main`，`GetLotteryDetailList`）批�
 import time
 
 import httpx
-from bili_common.rpc.lottery import LotteryCard, LotteryCardList
+from bili_common.rpc.lottery import (
+    LotteryCard,
+    LotteryCardList,
+    OthersLotDynCard,
+    OthersLotDynCardList,
+)
 from loguru import logger
 
 from app.core.config import settings
@@ -31,6 +36,10 @@ _LOTTERY_DETAIL_LIST_PATH = "/api/v1/lottery_database/bili/GetLotteryDetailList"
 #: crawler 按抓取时参与人数获取进行中抽奖卡片路由（只读查询服务）
 _TOP_LOTTERY_BY_PARTICIPANTS_PATH = (
     "/api/v1/lottery_database/bili/GetTopLotteryByParticipants"
+)
+#: crawler 第三方抽奖动态卡片批量详情路由（只读查询服务，热门榜 site_third 口径）
+_OTHERS_LOT_DYN_DETAIL_LIST_PATH = (
+    "/api/v1/lottery_database/bili/GetOthersLotDynDetailList"
 )
 #: 单次 lottery_ids 上限（与 crawler 侧 LOTTERY_DETAIL_BATCH_LIMIT 保持一致）
 _BATCH_LIMIT = 50
@@ -85,6 +94,56 @@ class CrawlerQueryClient:
             return Indexed.empty()
 
         return Indexed.of((int(card.raw.lottery_id), card) for card in cards.items)
+
+    async def get_others_lot_dyn_cards(
+        self, dyn_ids: list[int]
+    ) -> Indexed[OthersLotDynCard]:
+        """批量取第三方抽奖动态卡片（弱依赖：失败返回空集合）。
+
+        对应「本站第三方动态热门榜」（``rank_by=site_third``）：bizId 是 B 站动态
+        ``dynId``，与 ``lotdata.lottery_id`` 是两个独立命名空间，不能混用
+        ``GetLotteryDetailList``。
+
+        Args:
+            dyn_ids: 第三方抽奖动态 dynId（去重保序后按后端 50 上限截断）。
+
+        Returns:
+            `Indexed[OthersLotDynCard]`（dynId → 卡片）；不存在的 id 不放入结果，
+            调用失败 / 解析失败返回空集合。
+        """
+        ids = list(dict.fromkeys(int(i) for i in dyn_ids))[:_BATCH_LIMIT]
+        if not ids:
+            return Indexed.empty()
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=self._timeout
+            ) as client:
+                resp = await client.get(
+                    _OTHERS_LOT_DYN_DETAIL_LIST_PATH,
+                    params={
+                        "dyn_ids": ",".join(str(i) for i in ids),
+                        # 与前端一致：附带时间戳防浏览器 / CDN 缓存（后端不使用该值）
+                        "t": int(time.time()),
+                    },
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as e:
+            logger.warning(
+                f"[CrawlerQueryClient] GetOthersLotDynDetailList 调用失败"
+                f"（弱依赖降级）: {e}"
+            )
+            return Indexed.empty()
+
+        try:
+            cards = OthersLotDynCardList.model_validate(payload.get("data") or {})
+        except Exception as e:
+            logger.warning(
+                f"[CrawlerQueryClient] GetOthersLotDynDetailList 响应解析失败: {e}"
+            )
+            return Indexed.empty()
+
+        return Indexed.of((int(card.dynId), card) for card in cards.items)
 
     async def get_top_lottery_cards_by_participants(
         self, limit: int

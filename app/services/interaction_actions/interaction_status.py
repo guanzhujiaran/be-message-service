@@ -71,6 +71,14 @@ def resolve_target(
     return biz_type, biz_id_str
 
 
+def _to_int_or_none(value: str) -> int | None:
+    """bizId 字符串 → int（非数字返回 None，视为不存在的资源）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class InteractionStatusService:
     """互动态装配 + 资源存在性校验（纯服务层，不含 HTTP 语义）。
 
@@ -83,7 +91,7 @@ class InteractionStatusService:
 
     @staticmethod
     async def verify_resources_exist(
-        session: AsyncSession, biz_type: InteractionBizTypeEnum, ids: list[int]
+        session: AsyncSession, biz_type: InteractionBizTypeEnum, ids: Sequence[str]
     ) -> list[str] | None:
         """批量校验资源存在性（2.23.1 防乱调；2.63.0 收窄用途）。
 
@@ -100,37 +108,54 @@ class InteractionStatusService:
           2.61.0；同样弱依赖降级放行）；
         - 其余未注册类型：放行。
 
+        **bizId 一律按字符串承载**（路由层 `bizId` 是路径字符串）：RPC / SQL 侧返回的是
+        `set[int]`，比较前必须统一转成字符串，否则 `'123' in {123}` 恒为 False →
+        所有资源都被判「不存在」→ 浏览计数永不投递（本站热门抽奖因此恒为空）。
+
         Returns:
             缺失的 bizId 字符串列表；全部存在返回 None。
         """
+        biz_ids = [str(_id).strip() for _id in ids if str(_id).strip()]
+        if not biz_ids:
+            return None
+
         if biz_type == InteractionBizTypeEnum.DYNAMIC:
-            dyn_rows = (
-                await session.exec(
-                    select(TMoment.dynId).where(
-                        col(TMoment.dynId).in_(ids),
-                        col(TMoment.deletedAt).is_(None),
-                        col(TMoment.auditStatus) == ResourceAuditStatusEnum.NORMAL,
+            id_ints = [v for v in map(_to_int_or_none, biz_ids) if v is not None]
+            existing: set[str] = set()
+            if id_ints:
+                dyn_rows = (
+                    await session.exec(
+                        select(TMoment.dynId).where(
+                            col(TMoment.dynId).in_(id_ints),
+                            col(TMoment.deletedAt).is_(None),
+                            col(TMoment.auditStatus)
+                            == ResourceAuditStatusEnum.NORMAL,
+                        )
                     )
-                )
-            ).all()
-            existing = {int(r) for r in dyn_rows}
+                ).all()
+                existing = {str(int(r)) for r in dyn_rows}
         elif biz_type == InteractionBizTypeEnum.LOTTERY:
             from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
 
+            id_ints = [v for v in map(_to_int_or_none, biz_ids) if v is not None]
             client = await get_lottery_rpc_client()
-            existing = await client.get_existing_lottery_ids(ids)
-            if existing is None:
-                existing = set(ids)  # RPC 校验不可用：降级放行
+            found = await client.get_existing_lottery_ids(id_ints)
+            # RPC 校验不可用（None）→ 降级放行；成功 → 存在的 id 统一为字符串集合
+            existing = (
+                set(biz_ids) if found is None else {str(v) for v in found}
+            )
         elif biz_type == InteractionBizTypeEnum.OTHERS_LOT_DYN:
             from app.services.infrastructure.lottery_rpc import get_lottery_rpc_client
 
+            id_ints = [v for v in map(_to_int_or_none, biz_ids) if v is not None]
             client = await get_lottery_rpc_client()
-            existing = await client.get_existing_others_lot_dyn_ids(ids)
-            if existing is None:
-                existing = set(ids)  # RPC 校验不可用：降级放行
+            found = await client.get_existing_others_lot_dyn_ids(id_ints)
+            existing = (
+                set(biz_ids) if found is None else {str(v) for v in found}
+            )
         else:
-            existing = set(ids)
-        missing = [str(_id) for _id in ids if _id not in existing]
+            existing = set(biz_ids)
+        missing = [_id for _id in biz_ids if _id not in existing]
         return missing or None
 
     @staticmethod

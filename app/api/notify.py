@@ -80,10 +80,16 @@ async def list_notify(
     """分页查看历史通知（不推进拉取游标），返回前本页通知自动置为已读。
 
     出参 `is_read` 是本次读取前的快照，可据此高亮「本次新到」的通知。
+
+    2.71.0：本页之外，该用户**全部可见未读**也一并置为已读（`mark_all_read`），
+    使「进入通知页」即可清空红点，不受 `page_size` 分页限制。
     """
     items, total = await NotifyService.list_for_user(
         session, user, page_num=page_num, page_size=page_size
     )
+    # 进入通知页即清空红点：本页已由 list_for_user 标已读，这里补齐剩余未读，
+    # 前端加载完成后刷新 msg_feed/unread 会拿到 notify=0
+    await NotifyService.mark_all_read(session, user)
     return StandardResponse(
         data=NotifyListResp(
             items=items, total=total, page_num=page_num, page_size=page_size
